@@ -39,33 +39,69 @@ func tokenFor(roles ...string) *auth.Claims {
 	}
 }
 
+// call is one request the stub product received. The whole request and not
+// just its URL, because a write is only right if its method, body and
+// Idempotency-Key are.
+type call struct {
+	method  string
+	url     string
+	body    string
+	headers http.Header
+}
+
 type api struct {
 	handler http.Handler
 	t       *testing.T
-	asked   chan string
+	calls   chan call
 }
 
 const subsBody = `{"data":[{"tenant_id":"t1","tenant_name":"Acme","plan":"pro","status":"active","amount":{"amount":4900,"currency":"AUD"},"current_period_end":"2026-09-30T00:00:00Z"}],"pagination":{"page":1,"limit":100,"total":37}}`
+const discountBody = `{"tenant_id":"11111111-1111-1111-1111-111111111111","coupon_id":"LOYAL20","operation":"apply","reason":"goodwill after the outage","performed_at":"2026-09-06T10:00:00Z","status":"partial","requires_reconciliation":true,"stores":[{"store_id":"s1","subscription_id":"sub1","stripe_customer_id":"cus_1","stripe_subscription_id":"sub_stripe_1","outcome":"applied"},{"store_id":"s2","outcome":"failed","failure_code":"stripe_changed_audit_write_failed","failure_reason":"stripe accepted the discount change but the audit row was not written"}]}`
+
 const trialsBody = `{"data":[{"tenant_id":"t3","trial_ends_at":"2026-09-10T00:00:00Z","days_remaining":9,"plan":"pro","payment_method_on_file":false,"status":"trialing"}],"pagination":{"page":1,"limit":100,"total":5}}`
 
-// serve mounts the module with an operator holding `billing` — the capability
-// this module gates on, and the FIRST route in the estate to use it.
-func serve(t *testing.T) *api { t.Helper(); return serveAs(t, []string{productSlug}, "billing") }
+// serve mounts the module with an operator holding BOTH capabilities this
+// module gates on: `billing` — the surface, and the first route in the estate
+// to use it — and `publish-catalog`, which only the discount writes require.
+// The single-capability cases are asserted in discount_test.go.
+func serve(t *testing.T) *api {
+	t.Helper()
+	return serveAs(t, []string{productSlug}, "billing", "publish-catalog")
+}
 
-func serveNoProducts(t *testing.T) *api { t.Helper(); return serveAs(t, nil, "billing") }
+func serveNoProducts(t *testing.T) *api {
+	t.Helper()
+	return serveAs(t, nil, "billing", "publish-catalog")
+}
 
 func serveAs(t *testing.T, slugs []string, roles ...string) *api {
 	t.Helper()
+	return serveProduct(t, http.HandlerFunc(defaultProduct), slugs, roles...)
+}
+
+// defaultProduct answers each of the module's federated paths with a body in
+// mark8ly's own shape. The discount report is deliberately NOT wrapped in a
+// `data` envelope, because mark8ly's handler does not wrap it.
+func defaultProduct(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.Contains(r.URL.Path, "/discount"):
+		_, _ = w.Write([]byte(discountBody))
+	case strings.Contains(r.URL.Path, "trials"):
+		_, _ = w.Write([]byte(trialsBody))
+	default:
+		_, _ = w.Write([]byte(subsBody))
+	}
+}
+
+func serveProduct(t *testing.T, upstream http.Handler, slugs []string, roles ...string) *api {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	asked := make(chan string, 4)
+	calls := make(chan call, 8)
 	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		asked <- r.URL.String()
-		if strings.Contains(r.URL.Path, "trials") {
-			_, _ = w.Write([]byte(trialsBody))
-			return
-		}
-		_, _ = w.Write([]byte(subsBody))
+		body, _ := io.ReadAll(r.Body)
+		calls <- call{method: r.Method, url: r.URL.String(), body: string(body), headers: r.Header.Clone()}
+		upstream.ServeHTTP(w, r)
 	}))
 	t.Cleanup(product.Close)
 
@@ -78,7 +114,7 @@ func serveAs(t *testing.T, slugs []string, roles ...string) *api {
 	httpx.RegisterModule(mux, verifier, "billing", func(m *http.ServeMux) {
 		billing.Register(m, billing.Config{Fed: fed, Slugs: slugs, Verifier: verifier, Log: log})
 	})
-	return &api{handler: httpx.WithMiddleware(mux), t: t, asked: asked}
+	return &api{handler: httpx.WithMiddleware(mux), t: t, calls: calls}
 }
 
 type response struct {
@@ -87,10 +123,17 @@ type response struct {
 	raw    string
 }
 
-func (a *api) do(method, path string) response {
+func (a *api) do(method, path, body string, headers map[string]string) response {
 	a.t.Helper()
-	req := httptest.NewRequest(method, path, nil)
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Authorization", "Bearer "+jwtShaped)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	rec := httptest.NewRecorder()
 	a.handler.ServeHTTP(rec, req)
 	out := response{status: rec.Code, raw: rec.Body.String()}
@@ -100,7 +143,34 @@ func (a *api) do(method, path string) response {
 	return out
 }
 
-func (a *api) get(path string) response { a.t.Helper(); return a.do(http.MethodGet, path) }
+func (a *api) get(path string) response {
+	a.t.Helper()
+	return a.do(http.MethodGet, path, "", nil)
+}
+
+// post is a write with the Idempotency-Key the routes require, so a test that
+// means to exercise something else does not accidentally assert the key check.
+func (a *api) post(path, body string) response {
+	a.t.Helper()
+	return a.do(http.MethodPost, path, body, map[string]string{"Idempotency-Key": "k-1"})
+}
+
+// lastCall drains what the product received. The absence of any call is the
+// half a status code cannot show: a write refused AFTER it reached the product
+// has already happened.
+func (a *api) lastCall() (call, bool) {
+	a.t.Helper()
+	var last call
+	var seen bool
+	for {
+		select {
+		case c := <-a.calls:
+			last, seen = c, true
+		default:
+			return last, seen
+		}
+	}
+}
 
 func (r response) data(t *testing.T) map[string]any {
 	t.Helper()
@@ -159,13 +229,12 @@ func TestAPlatformOperatorCannotReadBilling(t *testing.T) {
 func TestTrialsForwardTheStripeManagedOptIn(t *testing.T) {
 	a := serve(t)
 	a.get("/v1/billing/trials?include_stripe_managed=true")
-	select {
-	case url := <-a.asked:
-		if !strings.Contains(url, "include_stripe_managed=true") {
-			t.Errorf("product asked %q, want the opt-in forwarded", url)
-		}
-	default:
+	got, called := a.lastCall()
+	if !called {
 		t.Fatal("the product was never called")
+	}
+	if !strings.Contains(got.url, "include_stripe_managed=true") {
+		t.Errorf("product asked %q, want the opt-in forwarded", got.url)
 	}
 }
 
@@ -176,13 +245,12 @@ func TestTrialsTreatAnUnrecognisedOptInAsAbsent(t *testing.T) {
 	if got := a.get("/v1/billing/trials?include_stripe_managed=yes"); got.status != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
 	}
-	select {
-	case url := <-a.asked:
-		if strings.Contains(url, "include_stripe_managed") {
-			t.Errorf("product asked %q; only `true` opts in", url)
-		}
-	default:
+	got, called := a.lastCall()
+	if !called {
 		t.Fatal("the product was never called")
+	}
+	if strings.Contains(got.url, "include_stripe_managed") {
+		t.Errorf("product asked %q; only `true` opts in", got.url)
 	}
 }
 
