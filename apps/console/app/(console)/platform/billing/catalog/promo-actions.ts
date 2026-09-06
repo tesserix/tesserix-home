@@ -175,7 +175,14 @@ async function withPromoWrite<T>(
     if (cause instanceof CapabilityError) {
       return { ok: false, message: NO_PERMISSION_MESSAGE };
     }
-    return { ok: false, message: promoRefusal(cause) ?? NOT_SAVED_MESSAGE };
+    const refusal = promoRefusal(cause);
+    if (refusal === null) {
+      // Same reasoning as the mint path below: an unrecognised cause is the
+      // one this branch cannot describe, so discarding it leaves nobody able
+      // to say what happened.
+      console.error(`[console] promo write failed for ${target} — cause not recognised`, cause);
+    }
+    return { ok: false, message: refusal ?? NOT_SAVED_MESSAGE };
   }
 }
 
@@ -419,7 +426,32 @@ export async function mintCouponAction(
           "These discount terms are not something Stripe can mint a coupon from. Author a replacement code with corrected terms.",
       };
     }
-    return { ok: false, message: promoRefusal(cause) ?? MINT_INCOMPLETE_MESSAGE };
+    const refusal = promoRefusal(cause);
+    if (refusal === null) {
+      // The ONLY branch that reaches here has no recognised shape, which means
+      // nothing above it knows what went wrong — so this is the one place the
+      // cause can still be read, and it was being discarded.
+      //
+      // The cost was measured rather than assumed: a live mint failed on
+      // 2026-09-06, the operator got MINT_INCOMPLETE_MESSAGE, and the console
+      // pods carried ZERO error lines for the six hours around it. Neither the
+      // operator nor anyone reading the logs afterwards could say whether
+      // Stripe refused the key's scope, rejected the terms, or timed out
+      // mid-write — and MINT_INCOMPLETE_MESSAGE deliberately claims the mint
+      // MAY have half-succeeded, so "retry and see" is not a safe diagnosis.
+      //
+      // Server-side only: this is a server action, so it lands in the app's
+      // logs and never in the response. The mode and code are the two facts
+      // that make a Stripe dashboard search possible; `cause` carries Stripe's
+      // own `type`/`code`/`requestId`, which is what distinguishes a scope
+      // refusal from a bad request. Stripe SDK errors do not embed the API
+      // key, so this does not leak the credential.
+      console.error(
+        `[console] promo coupon mint failed for ${normalised} (${mode}) — cause not recognised`,
+        cause,
+      );
+    }
+    return { ok: false, message: refusal ?? MINT_INCOMPLETE_MESSAGE };
   }
   revalidatePath(CATALOG_SURFACE_PATH);
   return { ok: true };
