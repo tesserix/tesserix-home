@@ -23,6 +23,7 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 // server actions are the right bridge: `"use server"` makes `./actions` a
 // reference the client calls, never a module it bundles.
 import type { PairLatestRun, ParityWindowStatus } from "@/lib/db/plan-catalog-repo";
+import { DestructiveConfirmDialog } from "@/components/kit/destructive-confirm-dialog";
 import { rerunParityCheckAction } from "./actions";
 
 /**
@@ -130,6 +131,66 @@ export function summarizeWindow(status: ParityWindowStatus, windowDays: number):
 }
 
 /* ------------------------------------------------------------------------ *
+ * Is a re-run lossy right now?
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Would pressing "Re-run parity check" risk COSTING something?
+ *
+ * A re-run writes a row into the evidence #327's Stripe write-key revocation
+ * is decided from, and `readWindowStatus` counts a day clean for a pair as
+ * `EXISTS(clean) AND NOT EXISTS(non-clean)` — with no path that ever unmarks
+ * it, because rows are never deleted. Working through today's three states
+ * for one pair:
+ *
+ *   clean  press -> clean: unchanged.  press -> non-clean: PERMANENTLY dirty.
+ *   dirty  either way it stays dirty — already lost.
+ *   gap    press -> clean: today becomes clean. press -> non-clean: dirty,
+ *          but a gap was already "not clean", so nothing was surrendered.
+ *
+ * So a press is lossy against a `clean` day and only a `clean` day. A gap is
+ * strictly non-losing — it is in fact the one state where pressing is the
+ * only way today can still become clean, since the CronJob has already run.
+ *
+ * And the gate is a conjunction over pairs (see `readWindowStatus`), so
+ * today only contributes to a satisfied window when EVERY pair is clean
+ * today. If one pair is already dirty, today is lost for the gate regardless
+ * and the other pair's clean day is no longer load-bearing.
+ *
+ * Hence: lossy exactly when every pair's today is `clean`.
+ *
+ * NOTE IT ASKS ABOUT TODAY, NOT ABOUT `status.satisfied`. An earlier day in
+ * the window being dirty does NOT make today's clean day free to spend: the
+ * window slides, so that day drops out and today goes on counting. Gating on
+ * the gate would stop protecting today for the whole week after any red day —
+ * which is precisely the week an operator is most likely to be pressing this.
+ *
+ * This deliberately leaves #580's own case unobstructed. The control exists
+ * so an operator whose run has gone red can find out whether the failure was
+ * transient without waiting for the next nightly run — and on a red day this
+ * returns false, so that press runs immediately with no dialog in the way.
+ *
+ * UNKNOWN STATE CONFIRMS. A null window, or a pair carrying no days, is the
+ * case we cannot reason about; an extra click costs an operator nothing,
+ * while silently skipping the guard costs a completed window. Fail towards
+ * asking.
+ */
+export function rerunIsLossy(status: ParityWindowStatus | null): boolean {
+  if (status === null || status.pairs.length === 0) return true;
+  return status.pairs.every((pair) => {
+    // TODAY is the LAST entry: `readWindowStatus` generates the day series
+    // ending at `date_trunc('day', now() AT TIME ZONE 'UTC')` and orders by
+    // it ascending, and the grouping preserves that order. Deliberately not
+    // matched against a date computed HERE — this is a client component, and
+    // a browser west of UTC would disagree with the server about which row
+    // "today" is for part of every day.
+    const today = pair.days.at(-1);
+    if (today === undefined) return true;
+    return dayVerdict(today) === "clean";
+  });
+}
+
+/* ------------------------------------------------------------------------ *
  * The re-run control
  * ------------------------------------------------------------------------ */
 
@@ -159,17 +220,44 @@ export function summarizeWindow(status: ParityWindowStatus, windowDays: number):
  * operator hears the result attached to the control they pressed rather than
  * as a disconnected announcement somewhere on the page.
  */
-function RerunControl() {
+/**
+ * What the button has never said. Deliberately concrete about the three
+ * things an operator cannot see from the control: that the result is
+ * recorded whatever it is, that a non-clean one cannot be undone, and that
+ * the seven days start again.
+ */
+const CONFIRM_DESCRIPTION =
+  "Every pair is clean for today, so today is counting towards #327's 7-day window. A " +
+  "re-run records whatever it finds: if any pair comes back with differences, fails, or is " +
+  "not bootstrapped, today is marked permanently, can never count towards the window " +
+  "again, and the seven consecutive clean days start over. There is no way to undo it.";
+
+function RerunControl({ lossy }: { lossy: boolean }) {
   const [pending, startTransition] = useTransition();
   const [status, setStatus] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const statusId = useId();
+  const confirmId = useId();
 
   const message = pending ? "Re-running the parity check…" : status?.message;
   // Pending reads as a status, never an alert: a run in flight is progress,
   // not a problem.
   const tone = pending ? "ok" : status?.tone;
 
-  const run = () => {
+  // The press. Confirms only when the run could COST something — see
+  // `rerunIsLossy`. On a day that is already dirty this runs immediately,
+  // which is #580's whole use case: find out whether a red run was transient
+  // without waiting for the next nightly one.
+  const press = () => {
+    if (lossy) {
+      setConfirming(true);
+      return;
+    }
+    execute();
+  };
+
+  const execute = () => {
+    setConfirming(false);
     // Cleared on press rather than left behind: the previous run's answer is
     // not this run's, and a stale sentence beside a spinner is worse than no
     // sentence.
@@ -197,10 +285,20 @@ function RerunControl() {
         size="sm"
         disabled={pending}
         aria-describedby={statusId}
-        onClick={run}
+        onClick={press}
       >
         Re-run parity check
       </Button>
+      <DestructiveConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="Today is clean. A re-run could change that."
+        description={CONFIRM_DESCRIPTION}
+        confirmLabel="Re-run anyway"
+        confirmId={confirmId}
+        loading={pending}
+        onConfirm={execute}
+      />
       {/* Always mounted, and empty until there is something to say: a live
           region added to the DOM at the same moment its text arrives is not
           reliably announced. `role` switches with the outcome, which is what
@@ -289,7 +387,7 @@ export function ObservationStrip({
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-medium">Observation window</h2>
-          <RerunControl />
+          <RerunControl lossy={rerunIsLossy(windowStatus)} />
         </div>
         {body}
       </div>
@@ -326,7 +424,7 @@ export function ObservationStrip({
             {expanded ? "▾" : "▸"}
           </span>
         </button>
-        <RerunControl />
+        <RerunControl lossy={rerunIsLossy(windowStatus)} />
       </div>
       <div id={bodyId} hidden={!expanded}>
         {body}
