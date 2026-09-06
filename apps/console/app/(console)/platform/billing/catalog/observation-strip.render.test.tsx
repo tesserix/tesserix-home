@@ -16,7 +16,7 @@ vi.mock("./actions", () => ({
 import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { resolveState } from "@/components/kit/surface-state";
 import type { PairLatestRun, ParityWindowDay, ParityWindowStatus } from "@/lib/db/plan-catalog-repo";
-import { ObservationStrip, summarizeWindow } from "./observation-strip";
+import { ObservationStrip, rerunIsLossy, summarizeWindow } from "./observation-strip";
 
 /**
  * The strip's job is one sentence, so most of this suite is about the exact
@@ -49,6 +49,14 @@ function windowOf(livePairDays: ParityWindowDay[], satisfied: boolean): ParityWi
 const SATISFIED = windowOf(cleanDays(), true);
 const WITH_A_DIRTY_DAY = windowOf(daysWithOneBad({ clean: false, ran: true }), false);
 const WITH_A_GAP_DAY = windowOf(daysWithOneBad({ clean: false, ran: false }), false);
+
+/** Today itself dirty — distinct from `WITH_A_DIRTY_DAY`, whose bad day is at
+ *  index 3. #594 keys its confirmation on TODAY (the last entry), so only
+ *  this fixture makes a press run without one. */
+const TODAY_ALREADY_DIRTY: ParityWindowStatus = windowOf(
+  cleanDays().map((d, i, all) => (i === all.length - 1 ? { ...d, clean: false } : d)),
+  false,
+);
 
 const noRuns: PairLatestRun[] = [
   { mode: "test", source: SINGLE_SOURCE, run: null },
@@ -320,7 +328,12 @@ describe("the re-run control", () => {
     let release: (value: unknown) => void = () => {};
     rerunParityCheckAction.mockReturnValue(new Promise((resolve) => (release = resolve)));
 
-    renderStrip(SATISFIED);
+    // #594: rendered on a day that is ALREADY dirty, so the press runs
+    // straight through. This test is about what the control SAYS, not
+    // about the confirmation — `TODAY_ALREADY_DIRTY` keeps the two
+    // concerns in separate tests rather than making every outcome
+    // assertion click through a dialog.
+    renderStrip(TODAY_ALREADY_DIRTY);
     fireEvent.click(rerun());
 
     await waitFor(() => expect(rerun()).toBeDisabled());
@@ -331,7 +344,12 @@ describe("the re-run control", () => {
   });
 
   it("announces a run that answered", async () => {
-    renderStrip(SATISFIED);
+    // #594: rendered on a day that is ALREADY dirty, so the press runs
+    // straight through. This test is about what the control SAYS, not
+    // about the confirmation — `TODAY_ALREADY_DIRTY` keeps the two
+    // concerns in separate tests rather than making every outcome
+    // assertion click through a dialog.
+    renderStrip(TODAY_ALREADY_DIRTY);
 
     fireEvent.click(rerun());
 
@@ -351,7 +369,10 @@ describe("the re-run control", () => {
       message: "The check could not complete for 1 of 2 pairs.",
     });
 
-    renderStrip(WITH_A_DIRTY_DAY);
+    // #594: `WITH_A_DIRTY_DAY`'s bad day is index 3, so TODAY is still
+    // clean there and the press would now confirm. This test wants the
+    // run to happen, so it needs today itself dirty.
+    renderStrip(TODAY_ALREADY_DIRTY);
 
     fireEvent.click(rerun());
 
@@ -370,7 +391,12 @@ describe("the re-run control", () => {
       message: "You don't have permission to edit the plan catalog.",
     });
 
-    renderStrip(SATISFIED);
+    // #594: rendered on a day that is ALREADY dirty, so the press runs
+    // straight through. This test is about what the control SAYS, not
+    // about the confirmation — `TODAY_ALREADY_DIRTY` keeps the two
+    // concerns in separate tests rather than making every outcome
+    // assertion click through a dialog.
+    renderStrip(TODAY_ALREADY_DIRTY);
 
     fireEvent.click(rerun());
 
@@ -380,7 +406,12 @@ describe("the re-run control", () => {
   });
 
   it("names its status region from the button, so a screen reader hears the outcome", async () => {
-    renderStrip(SATISFIED);
+    // #594: rendered on a day that is ALREADY dirty, so the press runs
+    // straight through. This test is about what the control SAYS, not
+    // about the confirmation — `TODAY_ALREADY_DIRTY` keeps the two
+    // concerns in separate tests rather than making every outcome
+    // assertion click through a dialog.
+    renderStrip(TODAY_ALREADY_DIRTY);
     const describedBy = rerun().getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
 
@@ -391,5 +422,92 @@ describe("the re-run control", () => {
       expect(region).toHaveTextContent("2 pairs checked");
       expect(region).toHaveAttribute("aria-live", "polite");
     });
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * #594 — a re-run that could cost the window asks first
+ * ------------------------------------------------------------------------ */
+
+/** The seven days with TODAY (the last entry, per `readWindowStatus`'s
+ *  ascending series) replaced. The suite's own `daysWithOneBad` targets index
+ *  3, which is deliberately NOT today — an earlier bad day must not make
+ *  today's clean day free to spend, because the window slides. */
+function daysWithTodayBad(bad: Pick<ParityWindowDay, "clean" | "ran">): ParityWindowDay[] {
+  const days = cleanDays();
+  return days.map((day, i) => (i === days.length - 1 ? { day: day.day, ...bad } : day));
+}
+
+describe("rerunIsLossy", () => {
+  it("is lossy when every pair is clean today", () => {
+    expect(rerunIsLossy(SATISFIED)).toBe(true);
+  });
+
+  it("is NOT lossy once today is already dirty — #580's own use case", () => {
+    // The control exists so a red run can be retried without waiting for the
+    // nightly one. A guard that fired here would obstruct the reason it was
+    // built.
+    expect(rerunIsLossy(windowOf(daysWithTodayBad({ clean: false, ran: true }), false))).toBe(false);
+  });
+
+  it("is NOT lossy when today has no run yet", () => {
+    // A gap is already "not clean", so pressing can only make today clean or
+    // leave it equally uncounted. It is the one state where pressing is the
+    // only way today can still count.
+    expect(rerunIsLossy(windowOf(daysWithTodayBad({ clean: false, ran: false }), false))).toBe(false);
+  });
+
+  it("stays lossy when an EARLIER day is dirty but today is clean", () => {
+    // The window slides: that day drops out and today goes on counting.
+    // Gating on `satisfied` would stop protecting today for the whole week
+    // after any red day.
+    expect(rerunIsLossy(WITH_A_DIRTY_DAY)).toBe(true);
+    expect(WITH_A_DIRTY_DAY.satisfied).toBe(false);
+  });
+
+  it("confirms when the window is unknown, rather than skipping the guard", () => {
+    expect(rerunIsLossy(null)).toBe(true);
+    expect(rerunIsLossy({ days: 7, satisfied: false, pairs: [] })).toBe(true);
+  });
+});
+
+describe("the re-run confirmation", () => {
+  const rerun = () => screen.getByRole("button", { name: "Re-run parity check" });
+  const confirm = () => screen.getByRole("button", { name: "Re-run anyway" });
+
+  beforeEach(() => {
+    rerunParityCheckAction.mockReset();
+    rerunParityCheckAction.mockResolvedValue({ ok: true, outcome: "answered", pairs: 2 });
+  });
+
+  it("does not run on the first press when today is clean", () => {
+    render(stripElement(SATISFIED));
+    fireEvent.click(rerun());
+    expect(rerunParityCheckAction).not.toHaveBeenCalled();
+    expect(confirm()).toBeVisible();
+  });
+
+  it("names what is at stake", () => {
+    render(stripElement(SATISFIED));
+    fireEvent.click(rerun());
+    // The three facts the button alone never carried: it records whatever it
+    // finds, the mark is permanent, and the seven days restart.
+    expect(screen.getByText(/records whatever it finds/i)).toBeVisible();
+    expect(screen.getByText(/marked permanently/i)).toBeVisible();
+    expect(screen.getByText(/start over/i)).toBeVisible();
+  });
+
+  it("runs once confirmed", async () => {
+    render(stripElement(SATISFIED));
+    fireEvent.click(rerun());
+    fireEvent.click(confirm());
+    await waitFor(() => expect(rerunParityCheckAction).toHaveBeenCalledTimes(1));
+  });
+
+  it("runs immediately, with no dialog, when today is already dirty", async () => {
+    render(stripElement(windowOf(daysWithTodayBad({ clean: false, ran: true }), false)));
+    fireEvent.click(rerun());
+    await waitFor(() => expect(rerunParityCheckAction).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Re-run anyway" })).toBeNull();
   });
 });
