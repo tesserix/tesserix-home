@@ -13,18 +13,7 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 // carries a "use client" directive, so `SurfaceStateView` resolves to the
 // real component here, not a reference that throws when called.
 import { SurfaceStateView } from "@/components/kit/states";
-import { DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM } from "./cursor-params";
-
-/**
- * A filter mutation drops BOTH queue cursors, not just the one being paged:
- * one filter bar drives both queues, so a narrowed filter invalidates every
- * position on the page at once. Leaving either cursor behind lands that queue
- * on a page of a result set that no longer has one — indistinguishable, on
- * screen, from "nothing matches".
- *
- * A module constant so the hook's memoised `push` keeps a stable identity.
- */
-const QUEUE_CURSOR_PARAMS = [DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM] as const;
+import { ALL_CURSOR_PARAMS } from "./cursor-params";
 
 export interface CrmQueueGroupProps {
   heading: string;
@@ -130,7 +119,7 @@ function QueueSection({
  * belongs to is never a matter of proximity.
  */
 export function CrmQueueView({ descriptors, values, due, drifting, reauthReturnTo }: CrmQueueViewProps) {
-  const { set, clear } = useUrlFilters(descriptors, QUEUE_CURSOR_PARAMS);
+  const { set, clear } = useUrlFilters(descriptors, ALL_CURSOR_PARAMS);
 
   // Due and Drifting are two independent reads under one `Promise.allSettled`
   // (`page.tsx`'s module doc), so a session with no operator token row fails
