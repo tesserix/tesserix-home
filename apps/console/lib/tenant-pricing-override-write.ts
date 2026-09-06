@@ -24,18 +24,27 @@ import {
 // driver in for a shape. Same import `stripe-write.ts` makes, for the same
 // reason. See THE DISCOUNT TYPE below for why it is this type and not a new one.
 import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
+import {
+  applyTenantDiscount,
+  removeTenantDiscount,
+  type TenantDiscountResult,
+} from "@/lib/tenant-discount-write";
 
 /**
  * Granting one tenant a pricing override — the console's half (tesserix-home
- * #331, T1).
+ * #331).
  *
- * # What this seam does, and the one thing it does not
+ * # What this seam does, in three steps
  *
- * It mints a customer-scoped Stripe Coupon and records that it did. It does
- * NOT attach the coupon to anything: the Stripe customer lives in mark8ly, and
- * applying the coupon (and auditing the grant) is #660's, called by T3. So a
- * successful return from here means "a coupon exists"; it does not mean the
- * tenant is being charged less, and no message below says it does.
+ * It mints a customer-scoped Stripe Coupon, records that it did, and then asks
+ * mark8ly — through platform-api's signed write — to put that coupon on every
+ * subscription the tenant owns. The Stripe customers live in mark8ly, so only
+ * mark8ly can attach anything; this seam is the caller.
+ *
+ * A successful return therefore means "a coupon exists and is recorded", and
+ * the attach is reported SEPARATELY, in the result's `attach`. The two are not
+ * the same fact and the copy built on this must not merge them: an attach can
+ * reach some of a tenant's stores and not others, and mark8ly says which.
  *
  * # THE AUDIT ROW FOR THE GRANT IS NOT WRITTEN HERE
  *
@@ -48,8 +57,9 @@ import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
  *   > in a different database — and the two would disagree the first time a
  *   > write half-succeeded.
  *
- * mark8ly records the grant, from the operator and reason T3 passes through —
- * exactly as lifecycle already passes `reasonCode` and `reason`. #331's body
+ * mark8ly records the grant, from the operator and the reason the attach below
+ * passes through — exactly as lifecycle already passes `reasonCode` and
+ * `reason`, and inside each store's own transaction. #331's body
  * says the console records the decision; that was reversed for the reason
  * above, and the reason is not stored here either (0047's header).
  *
@@ -78,14 +88,29 @@ import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
  */
 
 /**
- * What the control renders. `couponId` is what T3 hands to mark8ly.
+ * What the control renders. `couponId` is the coupon this console minted and
+ * handed to mark8ly.
  *
  * Deliberately not carrying the error's cause, a status code, or which internal
  * threw: the control shows `message` and highlights `field`, and adding a
  * discriminant would invite it to branch on how this module is built.
+ *
+ * # `attach` IS NOT A SECOND `ok`
+ *
+ * It is mark8ly's report, carried verbatim. `attach.ok` means "mark8ly
+ * answered"; it does NOT mean every store carries the discount, and the
+ * `stores` inside it are the only place that question is answered. Summarising
+ * it here would decide, in a seam with no operator in front of it, which of
+ * `status`, `requires_reconciliation` and the per-store outcomes an operator
+ * is allowed to see.
+ *
+ * `attach.ok === false` still arrives on a SUCCESSFUL grant, and that is the
+ * point: the coupon exists in a real Stripe account and 0047 records it, so
+ * `ok: false` here would deny two things this console did and invite a retry
+ * that can only refuse on the partial unique index.
  */
 export type PricingOverrideWriteResult =
-  | { readonly ok: true; readonly couponId: string }
+  | { readonly ok: true; readonly couponId: string; readonly attach: TenantDiscountResult }
   | { readonly ok: false; readonly message: string; readonly field?: string };
 
 /** What a grant needs. Every field is required and none is defaulted — see
@@ -110,9 +135,10 @@ export interface TenantPricingOverrideInput {
    * the tenant reads beside the discount on their invoice.
    */
   readonly label: string;
-  /** Free text, mandatory. Passed to mark8ly by T3, which audits it. Not
-   *  stored here — 0047's header. Never sent to Stripe: an operator's private
-   *  justification is not something to print on the tenant's invoice. */
+  /** Free text, mandatory. Passed to mark8ly with the attach, which audits it
+   *  inside each store's transaction. Not stored here — 0047's header. Never
+   *  sent to Stripe: an operator's private justification is not something to
+   *  print on the tenant's invoice. */
   readonly reason: string;
 }
 
@@ -357,7 +383,64 @@ function mintKey(input: TenantPricingOverrideInput): string {
 }
 
 /**
- * Mint one tenant's pricing override and record it.
+ * The last-resort message for a federated step that threw.
+ *
+ * `tenant-discount-write.ts` catches everything it can name and returns a
+ * sentence for it, so this is reached only by what it cannot: a bug in that
+ * module, or a rejection from the module boundary itself. It is still handled,
+ * because the alternative is the throw escaping into
+ * {@link grantTenantPricingOverride}'s outer catch, where a mint that
+ * SUCCEEDED and was RECORDED would be reported as {@link MINT_INCOMPLETE} —
+ * sending an operator to hunt for a coupon this console could have named.
+ *
+ * It does not say nothing happened, for the reason every message on this path
+ * refuses to: the throw may have come after the request was sent.
+ */
+function federatedStepFailed(verb: "put on" | "take off"): string {
+  return (
+    `Asking the product to ${verb} this coupon failed in a way this console cannot describe, and ` +
+    "whether the product acted cannot be told from here. Check this tenant's subscriptions in mark8ly."
+  );
+}
+
+/** Ask mark8ly to put the minted coupon on the tenant's subscriptions.
+ *  Never throws — see {@link federatedStepFailed}. */
+async function attach(
+  input: TenantPricingOverrideInput,
+  couponId: string,
+): Promise<TenantDiscountResult> {
+  try {
+    return await applyTenantDiscount({
+      tenantId: input.tenantId,
+      mode: input.mode,
+      couponId,
+      reason: input.reason,
+    });
+  } catch {
+    return { ok: false, message: federatedStepFailed("put on") };
+  }
+}
+
+/** The revoke's counterpart. Never throws, for `attach`'s reason read against
+ *  a retirement that is already committed and audited. */
+async function detach(
+  input: TenantPricingOverrideRevokeInput,
+  couponId: string,
+): Promise<TenantDiscountResult> {
+  try {
+    return await removeTenantDiscount({
+      tenantId: input.tenantId,
+      mode: input.mode,
+      couponId,
+      reason: input.reason,
+    });
+  } catch {
+    return { ok: false, message: federatedStepFailed("take off") };
+  }
+}
+
+/**
+ * Mint one tenant's pricing override, record it, and ask mark8ly to apply it.
  *
  * The capability checks run INSIDE `auditedOperation`, so a refusal is written
  * as a `capability.refused` row rather than reaching no log at all —
@@ -444,7 +527,22 @@ export async function grantTenantPricingOverride(
       }),
     });
 
-    return { ok: true, couponId: recorded.stripeCouponId };
+    // ═══ THE ATTACH IS OUTSIDE `auditedOperation`, FOR THE DELETE'S REASON ═══
+    //
+    // Spelled out on the revoke's delete below, and it holds identically here:
+    // `auditedOperation` writes its row only after `operation()` returns and
+    // propagates anything that is not a recognised refusal while writing
+    // NOTHING. A federated call inside it would throw past the audit write and
+    // destroy the record of a mint that genuinely happened — the coupon would
+    // exist in a real Stripe account with nothing in this database naming it.
+    //
+    // Out here the row is already written, so a failed attach costs the attach
+    // and nothing else.
+    return {
+      ok: true,
+      couponId: recorded.stripeCouponId,
+      attach: await attach(input, recorded.stripeCouponId),
+    };
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return { ok: false, message: NO_PERMISSION };
@@ -493,9 +591,21 @@ export async function grantTenantPricingOverride(
  * control to branch on how this module is built. `couponDeleted` is not that:
  * it is a fact about the Stripe account, not about which internal threw, and
  * the control branches on it to choose between two true sentences.
+ *
+ * `detach` is mark8ly's report on taking the coupon back OFF the tenant's
+ * subscriptions, carried verbatim for the reason `attach` is — see
+ * {@link PricingOverrideWriteResult}. It is the third fact, and the one that
+ * decides whether the tenant is still being charged less: `detach.ok === false`
+ * on an otherwise successful revoke means the retirement happened and the
+ * discount may not have moved.
  */
-export type PricingOverrideRevokeResult =
-  | { readonly ok: true; readonly couponId: string; readonly couponDeleted: boolean }
+export type PricingOverrideRevokeResult
+  = | {
+      readonly ok: true;
+      readonly couponId: string;
+      readonly couponDeleted: boolean;
+      readonly detach: TenantDiscountResult;
+    }
   | { readonly ok: false; readonly message: string; readonly field?: string };
 
 /** What a revoke needs. Every field is required and none is defaulted. */
@@ -510,15 +620,14 @@ export interface TenantPricingOverrideRevokeInput {
   /**
    * Free text, mandatory.
    *
-   * SAME DESTINATION AS THE GRANT'S, and today that destination is nowhere:
-   * {@link TenantPricingOverrideInput.reason} is passed to mark8ly by a T3 that
-   * does not exist yet, and this one belongs to that federated call's detach
-   * counterpart (#660), which does not exist either. Taken and validated here,
-   * stored by nothing — 0047's header keeps the decision record on mark8ly's
-   * side, and giving the revoke a console-side home for its reason would make
-   * the two halves asymmetric on the way to contradicting it. Never sent to
-   * Stripe: `deleteCoupon` has nowhere to put it and an operator's private
-   * justification is not something to hand a billing account.
+   * SAME DESTINATION AS THE GRANT'S: it travels with the detach below, and
+   * mark8ly writes it into the audit row inside each store's transaction.
+   * Stored by nothing on this side — 0047's header keeps the decision record
+   * on mark8ly's side, and giving the revoke a console-side home for its
+   * reason would make the two halves asymmetric on the way to contradicting
+   * it. Never sent to Stripe: `deleteCoupon` has nowhere to put it and an
+   * operator's private justification is not something to hand a billing
+   * account.
    */
   readonly reason: string;
 }
@@ -569,29 +678,41 @@ function validateRevoke(input: TenantPricingOverrideRevokeInput): void {
 }
 
 /**
- * Retire this console's record of a tenant's pricing override, and delete the
- * Coupon it minted.
+ * Retire this console's record of a tenant's pricing override, ask mark8ly to
+ * take the coupon off their subscriptions, and delete the Coupon it minted.
  *
  * # WHAT A SUCCESS HERE MEANS, AND WHAT IT DOES NOT
  *
- * The mirror of this module's header. A success means: this console no longer
- * counts the override, so a corrected one can be granted, and the Coupon can
- * never be redeemed again. It does NOT mean the tenant stopped being charged
- * less. Per Stripe's own reference, quoted in full on `deleteCoupon`, deleting
- * a Coupon "does not affect any customers who have already applied" it;
- * detaching an applied discount is a customer-scoped call only mark8ly can make
- * (#660). Nothing returned from here says otherwise, and the copy built on it
- * must not either.
+ * The mirror of this module's header. `ok: true` means this console no longer
+ * counts the override, so a corrected one can be granted. Whether the tenant
+ * stopped being charged less is the SEPARATE fact in `detach`, and the two
+ * must not be merged: deleting a Coupon does not detach it. Per Stripe's own
+ * reference, quoted in full on `deleteCoupon`, deleting a Coupon "does not
+ * affect any customers who have already applied" it — which is exactly why the
+ * detach is its own step and its own reported outcome.
  *
- * # RETIRE FIRST, DELETE SECOND
+ * # RETIRE, THEN DETACH, THEN DELETE
  *
- * Both steps can fail, and the order picks which residue an operator is left
- * with. Deleting first and failing before the retirement would leave a live row
+ * Every step can fail, and the order picks which residue an operator is left
+ * with — the rule this file already applied to the first two.
+ *
+ * Deleting first and failing before the retirement would leave a live row
  * naming a deleted coupon — 0047's partial unique index still blocking the
- * correction, which is precisely the condition #581 exists to remove. Retiring
- * first and failing before the delete leaves one unattached Coupon in Stripe,
- * named by a retired row and by the result below. That residue is recoverable
- * and nameable; the other is not.
+ * correction, which is precisely the condition #581 exists to remove. So the
+ * retirement stays first.
+ *
+ * The detach goes BEFORE the delete for the same rule. A failed detach leaves
+ * an applied discount named by a retired row and by `detach` in the result:
+ * recoverable, and the operator knows exactly what to chase. Deleting first
+ * and then failing to detach would leave a live discount whose Coupon object
+ * no longer exists, which is strictly harder to reason about at the Stripe
+ * end.
+ *
+ * The delete still runs after a FAILED detach. It is not conditional, because
+ * the coupon's continued existence is not what keeps the discount on the
+ * subscription — the discount is the customer's, and the result says so in
+ * `detach` either way. Making the delete conditional would trade a residue
+ * this console names for a second one it also has to name.
  *
  * The capability checks and BOTH capabilities are the grant's, unchanged and
  * for its stated reason — see `grantTenantPricingOverride`. Checked inside
@@ -648,17 +769,21 @@ export async function revokeTenantPricingOverride(
       }),
     });
 
-    // ═══ THE DELETE IS OUTSIDE `auditedOperation`, ON PURPOSE ═══
+    // ═══ THE DETACH AND THE DELETE ARE OUTSIDE `auditedOperation` ═══
     //
-    // Do not tidy it back inside. `auditedOperation` writes its row only after
-    // `operation()` returns, and propagates anything that is not a recognised
-    // refusal while writing NOTHING. A `deleteCoupon` failure inside it would
-    // therefore throw past the audit write and destroy the record of a
-    // retirement that genuinely happened and is genuinely committed — the one
-    // fact in this operation that most needs accounting for.
+    // Do not tidy either back inside. `auditedOperation` writes its row only
+    // after `operation()` returns, and propagates anything that is not a
+    // recognised refusal while writing NOTHING. A failure of either step
+    // inside it would therefore throw past the audit write and destroy the
+    // record of a retirement that genuinely happened and is genuinely
+    // committed — the one fact in this operation that most needs accounting
+    // for.
     //
-    // Out here the row is already written, so a Stripe failure costs the delete
-    // and nothing else.
+    // Out here the row is already written, so a failed detach costs the
+    // detach and a Stripe failure costs the delete, and neither costs the
+    // account of the retirement.
+    const detached = await detach(input, retired.stripeCouponId);
+
     try {
       await stripeCatalogWriter.deleteCoupon(input.mode, retired.stripeCouponId);
     } catch {
@@ -672,12 +797,22 @@ export async function revokeTenantPricingOverride(
       // Not a failure result. The correction this revoke exists to unblock is
       // now grantable, and reporting `ok: false` would deny a state change this
       // console made and invite a retry that can only ever refuse.
-      return { ok: true, couponId: retired.stripeCouponId, couponDeleted: false };
+      return {
+        ok: true,
+        couponId: retired.stripeCouponId,
+        couponDeleted: false,
+        detach: detached,
+      };
     }
 
     // Includes Stripe's already-deleted case, which `deleteCoupon` resolves
     // rather than raising: the goal state holds, so nothing here re-handles it.
-    return { ok: true, couponId: retired.stripeCouponId, couponDeleted: true };
+    return {
+      ok: true,
+      couponId: retired.stripeCouponId,
+      couponDeleted: true,
+      detach: detached,
+    };
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return { ok: false, message: NO_PERMISSION_REVOKE };
