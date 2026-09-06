@@ -652,6 +652,67 @@ export async function readLatestRuns(): Promise<PairLatestRun[]> {
   );
 }
 
+interface LastCleanRow {
+  mode: StripeMode;
+  source: CatalogSource;
+  /** Same driver caveat as {@link LatestRunRow.ran_at}: a `Date` from `pg`, a
+   *  string from elsewhere. */
+  ran_at: string | Date;
+}
+
+/** When one (mode, source) pair last ran CLEAN — `null` when it never has. */
+export interface PairLastCleanRun {
+  readonly mode: StripeMode;
+  readonly source: CatalogSource;
+  /** ISO 8601, UTC. */
+  readonly ranAt: string | null;
+}
+
+/**
+ * The most recent CLEAN run for each (mode, source) pair.
+ *
+ * {@link readLatestRuns} cannot answer this. It returns the latest row
+ * whatever its outcome, so on a pair that has been failing nightly for a week
+ * it hands back last night's `failed` row — and a caller asking "when did this
+ * last agree with Stripe?" would read that row's `ranAt` as the answer and
+ * conclude the check is healthy. The two questions look like one question
+ * until the check breaks, which is precisely when the difference matters.
+ *
+ * This exists for `/api/internal/metrics`, which exports it as
+ * `tesserix_console_stripe_parity_last_clean_timestamp_seconds`. A gauge
+ * describing the LAST run reads "fine" forever once the runner stops; this is
+ * the staleness half that makes silence from the difference gauge believable.
+ * The same two-alert reasoning is written out at length in tesserix-k8s's
+ * `k8s/cluster/prometheus/rules/catalog_parity.yaml`, for the DIFFERENT
+ * (marketplace-api vs. compiled fallback) check of the same name.
+ *
+ * Same `DISTINCT ON (mode, source)` top-1-per-group and the same "every pair,
+ * always" discipline as {@link readLatestRuns} — a pair with no clean run
+ * anywhere in the table is reported with `ranAt: null`, never omitted. The
+ * metrics endpoint turns that null into 0 (the epoch), which is a staleness
+ * alert firing; an omitted pair would instead be an ABSENT SERIES, which
+ * looks like a failed scrape and alerts on nothing.
+ *
+ * It reads no `error` and no `differences`, and that is deliberate rather
+ * than incidental: its one consumer publishes to a surface where free text
+ * must never appear.
+ */
+export async function readLastCleanRuns(): Promise<PairLastCleanRun[]> {
+  const rows = await tesserixQuery<LastCleanRow>(
+    `SELECT DISTINCT ON (mode, source) mode, source, ran_at
+       FROM plan_catalog_parity_runs
+      WHERE outcome = 'clean'
+      ORDER BY mode, source, ran_at DESC`,
+  );
+
+  return STRIPE_MODES.flatMap((mode) =>
+    CATALOG_SOURCES.map((source) => {
+      const row = rows.find((r) => r.mode === mode && r.source === source);
+      return { mode, source, ranAt: row ? new Date(row.ran_at).toISOString() : null };
+    }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Revision amounts, read directly (Task 6 — `publish-executor.ts`)
 // ---------------------------------------------------------------------------

@@ -50,6 +50,7 @@ import {
 // `PublishOutcomeOrphan`, the trimmed shape `publish-outcome.tsx` declares
 // precisely so `Orphan` never has to.
 import { findOrphans } from "@/lib/billing/orphans";
+import { OBSERVATION_WINDOW_DAYS } from "@/lib/billing/observation-window";
 import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 // `isStripeReadUnavailable` is a VALUE import, and safely: this module is
 // already on this server component's value graph (`STRIPE_MODES`), and a
@@ -173,8 +174,11 @@ import type {
  */
 
 /** #327's number. Owned by the caller, per `readWindowStatus`'s own doc
- *  comment — this page is the one caller that gets to say 7. */
-export const OBSERVATION_WINDOW_DAYS = 7;
+ *  comment — and re-exported here rather than defined here since
+ *  `/api/internal/metrics` became a second caller of the same gate. See
+ *  `lib/billing/observation-window.ts`; existing importers of this name are
+ *  unaffected. */
+export { OBSERVATION_WINDOW_DAYS };
 
 export const WINDOW_SURFACE = "the parity observation window";
 export const CATALOG_SURFACE = "the plan catalog";
