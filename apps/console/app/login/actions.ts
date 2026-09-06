@@ -13,6 +13,12 @@ import {
   type LoginSession,
   type TotpVerified,
 } from "@/lib/auth/zitadel-login-client";
+import {
+  clearTotpFailures,
+  recordLoginIdentity,
+  recordTotpFailure,
+  totpCooldownFor,
+} from "@/lib/db/login-throttle";
 import { handoffUrl } from "./handoff";
 import {
   clearPendingSession,
@@ -58,6 +64,28 @@ const CREDENTIAL_FAILURE = "That username and password don't match.";
  * nothing about which half was wrong.
  */
 const TOTP_FAILURE = "That code didn't work. Try the next one from your authenticator.";
+
+/**
+ * A code the console declined to forward (#457).
+ *
+ * NOT "locked", and not by accident. The operator is not locked — Zitadel's
+ * counter was never touched, which is the entire point of declining — and the
+ * console is exactly where they would come to find out whether they were. The
+ * wrong word here sends someone to a break-glass procedure for a state that
+ * clears itself.
+ *
+ * So it says two things and no more: the attempt was not sent, and when to
+ * come back. The minutes are rounded UP and floored at one, because "try again
+ * in 0 minutes" reads as a bug and a rounded-down estimate would send them
+ * back a moment early to be refused again.
+ */
+function totpCooldownMessage(retryAt: Date): string {
+  const minutes = Math.max(1, Math.ceil((retryAt.getTime() - Date.now()) / 60_000));
+  return (
+    `Too many incorrect codes. This one wasn't sent — ` +
+    `try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`
+  );
+}
 
 /** Neither half is unrecoverable, but both need the whole login started over. */
 const RESTART = "This sign-in link has expired. Start again.";
@@ -114,6 +142,23 @@ export async function submitCredentials(input: {
         sessionId: session.id,
         sessionToken: session.token,
       });
+
+      // The ONE place a login name enters the attempt limiter, and it enters
+      // it here — after the password check passed, from the server's own hand
+      // — rather than at the code step from the cookie. `login-throttle.ts`
+      // carries the argument; the short version is that a login name read
+      // back out of `tx_login_pending` would be one the client chose, so an
+      // attacker could spend any operator's attempts without holding their
+      // password.
+      //
+      // After `savePendingSession` because it records the session that cookie
+      // carries: written first, a failure to set the cookie would leave a
+      // mapping for a login that never continued.
+      await recordLoginIdentity(
+        { authRequestId: input.authRequestId, sessionId: session.id },
+        loginName,
+      );
+
       return { outcome: "second-factor", factor: "totp" };
     }
 
@@ -154,6 +199,21 @@ export async function submitTotp(input: {
     return { outcome: "restart", message: RESTART };
   }
 
+  // The limiter's key, and note what it is NOT: a login name. Both halves are
+  // opaque server-issued handles, and the login name they resolve to is the
+  // one the server recorded at the password step.
+  const pendingLogin = { authRequestId: input.authRequestId, sessionId: pending.sessionId };
+
+  // BEFORE `addTotpCheck`, and before the format check too. Not spending a
+  // Zitadel attempt is the whole mechanism, so this cannot move below the
+  // call; it sits above the format check as well so a throttled operator who
+  // also mistypes learns the real reason rather than being told their code was
+  // wrong.
+  const cooldown = await totpCooldownFor(pendingLogin);
+  if (cooldown) {
+    return { outcome: "failed", message: totpCooldownMessage(cooldown.retryAt) };
+  }
+
   const code = input.code.replace(/\s+/g, "");
   if (!/^\d{6}$/.test(code)) {
     // Rejected without a round trip, and with the same message as a wrong
@@ -170,6 +230,14 @@ export async function submitTotp(input: {
     // the next code, not be sent back to the password field. It clears on
     // completion, on a restart, and on its own five-minute expiry.
     const verified: TotpVerified = await addTotpCheck(config, session, code);
+
+    // Mirrors Zitadel's own reset-on-success, and for the same reason: the
+    // code checked out, so whoever typed it is the operator, and carrying
+    // their earlier fumbles forward would let an ordinary week's typing
+    // accumulate into a cooldown. Here rather than after `finalize` because
+    // this is the moment the factor was proven; a login that then fails
+    // sufficiency has still proven it.
+    await clearTotpFailures(pendingLogin);
 
     // Back through the SAME decision, now carrying the verified check. This is
     // the only way to obtain the completion proof — the alternative, assuming
@@ -191,6 +259,13 @@ export async function submitTotp(input: {
     await clearPendingSession();
     return { outcome: "complete", callbackUrl };
   } catch (error) {
+    // Count ONLY a code Zitadel actually saw and actually rejected. Any other
+    // kind — an expired auth request, an unreachable IdP — may not have
+    // advanced Zitadel's own counter, so counting it would let a bad afternoon
+    // on the network spend an operator's attempts for them.
+    if (error instanceof LoginClientError && error.kind === "bad-credentials") {
+      await recordTotpFailure(pendingLogin);
+    }
     return failure(error, TOTP_FAILURE);
   }
 }
