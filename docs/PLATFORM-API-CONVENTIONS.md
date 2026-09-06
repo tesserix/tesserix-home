@@ -379,10 +379,27 @@ parameter.
 `internal/platform/idempotency`, table `platform_api_idempotency`
 (migration 0028).
 
-`Idempotency-Key` on any write. **Optional** — requiring it would have broken
-every caller on the day it shipped — but a header that is *present and unusable*
-is a 400, never silently ignored: a caller who meant to be idempotent and got it
-wrong must be told, not left believing their write was protected.
+`Idempotency-Key` on any write, and whether it is **optional or required
+depends on where the write lands**. Both halves are the code as it stands:
+
+- **A write this service stores itself** — the four modules that own their
+  tables: `tickets`, `tools`, `crm` and `announcements` — takes the header as
+  **optional**. Requiring it would have broken every caller on the day it
+  shipped. A header that is *present and
+  unusable* is still a 400, never silently ignored: a caller who meant to be
+  idempotent and got it wrong must be told, not left believing their write was
+  protected.
+- **A FEDERATED write** — one this service forwards to a product that owns the
+  record — **requires** it and refuses without one, never generating a key to
+  fill the gap. A key invented here would be fresh on every retry, which is the
+  same as having none; the uniqueness that matters is of the caller's intent.
+  `federation.Client.write` refuses a keyless write in the kernel too, so a
+  handler that forgot would fail rather than send. Three modules do this today:
+  `tenants` (suspend, unsuspend), `emailtemplates` (save, test send) and
+  `billing` (the two tenant-discount writes).
+
+The rules below govern the local store; a federated key is forwarded to the
+product and not stored here at all.
 
 - The key is scoped to **(principal, key)**. Without the principal it is a
   guessable handle onto somebody else's stored response, and stored responses
