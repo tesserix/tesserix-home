@@ -258,6 +258,61 @@ describe("createPromoCodeAction", () => {
 
     expect(result).toEqual({ ok: false, message: "That change was not saved." });
   });
+
+  it("logs the cause it could not describe, because nothing else will", async () => {
+    // THE ROW THIS EXISTS FOR. Every other refusal branch names its reason in
+    // the returned sentence; this one cannot, so the thrown error is the only
+    // copy of the diagnosis. It used to be discarded — a live coupon mint
+    // failed on 2026-09-06 and the console pods carried zero error lines for
+    // the six hours around it, so neither the operator nor the logs could say
+    // what Stripe had refused.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      signIn(["billing"]);
+      const cause = new Error("ECONNREFUSED 10.0.0.1:5432");
+      vi.mocked(createPromoCode).mockRejectedValue(cause);
+
+      await createPromoCodeAction({
+        code: "LAUNCH50",
+        trialExtensionDays: 1,
+        discount: null,
+        validFrom: null,
+        validUntil: null,
+        maxRedemptions: null,
+      });
+
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining("LAUNCH50"), cause);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not log a refusal it CAN describe, so the log stays worth reading", async () => {
+    // A constraint violation already reaches the operator as a sentence.
+    // Logging it too would make an error line the normal outcome of a typo,
+    // which is how a log stops being read.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      signIn(["billing"]);
+      vi.mocked(createPromoCode).mockRejectedValue(
+        Object.assign(new Error("duplicate"), { constraint: "promo_codes_code_unique" }),
+      );
+
+      const result = await createPromoCodeAction({
+        code: "LAUNCH50",
+        trialExtensionDays: 1,
+        discount: null,
+        validFrom: null,
+        validUntil: null,
+        maxRedemptions: null,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe("updatePromoCodeAction", () => {
