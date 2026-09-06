@@ -12,7 +12,13 @@ vi.mock("./tesserix", () => ({
 import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { tesserixQuery } from "./tesserix";
-import { readCatalogAmounts, readCatalogRows, readLatestRuns, recordParityRun } from "./plan-catalog-repo";
+import {
+  readCatalogAmounts,
+  readCatalogRows,
+  readLastCleanRuns,
+  readLatestRuns,
+  recordParityRun,
+} from "./plan-catalog-repo";
 
 /**
  * The catalog read and the run write — specifically the two places where a
@@ -339,5 +345,55 @@ describe("readLatestRuns", () => {
     expect(
       runs.find((r) => r.mode === "live" && r.source === "mark8ly")?.run?.differences,
     ).toEqual(differences);
+  });
+});
+
+describe("readLastCleanRuns", () => {
+  it("returns every (mode, source) pair, with null for one that has never run clean", async () => {
+    // Same "every pair, always" discipline as `readLatestRuns`. The metrics
+    // endpoint turns `null` into an epoch timestamp so a staleness alert
+    // fires; a pair OMITTED here would instead vanish from the exposition,
+    // which reads as a scrape failure rather than as a pair nothing has ever
+    // checked.
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      { mode: "test", source: "mark8ly", ran_at: "2026-09-06T02:15:00.000Z" },
+    ] as never);
+
+    const runs = await readLastCleanRuns();
+
+    expect(runs.map((r) => `${r.mode}/${r.source}`)).toEqual(
+      STRIPE_MODES.flatMap((mode) => CATALOG_SOURCES.map((source) => `${mode}/${source}`)),
+    );
+    expect(runs.find((r) => r.mode === "test" && r.source === "mark8ly")?.ranAt).toBe(
+      "2026-09-06T02:15:00.000Z",
+    );
+    expect(runs.find((r) => r.mode === "live" && r.source === "mark8ly")?.ranAt).toBeNull();
+  });
+
+  it("asks only for clean runs, keyed on both axes", async () => {
+    // Asserted on the SQL, for the same reason `readLatestRuns`'s twin
+    // assertion is: with one source in `CATALOG_SOURCES` no fixture can tell
+    // a mode-keyed query from a pair-keyed one, and a query that forgot the
+    // `clean` filter would report the last run of ANY outcome as the last
+    // clean one — the staleness alert would then never fire while the check
+    // failed nightly.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+
+    await readLastCleanRuns();
+
+    const [sql] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(String(sql)).toContain("DISTINCT ON (mode, source)");
+    expect(String(sql)).toContain("outcome = 'clean'");
+    expect(String(sql)).toContain("ORDER BY mode, source, ran_at DESC");
+  });
+
+  it("normalises whatever the driver hands back to ISO 8601 UTC", async () => {
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      { mode: "test", source: "mark8ly", ran_at: new Date("2026-09-06T02:15:00.000Z") },
+    ] as never);
+
+    const runs = await readLastCleanRuns();
+
+    expect(runs.find((r) => r.mode === "test")?.ranAt).toBe("2026-09-06T02:15:00.000Z");
   });
 });

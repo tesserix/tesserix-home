@@ -229,3 +229,40 @@ describe("every /api/v1 route is allowlisted, in both forms", () => {
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * The scrape exemption (tesserix-home#579).
+ *
+ * `/api/internal/metrics` is read by PROMETHEUS, which holds no console
+ * session and cannot mint one — so without an entry in the middleware's
+ * allowlist the route never runs and every scrape is a 401 that reads, from
+ * Prometheus's side, exactly like a route that does not exist. This is a
+ * second deliberate hole in the session gate and it is narrower than
+ * MACHINE_AUTH_PATHS: those routes authenticate their caller themselves,
+ * while this one does not authenticate at all. What protects it is the
+ * console's NetworkPolicy (ingress from `monitoring` and `istio-system` only)
+ * and the fact that its whole output is counts and timestamps.
+ *
+ * Exact-match, both forms, for the identical reasons MACHINE_AUTH_PATHS is —
+ * see that constant's comment.
+ */
+describe("the metrics scrape path", () => {
+  it("lets an unauthenticated GET through, in both path forms", async () => {
+    for (const path of ["/api/internal/metrics", "/api/internal/metrics/"]) {
+      const res = await middleware(req(`${BASE}${path}`));
+      expect(res.status, path).toBe(200);
+    }
+  });
+
+  it("does not exempt anything else under /api/internal", async () => {
+    // The parity-check route lives next door and is operator-triggered. A
+    // prefix match here would open it to anyone who can reach the pod.
+    const res = await middleware(req(`${BASE}/api/internal/parity-check`));
+    expect(res.status).toBe(401);
+  });
+
+  it("does not exempt a path that merely starts with the literal", async () => {
+    const res = await middleware(req(`${BASE}/api/internal/metrics/../parity-check`));
+    expect(res.status).toBe(401);
+  });
+});

@@ -116,6 +116,40 @@ function isMachineAuthPath(pathname: string): boolean {
   return MACHINE_AUTH_PATHS.includes(pathname);
 }
 
+// The Prometheus scrape (tesserix-home#579). A THIRD kind of exemption, and
+// the widest of the three, so it is worth being precise about what it is:
+//
+// - PUBLIC_PATHS are pages open to anyone, because they exist to create the
+//   session they could otherwise require.
+// - MACHINE_AUTH_PATHS are open to anyone but authenticate the caller
+//   themselves, with a Zitadel machine token this middleware cannot verify.
+// - This path does not authenticate AT ALL. Prometheus holds no console
+//   session, cannot mint one, and sends no credential of any kind.
+//
+// What stands in for auth is the console's NetworkPolicy — `charts/apps/
+// console/templates/network-policy.yaml` in tesserix-k8s admits ingress from
+// the `monitoring` and `istio-system` namespaces only — plus the endpoint's
+// output, which is counts and timestamps and nothing else. `route.ts` states
+// that second half as a rule it holds itself to, and its suite proves it.
+//
+// Without an entry here the route never runs: `unauthorized()` answers every
+// scrape with a 401, which from Prometheus's side is indistinguishable from a
+// route that was never deployed. The target would read `up 0` and the alert
+// written against these series would be quiet for a reason nobody could see.
+//
+// EXACT MATCH, BOTH FORMS, for the identical reasons MACHINE_AUTH_PATHS gives
+// above — and the argument is stronger here, since a prefix match would put
+// the operator-only `/api/internal/parity-check` one crafted segment away
+// from an unauthenticated hole.
+const SCRAPE_PATHS: ReadonlyArray<string> = [
+  "/api/internal/metrics",
+  "/api/internal/metrics/",
+];
+
+function isScrapePath(pathname: string): boolean {
+  return SCRAPE_PATHS.includes(pathname);
+}
+
 function unauthorized(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname.startsWith("/api/")) {
@@ -196,6 +230,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   if (isMachineAuthPath(pathname)) {
+    return NextResponse.next();
+  }
+
+  if (isScrapePath(pathname)) {
     return NextResponse.next();
   }
 
