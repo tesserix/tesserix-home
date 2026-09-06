@@ -32,6 +32,7 @@ import { sourceLabel } from "@/lib/audit";
 import { NO_REASON_CODES, type ReasonCodeCatalog } from "@/lib/tenant-lifecycle";
 import { splitTenantId, type EstateTenant, type TenantSourceFailure } from "@/lib/tenants";
 import { TenantLifecycleAction } from "./tenant-lifecycle-controls";
+import { TenantPricingOverrideAction } from "./tenant-pricing-override-controls";
 
 /**
  * The client half of the tenant directory.
@@ -234,9 +235,10 @@ export function TenantDirectory({
               <TableHead>Owner</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>Created</TableHead>
-            {/* Not "Actions" plural: there is exactly one, and which one it is
-                depends on the row's own status. */}
-            <TableHead>Action</TableHead>
+            {/* Plural since T3 mounted the pricing override control beside
+                the lifecycle one: the cell holds a suspend/unsuspend verb
+                chosen by the row's own status, and a pricing override pair. */}
+            <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -271,22 +273,21 @@ export function TenantDirectory({
                     <Absent />
                   )}
                 </TableCell>
-                {/* Last column, deliberately. Suspending is consequential
-                    enough that it should be read after the row, not before
-                    it — an operator scanning left to right meets the tenant,
-                    its status and its owner before the control that changes
-                    them. */}
+                {/* Last column, deliberately. Suspending a tenant and
+                    changing what it is charged are both consequential enough
+                    to be read after the row, not before it — an operator
+                    scanning left to right meets the tenant, its status and
+                    its owner before the controls that change them. */}
                 <TableCell>
-                  <TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />
-                  {/* NOT THE ONLY ROW CONTROL THAT EXISTS.
-                      `tenant-pricing-override-controls.tsx` is built and
-                      tested and deliberately NOT rendered here: it mints a
-                      real Stripe coupon that nothing attaches until #660 is
-                      called (#331, T3), and this console deploys on merge.
-                      Mounting it is T3's step — see that file's header and
-                      `.planning/quick/260904-po1-tenant-pricing-override/PLAN.md`.
-                      Until then, an override is not reachable from any
-                      surface, which is the state the plan asked for. */}
+                  {/* Two controls, stacked. `TenantPricingOverrideAction`
+                      renders both of its own buttons and both of its dialogs,
+                      so mounting the whole affordance is this one element —
+                      and it decides for itself whether this console mints for
+                      the product that owns the row. */}
+                  <div className="flex flex-col items-start gap-2">
+                    <TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />
+                    <TenantPricingOverrideAction tenant={tenant} />
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
