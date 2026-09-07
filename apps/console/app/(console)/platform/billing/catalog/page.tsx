@@ -16,12 +16,15 @@ import { PlatformApiError } from "@/lib/platform-api";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   readCatalogRows,
+  readEntitlements,
+  readLatestEntitlementRun,
   readLatestRuns,
   readLivePublication,
   readModeDivergence,
   readRevisionRows,
   readWindowStatus,
   type CatalogRow,
+  type LatestEntitlementRun,
   type LivePublication,
   type ModeDivergence,
   type PairLatestRun,
@@ -74,6 +77,9 @@ import type { PromoCodeView } from "./promo-codes-panel";
 import { listPromoCodes, readStripeCoupons } from "@/lib/db/promo-codes-repo";
 import { ObservationStrip } from "./observation-strip";
 import { ModeDivergenceLine } from "./mode-divergence-line";
+// A client component rendered as an ELEMENT below, never called as a
+// function — the same rule every `"use client"` import on this page follows.
+import { EntitlementPanel } from "./entitlement-panel";
 // Type-only, deliberately: `publish-outcome.tsx` carries a load-bearing
 // `"use client"`, and these two are the display shapes this page maps its
 // server-side rows INTO — never a value this server component calls.
@@ -223,6 +229,16 @@ export const PROMO_CODES_SURFACE = "promo codes";
  *  that could not be read. */
 export const DIVERGENCE_SURFACE = "the test-vs-live catalog comparison";
 
+/**
+ * #146 T2's two reads, named separately because an operator loses different
+ * things when each fails. The first is "does the console hold entitlements for
+ * the revision this mode serves"; the second is "what did the last comparison
+ * of them say". One can answer while the other cannot, and copy naming "the
+ * plan catalog" for either would leave an operator guessing which.
+ */
+export const ENTITLEMENTS_SURFACE = "the stored plan entitlements";
+export const ENTITLEMENT_RUN_SURFACE = "the latest entitlement parity run";
+
 /** Query params this page reads. Matches `TenantSearchParams`'s shape —
  *  `string | string[] | undefined` is what Next actually hands a page. */
 export type CatalogSearchParams = Record<string, string | string[] | undefined>;
@@ -322,6 +338,12 @@ export function promoCodesReadError(caught: unknown): SurfaceError | null {
 }
 export function divergenceReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, DIVERGENCE_SURFACE);
+}
+export function entitlementsReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, ENTITLEMENTS_SURFACE);
+}
+export function entitlementRunReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, ENTITLEMENT_RUN_SURFACE);
 }
 
 /** Thrown by each guarded read below when the console has no database
@@ -465,6 +487,54 @@ async function readDraftRows(revisionId: string): Promise<CatalogRow[]> {
 }
 
 /**
+ * How many entitlement rows the mode's LIVE revision holds for this source —
+ * #146 T2.
+ *
+ * A DEPENDENT read, on `readPublication`, for the same structural reason
+ * `readDraftRows` depends on `readDraft`: there is no revision id to count
+ * rows for until that read resolves. It settles in its own `try`/`catch`
+ * below, so a failure here narrows into `entitlementsState` alone.
+ *
+ * # The LIVE revision, not the draft, and that is the whole decision
+ *
+ * `performEntitlementParityCheck` takes the mode off the PRODUCT's response,
+ * asks `readLivePublication(mode)` for the revision, and compares
+ * `readEntitlements(publication.revisionId, source)`. So the live revision is
+ * the only one the check can see. Counting the draft's rows instead would put
+ * a number on screen that parity structurally cannot read, and an operator who
+ * seeded a draft would watch a "seeded" line sit beside a permanent
+ * `not_bootstrapped` run with nothing explaining the contradiction.
+ *
+ * # `readEntitlements`, not a new `COUNT(*)` read
+ *
+ * The existing read already returns exactly these rows filtered on
+ * `(revision_id, source)` — the pair 0052's key is — and the result is at most
+ * 104 rows. A second query for its length would be a second place the source
+ * filter could be forgotten, which is the merge `readEntitlements`'s own doc
+ * comment refuses.
+ */
+async function readEntitlementCount(revisionId: string): Promise<number> {
+  if (!isDatabaseConfigured()) notConfigured();
+  return (await readEntitlements(revisionId, SINGLE_SOURCE)).length;
+}
+
+/**
+ * The last entitlement parity run, whatever it said — #146 T2.
+ *
+ * An INDEPENDENT sibling in the `allSettled` array below, and takes no mode on
+ * purpose: an entitlement run is filed under whichever mode the product
+ * reported reading, never one the operator picked, so its answer does not move
+ * when the toggle does. `readDivergence` is the other read here with that
+ * property.
+ *
+ * `null` is an ANSWER — nothing has ever been recorded — and never a failure.
+ */
+async function readEntitlementRun(): Promise<LatestEntitlementRun | null> {
+  if (!isDatabaseConfigured()) notConfigured();
+  return readLatestEntitlementRun(SINGLE_SOURCE);
+}
+
+/**
  * The mode's most recent publish attempt, whatever became of it. `null` is
  * the ordinary answer for a mode nobody has published — `live`, most days —
  * and is never treated as a failure, the same discipline `readPublication`
@@ -596,6 +666,7 @@ export default async function PlanCatalog({
     orphansResult,
     promoCodesResult,
     divergenceResult,
+    entitlementRunResult,
   ] = await Promise.allSettled([
     readWindow(),
     readCatalog(mode),
@@ -612,6 +683,10 @@ export default async function PlanCatalog({
     // blank the catalog table or the observation window, and neither of those
     // failing may take this line down with them.
     readDivergence(),
+    // Its own slot like every other read here: an entitlement run that cannot
+    // be read must not blank the catalog table or the observation window, and
+    // neither of those failing may take this line down with them.
+    readEntitlementRun(),
   ]);
 
   const window = windowResult.status === "fulfilled" ? windowResult.value : null;
@@ -652,6 +727,23 @@ export default async function PlanCatalog({
     // unreachable in practice and is written this way so the surface cannot
     // start reporting "nothing here yet" if that ever changes.
     rows: divergence ? [divergence] : [],
+    filtered: false,
+  });
+
+  const entitlementRun =
+    entitlementRunResult.status === "fulfilled" ? entitlementRunResult.value : null;
+  const entitlementRunState: SurfaceState = resolveState({
+    isLoading: false,
+    error:
+      entitlementRunResult.status === "rejected"
+        ? entitlementRunReadError(entitlementRunResult.reason)
+        : null,
+    // ONE row whenever the read SUCCEEDED, including when it returned `null`.
+    // "No entitlement parity run has ever been recorded" is an answer the
+    // panel states in its own words — and states as the absence of evidence
+    // rather than as agreement — so it must not resolve to `empty`, whose
+    // generic copy would say nothing about the distinction that matters.
+    rows: entitlementRunResult.status === "fulfilled" ? [entitlementRunResult.value] : [],
     filtered: false,
   });
 
@@ -811,6 +903,54 @@ export default async function PlanCatalog({
     }
   }
 
+  // The live revision's OWN entitlement rows — the second dependent read of
+  // #146 T2, standing to `readPublication` exactly as `readDraftRows` stands
+  // to `readDraft`. See `readEntitlementCount` for why it counts the LIVE
+  // revision and not the draft.
+  //
+  // `null` is carried through deliberately and means "there is no revision to
+  // count", which `summarizeSeed` states as a different sentence from `0`.
+  let entitlementCount: number | null = null;
+  //
+  // Three branches, and the third is the one worth naming. `publicationState`
+  // is `empty` — not `ready` — for a mode nobody has published, which is the
+  // ordinary state of `live`; that is an ANSWER the panel states ("nothing is
+  // published in live, so there is no revision to hold entitlements"), so it
+  // resolves to one row and `ready`. But a publication read that FAILED is not
+  // that answer, and rendering it as one would tell an operator there is
+  // nothing to seed when what actually happened is that nobody knows. So the
+  // failing state is carried through instead of being flattened into "no
+  // publication".
+  let entitlementsState: SurfaceState = resolveState({
+    isLoading: false,
+    error: null,
+    rows: [null],
+    filtered: false,
+  });
+  if (publication) {
+    try {
+      entitlementCount = await readEntitlementCount(publication.revisionId);
+      entitlementsState = resolveState({
+        isLoading: false,
+        error: null,
+        rows: [entitlementCount],
+        filtered: false,
+      });
+    } catch (caught) {
+      entitlementsState = resolveState({
+        isLoading: false,
+        error: entitlementsReadError(caught),
+        rows: [],
+        filtered: false,
+      });
+    }
+  } else if (publicationState.kind !== "empty") {
+    // Inherited verbatim rather than re-derived: the reason this section
+    // cannot answer IS the publication read's reason, and a second copy of the
+    // copy could only disagree with it.
+    entitlementsState = publicationState;
+  }
+
   // Read-only for THIS page's own purposes (deciding what `AuthoringPanel`'s
   // controls may attempt) — every server action behind those controls
   // re-checks the identical capability itself (`checkOperatorCapability` in
@@ -851,6 +991,23 @@ export default async function PlanCatalog({
         }
         divergence={
           <ModeDivergenceLine divergence={divergence} divergenceState={divergenceState} />
+        }
+        entitlements={
+          <EntitlementPanel
+            mode={mode}
+            source={SINGLE_SOURCE}
+            revisionId={publication?.revisionId ?? null}
+            seeded={entitlementCount}
+            seededState={entitlementsState}
+            lastRun={entitlementRun}
+            lastRunState={entitlementRunState}
+            // `billing`, the capability BOTH entitlement actions check for
+            // themselves — the same value the draft controls mirror, read the
+            // same way. Not `canPublish`: nothing on this section reaches a
+            // Stripe write, which is the argument `rerunParityCheckAction`
+            // already settled for the price re-run beside it.
+            canManage={canDraft}
+          />
         }
         draftRows={draftRows}
         catalog={catalog}

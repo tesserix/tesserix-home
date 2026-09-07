@@ -35,6 +35,9 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
   isDatabaseConfigured: () => true,
 }));
 
+const readEntitlements = vi.fn();
+const readLatestEntitlementRun = vi.fn();
+
 const readWindowStatus = vi.fn();
 const readCatalogRows = vi.fn();
 const readLatestRuns = vi.fn();
@@ -50,6 +53,11 @@ vi.mock("@/lib/db/plan-catalog-repo", async (importOriginal) => ({
   readLivePublication: (...args: unknown[]) => readLivePublication(...args),
   readRevisionRows: (...args: unknown[]) => readRevisionRows(...args),
   readModeDivergence: (...args: unknown[]) => readModeDivergence(...args),
+  // #146 T2's two reads. Stood in for the same reason every sibling above is:
+  // the real ones reach `tesserixQuery`, and this suite is about WHEN the page
+  // asks each question and how it narrows each answer, not about Postgres.
+  readEntitlements: (...args: unknown[]) => readEntitlements(...args),
+  readLatestEntitlementRun: (...args: unknown[]) => readLatestEntitlementRun(...args),
 }));
 
 const currentDraft = vi.fn();
@@ -385,6 +393,11 @@ describe("the mounted authoring surface", () => {
     // No promo code has been authored — the state this surface ships in.
     listPromoCodes.mockResolvedValue([]);
     readStripeCoupons.mockResolvedValue([]);
+    // #146 T2's ordinary state, and the one production is actually in: nothing
+    // has ever been seeded and no entitlement parity run has ever been
+    // recorded. `null` from the run read is an ANSWER, not a failure.
+    readEntitlements.mockResolvedValue([]);
+    readLatestEntitlementRun.mockResolvedValue(null);
   }
 
   function signIn(roles: readonly string[]) {
@@ -624,6 +637,70 @@ describe("the mounted authoring surface", () => {
     // editor built on nothing, and never dressed up as "no draft yet".
     expect(screen.queryByRole("button", { name: /start a draft/i })).toBeNull();
     expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+  });
+
+  /* -------------------------------------------------------------------- *
+   * #146 T2 — the entitlement section
+   * -------------------------------------------------------------------- */
+
+  it("states the unseeded, never-run state without letting either read as clean", async () => {
+    // The state production is actually in: zero entitlement rows and no
+    // entitlement parity run ever recorded. Both are absences, and neither may
+    // be rendered as agreement.
+    setUpSuccessfulReads();
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByRole("heading", { name: "Entitlements" })).toBeInTheDocument();
+    expect(screen.getByText(/nothing is published in test/)).toBeInTheDocument();
+    expect(screen.getByText(/absence of evidence, not agreement/)).toBeInTheDocument();
+    // The honesty the plan requires of this surface: no nightly job runs it.
+    expect(
+      screen.getByText(/Entitlement parity runs only when someone presses the button/),
+    ).toBeInTheDocument();
+  });
+
+  it("counts the LIVE revision's entitlement rows, and asks for them only once a publication names one", async () => {
+    setUpSuccessfulReads();
+    readLivePublication.mockResolvedValue({
+      id: "pub-1",
+      revisionId: "rev-1",
+      publishedBy: "operator-1",
+      publishedAt: "2026-09-01T00:00:00.000Z",
+    });
+    readEntitlements.mockResolvedValue(Array.from({ length: 104 }, () => ({})));
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    // The revision the parity check reads — `performEntitlementParityCheck`
+    // asks `readLivePublication(mode)` for it — and this source, never a merge
+    // of every product's rows.
+    expect(readEntitlements).toHaveBeenCalledWith("rev-1", SINGLE_SOURCE);
+    expect(screen.getByText(/104 Mark8ly entitlement rows on the revision live in test/)).toBeInTheDocument();
+  });
+
+  it("does not ask for entitlement rows when the mode has no publication", async () => {
+    setUpSuccessfulReads();
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    expect(readEntitlements).not.toHaveBeenCalled();
+  });
+
+  it("narrows a failed entitlement-run read without touching the observation window", async () => {
+    setUpSuccessfulReads();
+    readLatestEntitlementRun.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    // #327's gate evidence is a separate read of a separate `check_kind`, and
+    // a failure on the entitlement half must not reach it.
+    expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
+    expect(screen.queryByText(/Never run/)).toBeNull();
   });
 
   it("renders the test-vs-live line, and never lets it read as agreement when live is unpublished", async () => {
