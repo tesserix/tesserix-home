@@ -16,14 +16,15 @@
 // One row per applied migration — full history, not just current version.
 
 import fs from "node:fs/promises";
-import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import pg from "pg";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.join(__dirname, "..", "db", "migrations");
-const FILE_PATTERN = /^(\d{4})_(.+)\.sql$/;
+// The filename pattern, the directory and the listing live in one place —
+// `apps/console/scripts/emit-schema-version.mjs` derives the versions a
+// console image expects from the SAME function, so the two can never disagree
+// about what a migration is. See that module's header for why the drift would
+// be silent.
+import { MIGRATIONS_DIR, listMigrationFiles } from "./migration-files.mjs";
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -32,23 +33,6 @@ function requireEnv(name) {
     process.exit(1);
   }
   return v;
-}
-
-async function listMigrationFiles() {
-  const entries = await fs.readdir(MIGRATIONS_DIR);
-  const files = [];
-  for (const entry of entries) {
-    const match = entry.match(FILE_PATTERN);
-    if (!match) continue;
-    files.push({
-      version: Number.parseInt(match[1], 10),
-      name: match[2],
-      filename: entry,
-      fullPath: path.join(MIGRATIONS_DIR, entry),
-    });
-  }
-  files.sort((a, b) => a.version - b.version);
-  return files;
 }
 
 async function main() {

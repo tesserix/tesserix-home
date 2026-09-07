@@ -47,6 +47,21 @@ RUN pnpm --filter @tesserix/platform-auth build && pnpm --filter @tesserix/conso
 # the cluster with `Cannot find package 'stripe'`.
 RUN pnpm --filter console build:cron
 
+# The startup schema preflight (#610 follow-up), and the version file it reads.
+#
+# Same packaging as build:cron above and for the same reason — the standalone
+# output has no TypeScript in it — so the same external/inline rule applies:
+# `pg` stays external because it IS in the standalone node_modules. This bundle
+# touches no Stripe SDK, so there is nothing to inline.
+#
+# `build:schema-version` walks `apps/web/db/migrations/` and writes the list of
+# versions THIS SOURCE TREE ships into dist/schema-version.json. It runs here,
+# in the builder, because the answer is a property of the image and must not be
+# something a deployer can set — see the script's header. It fails the build if
+# it finds no migrations, rather than emitting an empty list that would make the
+# preflight pass against any database at all.
+RUN pnpm --filter console build:preflight && pnpm --filter console build:schema-version
+
 # Production stage
 FROM node:22-alpine AS runner
 
@@ -72,10 +87,47 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/console/public ./apps/consol
 # from the file — which reaches this image's hoisted /app/node_modules only
 # from here. The CronJob in `tesserix-k8s` overrides `command` to run it.
 COPY --from=builder --chown=nextjs:nodejs /app/apps/console/dist/parity-check.mjs ./apps/console/scripts/parity-check.mjs
+# The startup preflight and its baked version list. INSIDE the standalone tree
+# for the same reason the parity bundle is — `pg` is external to it, so Node
+# finds the driver only by walking up from here to /app/node_modules — and the
+# two files must land in the SAME directory, because the bundle resolves the
+# JSON relative to its own `import.meta.url` rather than the working directory.
+COPY --from=builder --chown=nextjs:nodejs /app/apps/console/dist/require-schema-version.mjs ./apps/console/scripts/require-schema-version.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/apps/console/dist/schema-version.json ./apps/console/scripts/schema-version.json
 
 USER nextjs
 EXPOSE 3000
 ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
 
-CMD ["node", "apps/console/server.js"]
+# The preflight runs FIRST and the server only if it succeeds.
+#
+# Migrations here are applied by hand while Kargo deploys on merge, so an image
+# can reach the cluster before the schema it needs does. The preflight compares
+# the versions baked in above against the database's `schema_migrations` ledger
+# and exits non-zero if any are missing, so the port never opens — which, at
+# `maxSurge: 0, maxUnavailable: 1` across 2 replicas, halts the rollout with an
+# old replica (the one the current schema actually matches) still serving. The
+# readiness probe is `tcpSocket` and is unchanged; this composes with it rather
+# than replacing it, and adds no HTTP surface.
+#
+# `exec` ON THE SERVER, so Node REPLACES the shell and is PID 1 for the entire
+# life of the container that matters — only the short-lived preflight runs
+# under the shell. Without PID 1, SIGTERM at the end of a rollout would reach
+# the shell and not the process that has to drain, and the pod would sit until
+# `terminationGracePeriodSeconds` and get SIGKILLed.
+#
+# MEASURED, not assumed, on node:22-alpine: ash already applies its own
+# implicit exec to the last command of `A && B`, so dropping the keyword
+# happens to behave identically TODAY. That is a shell optimisation, not a
+# contract — it does not hold once anything is appended after the server, and
+# it is not something a future editor of this line should have to know. The
+# keyword makes the guarantee explicit and costs nothing.
+#
+# Verified with `docker stop -t 10`: `ps` inside the container reports
+# `1 node apps/console/server.js`, the process logs its SIGTERM handler, and
+# the container stops in 0s rather than at the grace deadline.
+#
+# `&&` and not `;` — a preflight that fails must stop the container, not be
+# logged and stepped over.
+CMD ["/bin/sh", "-c", "node apps/console/scripts/require-schema-version.mjs && exec node apps/console/server.js"]
