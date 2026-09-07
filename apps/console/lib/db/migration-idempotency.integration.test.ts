@@ -305,3 +305,105 @@ describe("0052_plan_catalog_entitlements.sql", () => {
     }
   });
 });
+
+/**
+ * The same claim for 0053_parity_runs_check_kind.sql, whose mechanism is
+ * 0040's and 0051's TOGETHER — the combination none of the cases above covers.
+ *
+ * It is an `ADD COLUMN IF NOT EXISTS` (0040's shape) plus a
+ * `DROP CONSTRAINT IF EXISTS` / `ADD CONSTRAINT` pair (0051's) plus a
+ * `CREATE INDEX IF NOT EXISTS`, in one file. Each of the three is individually
+ * re-runnable and the file is only re-runnable if all three are — an
+ * `ADD CONSTRAINT` without its matching drop passes its first application and
+ * wedges every migration after 0053 on its second, which is the failure #509
+ * paid for.
+ *
+ * The chain below is what the runs table needs before the column can be added:
+ * 0032 creates the prices table 0035 alters, 0033 creates the runs table, 0034
+ * adds `mode`, 0035 adds `publication_id`, 0044/0045 add `source` and drop its
+ * default.
+ */
+describe("0053_parity_runs_check_kind.sql", () => {
+  it("applies cleanly onto a database that already has its effect", async () => {
+    const db = new PGlite();
+
+    try {
+      for (const name of [
+        "0032_plan_catalog.sql",
+        "0033_plan_catalog_parity_runs.sql",
+        "0034_parity_runs_mode.sql",
+        "0035_plan_catalog_revisions.sql",
+        "0044_parity_runs_source.sql",
+        "0045_parity_runs_source_drop_default.sql",
+      ]) {
+        await db.exec(readMigration(name));
+      }
+
+      const migration = readMigration("0053_parity_runs_check_kind.sql");
+      await db.exec(migration);
+      await expect(db.exec(migration)).resolves.toBeDefined();
+
+      // Type and nullability, not just presence: `ADD COLUMN IF NOT EXISTS`
+      // skips on the column NAME alone, so it would no-op over a pre-existing
+      // column of the wrong type.
+      const columns = await db.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(
+        `SELECT column_name, data_type, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_name = 'plan_catalog_parity_runs' AND column_name = 'check_kind'`,
+      );
+      expect(columns.rows).toEqual([
+        {
+          column_name: "check_kind",
+          data_type: "text",
+          is_nullable: "NO",
+          // The default SURVIVES the second application. It is what keeps the
+          // previously-deployed image's `recordParityRun` — which names no
+          // check kind — writing rows during the rollout window, and a
+          // migration that dropped it on re-run would break the nightly
+          // CronJob rather than merely fail.
+          column_default: "'price'::text",
+        },
+      ]);
+
+      // The CHECK exists exactly once and still bites after the second
+      // application — the case a `DROP CONSTRAINT` that reached too far, or an
+      // `ADD` that never re-ran, would each pass a count.
+      const checks = await db.query<{ conname: string }>(
+        `SELECT conname FROM pg_constraint
+          WHERE conrelid = 'plan_catalog_parity_runs'::regclass
+            AND contype = 'c'
+            AND conname = 'plan_catalog_parity_runs_check_kind_is_a_known_kind'`,
+      );
+      expect(checks.rows).toHaveLength(1);
+
+      await expect(
+        db.query(
+          `INSERT INTO plan_catalog_parity_runs (check_kind, mode, source, outcome)
+           VALUES ('subscribers', 'test', 'mark8ly', 'failed')`,
+        ),
+      ).rejects.toThrow(/plan_catalog_parity_runs_check_kind_is_a_known_kind/);
+
+      // 0034's and 0044's CHECKs are untouched by this file, and a
+      // `DROP CONSTRAINT IF EXISTS` aimed at the wrong name would silently
+      // remove one of them instead of failing.
+      const survivors = await db.query<{ conname: string }>(
+        `SELECT conname FROM pg_constraint
+          WHERE conrelid = 'plan_catalog_parity_runs'::regclass AND contype = 'c'
+          ORDER BY conname`,
+      );
+      expect(survivors.rows.map((r) => r.conname)).toEqual(
+        expect.arrayContaining([
+          "plan_catalog_parity_runs_mode_is_a_known_mode",
+          "plan_catalog_parity_runs_source_is_a_known_source",
+        ]),
+      );
+    } finally {
+      await db.close();
+    }
+  });
+});

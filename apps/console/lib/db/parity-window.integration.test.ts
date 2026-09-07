@@ -46,6 +46,13 @@ const MIGRATIONS = [
   "0034_parity_runs_mode.sql",
   "0044_parity_runs_source.sql",
   "0045_parity_runs_source_drop_default.sql",
+  // 0053 adds `check_kind`, and both reads below now filter on it. Applied
+  // here for the same reason 0045 is: this suite runs against the schema prod
+  // ends up with. Without it the reads reference a column that does not exist,
+  // and with it the suite can assert the property the column was added for —
+  // that an entitlement run is not evidence about prices. See the
+  // "entitlement runs" block at the bottom of this file.
+  "0053_parity_runs_check_kind.sql",
 ].map((name) => path.resolve(__dirname, "../../../web/db/migrations", name));
 
 /** The one source `CATALOG_SOURCES` holds today, spelled out here rather than
@@ -535,5 +542,79 @@ describe("a run recorded for one source does not answer for another — tesserix
 
     expect(run?.outcome).toBe("clean");
     expect([...new Set(runs.map((r) => r.source))]).toEqual([...CATALOG_SOURCES]);
+  });
+});
+
+/**
+ * Entitlement runs share this table and must not be evidence about prices.
+ *
+ * 0053 added `check_kind` for exactly this, and the failure it prevents is a
+ * FALSE GREEN on a credential revocation: `readWindowStatus` calls a day clean
+ * when a clean row exists for the pair and no non-clean one does, so a nightly
+ * entitlement run would make days clean that the price check never covered —
+ * and #327 revokes mark8ly's Stripe write key on seven of them.
+ *
+ * The rows below are inserted with `check_kind = 'entitlement'` directly rather
+ * than through `recordEntitlementParityRun`, because what is being asserted is
+ * what the QUERY ignores, not what the writer sends.
+ */
+describe("entitlement runs are not price evidence", () => {
+  const recordEntitlement = (mode: string, outcome: string, n: number, differenceCount = 0) =>
+    db.query(
+      `INSERT INTO plan_catalog_parity_runs
+         (check_kind, mode, source, outcome, ran_at, difference_count, differences)
+       VALUES ('entitlement', $1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        mode,
+        SOURCE,
+        outcome,
+        daysAgo(n),
+        differenceCount,
+        JSON.stringify(
+          Array.from({ length: differenceCount }, () => ({
+            plan: "pro",
+            feature: "sso",
+            consoleValue: null,
+            productValue: 1,
+          })),
+        ),
+      ],
+    );
+
+  it("does not let a clean entitlement run make a day of the price window clean", async () => {
+    // The false green. Nothing compared a price on this day.
+    await recordEntitlement("test", "clean", 0);
+
+    const today = pairOf(await readWindowStatus(7), "test").days.at(-1)!;
+
+    expect(today.ran).toBe(false);
+    expect(today.clean).toBe(false);
+  });
+
+  it("does not let a dirty entitlement run break a clean day of the price window", async () => {
+    // The mirror image, and the reason this is a filter rather than a stricter
+    // reading: entitlement drift is real drift, but it is not a reason to
+    // withhold a Stripe key, and a permanently red price window is one nobody
+    // reads.
+    await record("test", "clean", 0);
+    await recordEntitlement("test", "differences", 0, 3);
+
+    const today = pairOf(await readWindowStatus(7), "test").days.at(-1)!;
+
+    expect(today.clean).toBe(true);
+  });
+
+  it("keeps an entitlement run out of the pair's latest-run card", async () => {
+    // `summarizeDifferences` labels a finding by its `kind`, which an
+    // entitlement difference does not carry — so this row would render as a
+    // report with no labels on a surface about prices.
+    await record("test", "differences", 1, { differenceCount: 2 });
+    await recordEntitlement("test", "clean", 0);
+
+    const latest = (await readLatestRuns()).find(
+      (r) => r.mode === "test" && r.source === SOURCE,
+    )!;
+
+    expect(latest.run).toMatchObject({ outcome: "differences", differenceCount: 2 });
   });
 });

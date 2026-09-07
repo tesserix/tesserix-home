@@ -2,8 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db/plan-catalog-repo", () => ({
   readCatalogAmounts: vi.fn(async () => []),
+  readEntitlements: vi.fn(async () => []),
   readLivePublication: vi.fn(async () => null),
+  recordEntitlementParityRun: vi.fn(async () => {}),
   recordParityRun: vi.fn(async () => {}),
+}));
+// The federated read the entitlement check makes. Mocked at the module rather
+// than stubbed at `fetch`, because `platform-api` resolves an operator session
+// on the way to the request and this file has none.
+vi.mock("@/lib/platform-api", () => ({
+  fetchProductEntitlements: vi.fn(async () => ({ data: [], failures: [] })),
 }));
 vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/billing/stripe-read")>()),
@@ -16,7 +24,14 @@ import {
   STRIPE_MODES,
   type StripeMode,
 } from "@/lib/billing/stripe-read";
-import { readCatalogAmounts, readLivePublication, recordParityRun } from "@/lib/db/plan-catalog-repo";
+import {
+  readCatalogAmounts,
+  readEntitlements,
+  readLivePublication,
+  recordEntitlementParityRun,
+  recordParityRun,
+} from "@/lib/db/plan-catalog-repo";
+import { fetchProductEntitlements } from "@/lib/platform-api";
 import * as parityModule from "@/lib/billing/parity";
 // The source axis every call below names explicitly. `performParityCheck` has
 // no default for it (tesserix-home#392), so there is no shorter way to write
@@ -26,8 +41,10 @@ import { CATALOG_SOURCES, SINGLE_SOURCE, type CatalogSource } from "@/lib/billin
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
 import {
   MAX_ERROR_LENGTH,
+  performEntitlementParityCheck,
   performParityCheck,
   runAllParityPairs,
+  runEntitlementParityCheck,
   sanitizeReason,
 } from "./parity-run";
 
@@ -569,5 +586,226 @@ describe("runAllParityPairs", () => {
     for (const [index, { mode, source }] of EXPECTED_PAIRS.entries()) {
       expect(vi.mocked(recordParityRun).mock.calls[index][0]).toMatchObject({ mode, source });
     }
+  });
+});
+
+/**
+ * The entitlement half — tesserix-home#146, T5.
+ *
+ * Every case below is about ONE property: a comparison that did not happen
+ * must never be recorded as one that found nothing. The mode, the matrix and
+ * the console's rows each have a way of being absent, and each of them has to
+ * come out of this function looking different from agreement.
+ */
+describe("performEntitlementParityCheck", () => {
+  const PUBLICATION = {
+    id: "22222222-2222-2222-2222-222222222222",
+    revisionId: "33333333-3333-3333-3333-333333333333",
+    publishedBy: "operator",
+    publishedAt: "2026-09-01T00:00:00.000Z",
+  };
+
+  const matrixFor = (source: string, catalogMode: string) => ({
+    source,
+    catalogMode,
+    features: ["stores", "sso"],
+    plans: { pro: { stores: -1, sso: 1 } },
+  });
+
+  const answerWith = (page: {
+    data?: ReturnType<typeof matrixFor>[];
+    failures?: { source: string; message: string }[];
+  }) => {
+    vi.mocked(fetchProductEntitlements).mockResolvedValue({
+      data: page.data ?? [],
+      failures: page.failures ?? [],
+    });
+  };
+
+  beforeEach(() => {
+    vi.mocked(readLivePublication).mockResolvedValue(PUBLICATION);
+    vi.mocked(readEntitlements).mockResolvedValue([
+      { plan: "pro", feature: "stores", value: -1 },
+      { plan: "pro", feature: "sso", value: 1 },
+    ]);
+    answerWith({ data: [matrixFor(SINGLE_SOURCE, "test")] });
+  });
+
+  it("records a clean run against the mode the product reports, not a hard-coded one", async () => {
+    // The console cannot see `CONSOLE_CATALOG_MODE`, and it moves at the
+    // live-key swap. A run filed under the wrong mode compares a revision
+    // nobody enforces against a matrix nobody applies to it.
+    answerWith({ data: [matrixFor(SINGLE_SOURCE, "live")] });
+
+    const result = await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(readLivePublication).toHaveBeenCalledWith("live");
+    expect(result).toEqual({
+      status: "checked",
+      run: {
+        mode: "live",
+        source: SINGLE_SOURCE,
+        outcome: "clean",
+        differences: [],
+        error: null,
+        publicationId: PUBLICATION.id,
+      },
+    });
+  });
+
+  it("selects the matrix by source rather than by position", async () => {
+    // `data[0]` is whichever product answered first. A positional read here
+    // would take another product's mode and another product's gate.
+    answerWith({
+      data: [matrixFor("kora", "live"), matrixFor(SINGLE_SOURCE, "test")],
+    });
+
+    const result = await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(result).toMatchObject({ status: "checked", run: { mode: "test" } });
+  });
+
+  it("reads the console rows for that mode's live publication and that source", async () => {
+    await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(readEntitlements).toHaveBeenCalledWith(PUBLICATION.revisionId, SINGLE_SOURCE);
+  });
+
+  it("reports the drift when the two sides disagree", async () => {
+    vi.mocked(readEntitlements).mockResolvedValue([
+      { plan: "pro", feature: "stores", value: 3 },
+      { plan: "pro", feature: "sso", value: 1 },
+    ]);
+
+    const result = await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(result).toMatchObject({
+      status: "checked",
+      run: {
+        outcome: "differences",
+        differences: [{ plan: "pro", feature: "stores", consoleValue: 3, productValue: -1 }],
+      },
+    });
+  });
+
+  it("refuses to attribute a run when the product is in `failures`", async () => {
+    // A read that DID NOT HAPPEN. Recording it under any mode would put a row
+    // in the table claiming a comparison that was never performed.
+    answerWith({ failures: [{ source: SINGLE_SOURCE, message: "upstream 503" }] });
+
+    const result = await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(result.status).toBe("unattributable");
+    expect(readLivePublication).not.toHaveBeenCalled();
+  });
+
+  it("refuses to attribute a run when no product answered for the source", async () => {
+    answerWith({ data: [matrixFor("kora", "test")] });
+
+    expect(await performEntitlementParityCheck(SINGLE_SOURCE)).toMatchObject({
+      status: "unattributable",
+    });
+  });
+
+  it("refuses to attribute a run when the reported mode is not one runs are filed under", async () => {
+    // Coercing this onto `test` would file the run against a catalog the
+    // product never read. 0034's CHECK would refuse the row anyway; the point
+    // is that nothing here tries.
+    answerWith({ data: [matrixFor(SINGLE_SOURCE, "")] });
+
+    expect(await performEntitlementParityCheck(SINGLE_SOURCE)).toMatchObject({
+      status: "unattributable",
+    });
+  });
+
+  it("refuses to attribute a run when the federated read throws", async () => {
+    vi.mocked(fetchProductEntitlements).mockRejectedValue(new Error("platform-api down"));
+
+    expect(await performEntitlementParityCheck(SINGLE_SOURCE)).toMatchObject({
+      status: "unattributable",
+    });
+  });
+
+  it("reports `not_bootstrapped` for a mode with no publication", async () => {
+    vi.mocked(readLivePublication).mockResolvedValue(null);
+
+    expect(await performEntitlementParityCheck(SINGLE_SOURCE)).toMatchObject({
+      status: "checked",
+      run: { outcome: "not_bootstrapped", differences: [], publicationId: null },
+    });
+  });
+
+  it("reports `not_bootstrapped` — never clean — for a revision nobody seeded", async () => {
+    // The case the fail-closed comparator would otherwise turn into two
+    // differences. Either answer is honest; `clean` is the one that must be
+    // impossible.
+    vi.mocked(readEntitlements).mockResolvedValue([]);
+
+    expect(await performEntitlementParityCheck(SINGLE_SOURCE)).toMatchObject({
+      status: "checked",
+      run: { outcome: "not_bootstrapped", differences: [], publicationId: PUBLICATION.id },
+    });
+  });
+
+  it("records a `failed` run, with the mode, when a read after the mode is known throws", async () => {
+    // Recordable, unlike the phase above it: the product has already said
+    // which mode it reads, so this failure has a row it belongs in rather
+    // than leaving a hole.
+    vi.mocked(readEntitlements).mockRejectedValue(new Error("db down"));
+
+    const result = await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(result).toMatchObject({
+      status: "checked",
+      run: { mode: "test", outcome: "failed", differences: [], publicationId: null },
+    });
+    expect(result).toHaveProperty("run.error", expect.stringContaining("db down"));
+  });
+
+  it("redacts a Stripe-shaped key out of a stored reason", async () => {
+    vi.mocked(readEntitlements).mockRejectedValue(new Error(`nope: ${LIVE_KEY_FIXTURE}`));
+
+    const result = await performEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(result).toHaveProperty("run.error", expect.stringContaining("[redacted]"));
+  });
+});
+
+describe("runEntitlementParityCheck", () => {
+  beforeEach(() => {
+    vi.mocked(readLivePublication).mockResolvedValue(null);
+    vi.mocked(fetchProductEntitlements).mockResolvedValue({
+      data: [{ source: SINGLE_SOURCE, catalogMode: "test", features: [], plans: {} }],
+      failures: [],
+    });
+  });
+
+  it("writes the row it decided", async () => {
+    const result = await runEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(recordEntitlementParityRun).toHaveBeenCalledWith(result.run);
+    expect(result.notRecorded).toBeNull();
+  });
+
+  it("records nothing, and says so, when no run could be attributed", async () => {
+    vi.mocked(fetchProductEntitlements).mockResolvedValue({
+      data: [],
+      failures: [{ source: SINGLE_SOURCE, message: "upstream 503" }],
+    });
+
+    const result = await runEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(recordEntitlementParityRun).not.toHaveBeenCalled();
+    expect(result.run).toBeNull();
+    expect(result.notRecorded).toContain("upstream 503");
+  });
+
+  it("reports a write it could not perform rather than swallowing it", async () => {
+    vi.mocked(recordEntitlementParityRun).mockRejectedValueOnce(new Error("db down"));
+
+    const result = await runEntitlementParityCheck(SINGLE_SOURCE);
+
+    expect(result.run).not.toBeNull();
+    expect(result.notRecorded).toContain("db down");
   });
 });
