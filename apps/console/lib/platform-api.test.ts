@@ -10,6 +10,7 @@ import {
   fetchProductEntities,
   fetchProductKpis,
   fetchEstateTrials,
+  fetchProductEntitlements,
   parseDashboard,
   fetchSupportAnalytics,
   fetchTicketDetail,
@@ -117,7 +118,7 @@ beforeEach((ctx) => {
 function installFetchStub<T extends (...args: never[]) => unknown>(impl: T): T {
   const owner = scope;
   if (!owner) {
-    // Unreachable today — all 42 call sites are inside `it()` bodies or helpers
+    // Unreachable today — all 43 call sites are inside `it()` bodies or helpers
     // called from them, so `beforeEach` has always run. Guarded anyway because
     // it is the one path that would fail silently: with no scope to record a
     // leak against, every call would be withheld and the test would hang to a
@@ -1667,5 +1668,61 @@ describe("fetchEstateTrials", () => {
     );
 
     expect([...sent(fetchMock).searchParams.keys()].sort()).toEqual(["limit"]);
+  });
+});
+
+/**
+ * The entitlements read's REQUEST, asserted off the URL.
+ *
+ * It is the one billing read that must NOT send a page size, and the reason is
+ * on the producer's side rather than this one's: the endpoint's parameter
+ * allowlist is `source` alone, because the matrix is compiled into each
+ * product's binary and answered whole. A `limit` copied across from its two
+ * siblings would be an unexpected parameter, refused rather than ignored — the
+ * shape of failure #421 shipped, where a caller pattern-matched a working
+ * sibling whose producer did something else.
+ */
+describe("fetchProductEntitlements", () => {
+  const MATRIX = {
+    source: "mark8ly",
+    catalog_mode: "test",
+    features: ["stores"],
+    plans: { trial: { stores: 1 }, starter: { stores: 1 }, studio: { stores: 3 }, pro: { stores: -1 } },
+  };
+
+  function respond() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(envelope({ data: [MATRIX], failures: [] })), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    installFetchStub(fetchMock);
+    return fetchMock;
+  }
+
+  function sent(fetchMock: ReturnType<typeof vi.fn>): URL {
+    return new URL(fetchMock.mock.calls[0][0] as string);
+  }
+
+  it("asks for the whole estate with no parameters at all", async () => {
+    const fetchMock = respond();
+
+    const page = await fetchProductEntitlements();
+
+    expect(sent(fetchMock).pathname).toBe("/v1/billing/entitlements");
+    expect([...sent(fetchMock).searchParams.keys()]).toEqual([]);
+    expect(page.data[0].catalogMode).toBe("test");
+  });
+
+  it("narrows to one product with `source`, and sends nothing else", async () => {
+    const fetchMock = respond();
+
+    await fetchProductEntitlements("mark8ly");
+
+    expect([...sent(fetchMock).searchParams.keys()]).toEqual(["source"]);
+    expect(sent(fetchMock).searchParams.get("source")).toBe("mark8ly");
   });
 });

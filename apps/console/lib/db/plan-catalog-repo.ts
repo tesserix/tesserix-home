@@ -1008,3 +1008,101 @@ export async function readModeDivergence(source: CatalogSource): Promise<ModeDiv
     ? { outcome: "identical", rows }
     : { outcome: "diverged", rows, differences };
 }
+
+/**
+ * One cell of a plan-feature matrix, as 0052 stores it.
+ *
+ * `value` is ONE integer read two ways, not an "enabled" flag beside a
+ * "limit": `0` is Disabled and is also the zero value, `-1` Unlimited, `-2`
+ * Negotiated, and a positive n a cap. That is exactly what mark8ly's
+ * `plangate` stores and how its `IsAllowed`/`Limit` read it, and splitting it
+ * here would invent a distinction the enforcement point does not make. 0052's
+ * header carries the full argument.
+ *
+ * `revision_id` and `source` are not on the row because both functions below
+ * take them as arguments: a caller holds a whole matrix for one product on one
+ * revision, and repeating those two on 104 rows would let a batch disagree
+ * with itself.
+ */
+export interface EntitlementRow {
+  readonly plan: string;
+  readonly feature: string;
+  readonly value: number;
+}
+
+/**
+ * Write a product's entitlements onto one revision.
+ *
+ * # One statement, so the batch is all-or-nothing
+ *
+ * `unnest` over three arrays rather than a loop or a generated VALUES list,
+ * for a reason that is about correctness and not about speed: a single
+ * statement is a single implicit transaction, so a row 0052 refuses takes the
+ * rows beside it down with it. A loop would leave the accepted prefix behind,
+ * and a HALF-SEEDED revision is worse than an empty one — it compares as
+ * agreement on the rows that exist and is silent about the rows that do not,
+ * which is the failure the entitlement parity check exists to catch.
+ *
+ * # Nothing here is repaired, skipped or normalised
+ *
+ * Every rule this data has is a NAMED constraint in 0052 — the four plans, the
+ * 26 features, the single source, the `value >= -2` floor — and this function
+ * lets each one reach its caller intact. `promo-codes-repo.ts` settles the
+ * argument at length: a TypeScript pre-check is one a future caller routes
+ * around, and a repo that quietly clamps a `-3` to `-2` would store a limit
+ * nobody wrote and report success for it. The action above translates the
+ * constraint name into a sentence; it does not pre-empt the rule.
+ *
+ * # No `ON CONFLICT`
+ *
+ * A second write over rows a revision already has is not an idempotent re-run,
+ * it is a caller that does not know what is there. The primary key says so,
+ * and this function lets it.
+ */
+export async function writeEntitlements(
+  revisionId: string,
+  source: CatalogSource,
+  rows: readonly EntitlementRow[],
+): Promise<void> {
+  await tesserixQuery(
+    `INSERT INTO plan_catalog_entitlements (revision_id, source, plan, feature, value)
+     SELECT $1, $2, cell.plan, cell.feature, cell.value
+       FROM unnest($3::text[], $4::text[], $5::integer[]) AS cell(plan, feature, value)`,
+    [
+      revisionId,
+      source,
+      rows.map((row) => row.plan),
+      rows.map((row) => row.feature),
+      rows.map((row) => row.value),
+    ],
+  );
+}
+
+/**
+ * One product's entitlements on one revision.
+ *
+ * Filtered on `source` as well as `revision_id`, because 0052's key is both:
+ * two products' rows can sit on one revision under the same (plan, feature)
+ * pair, and a read that dropped the source filter would hand a comparator
+ * their union as though it were one product's matrix. That is the same merge
+ * `EntitlementPage` refuses on the federation side, and for the same reason —
+ * `stores` is mark8ly's word about mark8ly's gate.
+ *
+ * An empty result means the revision was never seeded for this source. It does
+ * NOT mean the product entitles nothing, and no caller may read it that way:
+ * `0` is Disabled, and absence is absence. The comparator is where that
+ * distinction is enforced.
+ */
+export async function readEntitlements(
+  revisionId: string,
+  source: CatalogSource,
+): Promise<EntitlementRow[]> {
+  const rows = await tesserixQuery<{ plan: string; feature: string; value: number }>(
+    `SELECT plan, feature, value
+       FROM plan_catalog_entitlements
+      WHERE revision_id = $1 AND source = $2
+      ORDER BY plan, feature`,
+    [revisionId, source],
+  );
+  return rows.map((row) => ({ plan: row.plan, feature: row.feature, value: row.value }));
+}
