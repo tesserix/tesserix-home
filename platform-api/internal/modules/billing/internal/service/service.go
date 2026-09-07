@@ -50,6 +50,16 @@ type Query struct {
 	// IncludeStripeManaged opts trials managed by Stripe back in. Products
 	// exclude them by default; forwarded rather than decided here.
 	IncludeStripeManaged bool
+	// Days is how far ahead the trials read looks, in days. Zero sends
+	// nothing, which is NOT "no window": the product then applies its own
+	// default (mark8ly's DefaultExpiryWindow, 7 days), and that default is
+	// shared with its trials_expiring KPI so the two cannot report different
+	// numbers for the same word. Widening the list is a view change, so the
+	// console names a window only when the operator chose one.
+	//
+	// Trials only. The subscriptions path has no expiry window and never
+	// sends this, even though both reads share this type.
+	Days int
 }
 
 func (q Query) subscriptionsPath() string {
@@ -63,6 +73,9 @@ func (q Query) trialsPath() string {
 	params.Set("limit", strconv.Itoa(q.Limit))
 	if q.IncludeStripeManaged {
 		params.Set("include_stripe_managed", "true")
+	}
+	if q.Days > 0 {
+		params.Set("days", strconv.Itoa(q.Days))
 	}
 	return trialsPath + "?" + params.Encode()
 }
