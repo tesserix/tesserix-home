@@ -38,7 +38,7 @@ func discountSvc(t *testing.T, status int, body string) (*Service, *[]received) 
 	t.Cleanup(srv.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s", Endpoints: []string{"billing"}}}}}), srv.Client())
 	return New(fed, []string{"mark8ly"}, testLogger()), calls
 }
 

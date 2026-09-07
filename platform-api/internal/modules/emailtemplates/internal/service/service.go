@@ -126,6 +126,11 @@ func (s *Service) List(ctx context.Context, op federation.Operator, source strin
 	}
 
 	rows, failures := federation.FanOut(ctx, s.fed, slugs, productPath, op,
+		// slugs came from SlugsImplementing("email-templates") — see FanOut's
+		// doc comment on why this must be the same endpoint. This is the
+		// call site that goes ambiguous, per-slug, the day mark8ly declares
+		// this endpoint on a second service — see FanOutServices.
+		federation.ForEndpoint("email-templates"),
 		func(slug string, body []byte) ([]domain.Row, error) {
 			var envelope struct {
 				Data []domain.Row `json:"data"`
@@ -171,7 +176,11 @@ func (s *Service) Get(ctx context.Context, op federation.Operator, id string) (d
 		return domain.Detail{}, err
 	}
 
-	raw, err := s.fed.Get(ctx, slug, productPath+"/"+url.PathEscape(key), op)
+	// GetForEndpoint, not Get: this is a single-response read, and if mark8ly
+	// ever declares `email-templates` on two services this must fail closed
+	// with ErrAmbiguousService rather than silently ask whichever service
+	// soleService happened to still resolve — see Client.Get's doc comment.
+	raw, err := s.fed.GetForEndpoint(ctx, slug, "email-templates", productPath+"/"+url.PathEscape(key), op)
 	if err != nil {
 		// Returned UNWRAPPED so federation.ErrorCode and federation.StatusOf
 		// can still read the product's refusal out of it. Wrapping with %w
@@ -217,7 +226,8 @@ func (s *Service) Save(
 		return domain.Detail{}, fmt.Errorf("emailtemplates: encoding the save for %s: %w", slug, err)
 	}
 
-	raw, err := s.fed.Put(ctx, slug, productPath+"/"+url.PathEscape(key), body, op,
+	// PutForEndpoint, not Put — see the same note on Get above.
+	raw, err := s.fed.PutForEndpoint(ctx, slug, "email-templates", productPath+"/"+url.PathEscape(key), body, op,
 		federation.PostOptions{IdempotencyKey: idempotencyKey})
 	if err != nil {
 		return domain.Detail{}, err
@@ -250,7 +260,8 @@ func (s *Service) TestSend(
 		return domain.TestSend{}, fmt.Errorf("emailtemplates: encoding the test send for %s: %w", slug, err)
 	}
 
-	if _, err := s.fed.Post(ctx, slug,
+	// PostForEndpoint, not Post — see the same note on Get above.
+	if _, err := s.fed.PostForEndpoint(ctx, slug, "email-templates",
 		productPath+"/"+url.PathEscape(key)+"/test-send", body, op,
 		federation.PostOptions{IdempotencyKey: idempotencyKey}); err != nil {
 		return domain.TestSend{}, err

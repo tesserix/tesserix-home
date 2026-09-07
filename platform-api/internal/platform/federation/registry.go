@@ -167,24 +167,107 @@ func unionSorted(produce func(yield func(string))) []string {
 	return out
 }
 
-// soleService is a product's one service, for a caller — Client.do today —
-// that has no entity or endpoint context to pick between several with.
+// Selector tells Product.resolve (and, through it, Client.do and FanOut)
+// which of a product's Services one call is for, when there is more than
+// one.
 //
-// Every product configured today has exactly one service (see LoadRegistry's
-// legacy path), so this covers every real deployment. A product configured
-// with more than one gets ok=false: Client.do fails closed rather than
-// guessing, because guessing here means silently calling the wrong front
-// door with the wrong secret. Resolving correctly needs
-// Registry.ServicesServing / ServicesImplementing, which needs the entity or
-// endpoint the call is for — context Client.do is not, today, given. That is
-// a real gap, tracked for whoever wires a second real multi-service product
-// in and needs the call sites to close it, not something this type can paper
-// over.
-func (p Product) soleService() (Service, bool) {
-	if len(p.Services) != 1 {
-		return Service{}, false
+// The zero value means "no context", and is what every call site not yet
+// taught about a specific endpoint or entity passes — Product.resolve maps it
+// to every one of the product's Services, unfiltered, which is what makes a
+// single-service product (kora, and mark8ly before it grows a second
+// service) completely unaffected by this type existing at all: one service
+// in means one service out, resolved exactly as before #720. It is
+// Client.do's len(services) switch — not this type — that turns "more than
+// one, with no context to pick between them" into a fail-closed error; see
+// its doc comment.
+//
+// A Selector is built by exactly one of ForEndpoint or ForEntity, never both:
+// a federated call is always shaped like a §3.2 contract (or product-own)
+// endpoint OR a §3.4 entity type, never both at once, the same distinction
+// Service.Endpoints and Service.Entities draw.
+type Selector struct {
+	endpoint string
+	entity   string
+}
+
+// ForEndpoint resolves within the endpoint the call is for — "outbox",
+// "onboarding", "billing", "inbox", "conversions", "email-templates" — the
+// same string a module reads Registry.SlugsImplementing /
+// Registry.ServicesImplementing with. Matched against Service.Endpoints.
+func ForEndpoint(endpoint string) Selector { return Selector{endpoint: endpoint} }
+
+// ForEntity resolves within the §3.4 entity type the call is for —
+// "tenants", "users" — the same string a module reads Registry.SlugsServing /
+// Registry.ServicesServing with. Matched against Service.Entities.
+func ForEntity(entity string) Selector { return Selector{entity: entity} }
+
+// describe names what a Selector was looking for, for an error message. It is
+// never both at once — see Selector's own doc comment on why.
+func (s Selector) describe() string {
+	switch {
+	case s.endpoint != "":
+		return fmt.Sprintf("endpoint %q", s.endpoint)
+	case s.entity != "":
+		return fmt.Sprintf("entity %q", s.entity)
+	default:
+		return "no endpoint or entity"
 	}
-	return p.Services[0], true
+}
+
+// resolve is Client.do's (and FanOut's) answer to "which of this product's
+// services is this call for", given the caller's Selector.
+//
+// A zero-value Selector — no endpoint, no entity — returns every one of the
+// product's Services, unfiltered: the caller gave no context to narrow an
+// ambiguous product with, so whether that is fine (exactly one Service) or
+// not (more than one) is Client.do's call to make, not this method's — see
+// its doc comment on the len(services) switch. This is the path every call
+// site not yet updated for tesserix/mark8ly#720 takes, and for a
+// single-service product it is unchanged: one Service in, one Service out.
+//
+// A non-zero Selector filters this product's OWN Services — not the whole
+// registry the way Registry.ServicesServing / ServicesImplementing do — by
+// the matching Entities or Endpoints list. Zero, one, or more than one
+// Service may match; again, Client.do is what turns "more than one" into a
+// fail-closed error, because whether that is legitimate (the split
+// email-template registry) or a real ambiguity is a question about the CALL,
+// not about resolution.
+func (p Product) resolve(sel Selector) []Service {
+	switch {
+	case sel.endpoint != "":
+		return matchingServices(p.Services, func(svc Service) bool {
+			return containsString(svc.Endpoints, sel.endpoint)
+		})
+	case sel.entity != "":
+		return matchingServices(p.Services, func(svc Service) bool {
+			return containsString(svc.Entities, sel.entity)
+		})
+	default:
+		return p.Services
+	}
+}
+
+// matchingServices is what Product.resolve and servicesWhere share, so the
+// traversal cannot drift between the product-scoped and registry-wide forms.
+func matchingServices(services []Service, match func(Service) bool) []Service {
+	out := make([]Service, 0)
+	for _, svc := range services {
+		if match(svc) {
+			out = append(out, svc)
+		}
+	}
+	return out
+}
+
+// containsString is a small linear search — every list here is a handful of
+// declared strings, never worth a set for.
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // Registry is the set of products this deployment may call.

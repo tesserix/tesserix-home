@@ -215,7 +215,7 @@ func TestReadForwardsTheWindowParameters(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: mark8ly, Services: []federation.Service{{Name: mark8ly, BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: mark8ly, Services: []federation.Service{{Name: mark8ly, BaseURL: srv.URL, Secret: "s", Endpoints: []string{"onboarding"}}}}}), srv.Client())
 	s := New(fed, []string{mark8ly}, testLogger())
 
 	q := url.Values{"created_from": {"2026-08-01T00:00:00Z"}, "created_to": {"2026-08-30T00:00:00Z"}}

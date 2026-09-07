@@ -106,6 +106,9 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, q Query) (
 	}
 
 	rows, failures := federation.FanOut(ctx, s.fed, slugs, q.path(), op,
+		// slugs came from SlugsServing("tenants") — see FanOut's doc comment
+		// on why this must be the same entity type.
+		federation.ForEntity("tenants"),
 		func(slug string, body []byte) ([]domain.Tenant, error) {
 			var envelope struct {
 				Data []domain.Tenant `json:"data"`

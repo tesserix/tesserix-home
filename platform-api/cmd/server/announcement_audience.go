@@ -61,6 +61,9 @@ func (t tenantCounter) Tenants(
 	path := fmt.Sprintf("%s?limit=%d", tenantEntityPath, t.limit)
 	rows, failures := federation.FanOut(ctx, t.fed, slugs, path,
 		federation.Operator{ID: op.ID, Capability: op.Capability},
+		// slugs, upstream, is t.reg.SlugsServing("tenants") (Serving, above)
+		// — see FanOut's doc comment on why this must be the same entity.
+		federation.ForEntity("tenants"),
 		func(slug string, body []byte) ([]row, error) {
 			var envelope struct {
 				Data []struct {

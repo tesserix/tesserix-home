@@ -61,8 +61,10 @@ func serveTypes(t *testing.T, types map[string][]string) *api {
 	}))
 	t.Cleanup(product.Close)
 
+	// Entities mirrors types[productSlug] — see the same note in the service
+	// package's svc() helper.
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: productSlug, Services: []federation.Service{{Name: productSlug, BaseURL: product.URL, Secret: "test-secret"}}}}), product.Client())
+		{Slug: productSlug, Services: []federation.Service{{Name: productSlug, BaseURL: product.URL, Secret: "test-secret", Entities: types[productSlug]}}}}), product.Client())
 
 	mux := http.NewServeMux()
 	verifier := auth.NewVerifier(stubParser{claims: tokenFor("platform")}, projectID)

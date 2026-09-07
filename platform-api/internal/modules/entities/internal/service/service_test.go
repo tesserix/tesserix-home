@@ -36,8 +36,12 @@ func svc(t *testing.T, body string, types map[string][]string) (*Service, *strin
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
+	// Entities mirrors types["kora"] — the service's federation.Service.Entities
+	// declaration must agree with the module's own `types` map, or
+	// GetForEntity (client.go) resolves nothing for a type this test's `types`
+	// map says the product serves.
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: srv.URL, Secret: "s", Entities: types["kora"]}}}}), srv.Client())
 	return New(fed, types, testLogger()), &asked
 }
 

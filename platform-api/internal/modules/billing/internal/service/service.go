@@ -138,6 +138,9 @@ func (s *Service) Subscriptions(
 
 	var counted totals
 	rows, failures := federation.FanOut(ctx, s.fed, slugs, q.subscriptionsPath(), op,
+		// slugs came from SlugsImplementing("billing") — see FanOut's doc
+		// comment on why this must be the same endpoint.
+		federation.ForEndpoint("billing"),
 		func(slug string, body []byte) ([]domain.Subscription, error) {
 			var envelope struct {
 				Data       []domain.Subscription `json:"data"`
@@ -191,6 +194,9 @@ func (s *Service) Trials(
 
 	var counted totals
 	rows, failures := federation.FanOut(ctx, s.fed, slugs, q.trialsPath(), op,
+		// slugs came from SlugsImplementing("billing") — see FanOut's doc
+		// comment on why this must be the same endpoint.
+		federation.ForEndpoint("billing"),
 		func(slug string, body []byte) ([]domain.Trial, error) {
 			var envelope struct {
 				Data       []domain.Trial `json:"data"`

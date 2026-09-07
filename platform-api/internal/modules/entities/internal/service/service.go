@@ -131,7 +131,10 @@ func (s *Service) Read(
 		return domain.Page{}, fmt.Errorf("%w: %s does not serve %q", ErrTypeNotServed, source, entityType)
 	}
 
-	body, err := s.fed.Get(ctx, source, q.path(entityType), op)
+	// GetForEntity, not Get: entityType is already validated above against
+	// what source declared, so this read is scoped to that same §3.4 entity
+	// type.
+	body, err := s.fed.GetForEntity(ctx, source, entityType, q.path(entityType), op)
 	if err != nil {
 		s.log.Error("entities: federated read failed",
 			"source", source, "type", entityType, "error", err)

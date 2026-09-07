@@ -54,7 +54,10 @@ func (s *Service) ReasonCodes(
 		return nil, fmt.Errorf("%w: %s", ErrUnknownSource, source)
 	}
 
-	body, err := s.fed.Get(ctx, source, reasonCodesPath, op)
+	// GetForEntity, not Get: s.slugs (checked above) came from
+	// SlugsServing("tenants"), so this read is scoped to the same entity type
+	// that filtered the product in the first place.
+	body, err := s.fed.GetForEntity(ctx, source, "tenants", reasonCodesPath, op)
 	if err != nil {
 		// Not logged here: the caller logs with the source and the operator,
 		// and a second line would double-report one failure.

@@ -113,6 +113,10 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, q Query) (
 	}
 
 	events, failures := federation.FanOut(ctx, s.fed, s.slugs, q.path(), op,
+		// s.slugs came from SlugsImplementing("outbox"), so this is the same
+		// endpoint that filtered them — see FanOut's own doc comment on why
+		// the two must match.
+		federation.ForEndpoint("outbox"),
 		func(slug string, body []byte) ([]domain.Event, error) {
 			// §4.1's envelope: `{data, pagination}`. Only `data` is read —
 			// each product paginates its own rows, and merging pagination

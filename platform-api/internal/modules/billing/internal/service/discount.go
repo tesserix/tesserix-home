@@ -81,7 +81,10 @@ func (s *Service) discount(
 		path += "/remove"
 	}
 
-	raw, err := s.fed.Post(ctx, slug, path, body, op,
+	// PostForEndpoint, not Post: s.slugs (checked above) came from
+	// SlugsImplementing("billing"), so this write is scoped to the same
+	// endpoint that filtered the product in the first place.
+	raw, err := s.fed.PostForEndpoint(ctx, slug, "billing", path, body, op,
 		federation.PostOptions{IdempotencyKey: idempotencyKey})
 	if err != nil {
 		// Returned unwrapped so federation.ErrorCode can still read the

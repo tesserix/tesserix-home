@@ -43,7 +43,7 @@ func TestEstateStampsTheSourceItCalledRatherThanTrustingTheBody(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s", Entities: []string{"tenants"}}}}}), srv.Client())
 
 	page, err := New(fed, []string{"mark8ly"}, testLogger()).Estate(context.Background(), op(), Query{})
 	if err != nil {
@@ -66,8 +66,8 @@ func TestEstateNamespacesIdsBySource(t *testing.T) {
 	defer b.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: a.URL, Secret: "s"}}},
-		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: b.URL, Secret: "s"}}}}), a.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: a.URL, Secret: "s", Entities: []string{"tenants"}}}},
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: b.URL, Secret: "s", Entities: []string{"tenants"}}}}}), a.Client())
 
 	page, err := New(fed, []string{"mark8ly", "kora"}, testLogger()).Estate(context.Background(), op(), Query{})
 	if err != nil {
@@ -91,8 +91,8 @@ func TestEstateReportsAFailingProductWithoutLosingTheOthers(t *testing.T) {
 	defer down.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: ok.URL, Secret: "s"}}},
-		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: down.URL, Secret: "s"}}}}), ok.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: ok.URL, Secret: "s", Entities: []string{"tenants"}}}},
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: down.URL, Secret: "s", Entities: []string{"tenants"}}}}}), ok.Client())
 
 	page, err := New(fed, []string{"kora", "mark8ly"}, testLogger()).Estate(context.Background(), op(), Query{})
 	if err != nil {
@@ -119,7 +119,7 @@ func TestEstateRefusesAnUnknownSource(t *testing.T) {
 	srv := product(t, onePage)
 	defer srv.Close()
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s", Entities: []string{"tenants"}}}}}), srv.Client())
 
 	_, err := New(fed, []string{"mark8ly"}, testLogger()).Estate(context.Background(), op(), Query{Source: "nope"})
 	if err == nil {
@@ -139,8 +139,8 @@ func TestEstateNarrowsToOneSourceWhenAsked(t *testing.T) {
 	defer b.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: a.URL, Secret: "s"}}},
-		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: b.URL, Secret: "s"}}}}), a.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: a.URL, Secret: "s", Entities: []string{"tenants"}}}},
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: b.URL, Secret: "s", Entities: []string{"tenants"}}}}}), a.Client())
 
 	if _, err := New(fed, []string{"mark8ly", "kora"}, testLogger()).
 		Estate(context.Background(), op(), Query{Source: "mark8ly"}); err != nil {
@@ -163,7 +163,7 @@ func TestEstatePassesTheQueryAndBoundsToTheProduct(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s", Entities: []string{"tenants"}}}}}), srv.Client())
 
 	if _, err := New(fed, []string{"mark8ly"}, testLogger()).
 		Estate(context.Background(), op(), Query{Q: "acme", Status: "active", Limit: 25}); err != nil {
@@ -180,7 +180,7 @@ func TestEstateReturnsNonNilSlicesWhenEmpty(t *testing.T) {
 	srv := product(t, `{"data":[],"pagination":{"page":1,"limit":50,"total":0}}`)
 	defer srv.Close()
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s", Entities: []string{"tenants"}}}}}), srv.Client())
 
 	page, err := New(fed, []string{"mark8ly"}, testLogger()).Estate(context.Background(), op(), Query{})
 	if err != nil {
