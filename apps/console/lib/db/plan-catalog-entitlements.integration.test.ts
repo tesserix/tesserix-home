@@ -96,6 +96,11 @@ describe("0052_plan_catalog_entitlements.sql", () => {
 
   it.each([
     ["unknown plan", `'mark8ly','enterprise','stores',1`, "plan_catalog_entitlements_plan_is_a_known_plan"],
+    // `marketplace` is a real SubscriptionPlan constant, which is what makes it
+    // the interesting refusal: it is absent from `featureMatrix`, so there is no
+    // authored policy to mirror. Storing zeros for it would compare EQUAL
+    // against a matrix that never described it.
+    ["a plan absent from the matrix", `'mark8ly','marketplace','stores',0`, "plan_catalog_entitlements_plan_is_a_known_plan"],
     ["unknown feature", `'mark8ly','pro','teleport',1`, "plan_catalog_entitlements_feature_is_a_known_feature"],
     ["unknown source", `'kora','pro','stores',1`, "plan_catalog_entitlements_source_is_a_known_source"],
     ["a fourth sentinel", `'mark8ly','pro','stores',-3`, "plan_catalog_entitlements_value_is_a_known_sentinel_or_cap"],
@@ -107,6 +112,19 @@ describe("0052_plan_catalog_entitlements.sql", () => {
         [revisionId],
       ),
     ).rejects.toThrow(constraint);
+  });
+
+  it("accepts trial, which plangate gates but nothing prices", async () => {
+    await sql(
+      `INSERT INTO plan_catalog_entitlements (revision_id, source, plan, feature, value)
+       VALUES ($1,'mark8ly','trial','stores',1)`,
+      [revisionId],
+    );
+    const rows = await sql(
+      `SELECT value FROM plan_catalog_entitlements WHERE revision_id=$1 AND plan='trial'`,
+      [revisionId],
+    );
+    expect(rows[0].value).toBe(1);
   });
 
   it("refuses a duplicate (revision, source, plan, feature)", async () => {

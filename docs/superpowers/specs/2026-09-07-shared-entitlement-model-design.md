@@ -81,14 +81,30 @@ set must not become permissive.
 plan_catalog_entitlements
     revision_id  uuid NOT NULL -> plan_catalog_revisions (id)
     source       text NOT NULL  -- 'mark8ly'; same closed vocabulary as prices
-    plan         text NOT NULL  -- starter | studio | pro
+    plan         text NOT NULL  -- trial | starter | studio | pro
     feature      text NOT NULL  -- the 26 known features
     value        integer NOT NULL
     PRIMARY KEY (revision_id, source, plan, feature)
 ```
 
-26 features × 3 plans = **78 rows per revision** — the same count as
-`plan_catalog_amounts`, which is a coincidence but a convenient sanity check.
+26 features × 4 plans = **104 rows per revision**.
+
+**FOUR plans, and `trial` is one of them.** Corrected 2026-09-07 during Task 1;
+this document previously said three. `plangate`'s `featureMatrix` keys on
+`trial`, `starter`, `studio` and `pro` (`matrix.go:126,165,205,236`), and a trial
+tenant is gated by that row like any other.
+
+`plan_catalog_prices` legitimately carries only three, because `trial` is priced
+nowhere and has no lookup key. That is a different question. **Entitlements are
+not prices**: this table's job is to mirror what is ENFORCED, and excluding an
+enforced plan would make parity structurally unable to be complete — a signal
+that cannot be complete gets read as complete, which is the failure #582 was
+closed on.
+
+`marketplace` is a fifth `SubscriptionPlan` constant and is deliberately NOT
+included: it is absent from `featureMatrix`, so `AllFeatureLimits` resolves it to
+all-Disabled by the fail-closed default. There is nothing to mirror, and a row
+of zeros would assert a policy nobody wrote.
 
 Hanging off `revision_id` is what makes an entitlement change versioned and
 published by the same machinery a price change is: draft on a revision, publish

@@ -109,32 +109,50 @@
 -- block, so a feature added there and not here shows up as parity drift, which
 -- is CORRECT and is stated here so it is not later read as a defect.
 --
--- ══ WHY THE PLANS ARE THESE THREE, AND `trial` IS NOT ONE OF THEM ══
+-- ══ WHY `trial` IS ONE OF THE PLANS, THOUGH IT IS PRICED NOWHERE ══
 --
--- `starter`, `studio`, `pro` — the same closed set and the same spelling as
--- `promo_codes.allowed_plans` (0051) and as every `mark8ly_<plan>_<period>_…_v1`
--- lookup key this schema already stores.
+-- `trial`, `starter`, `studio`, `pro` — `plangate`'s four matrix keys
+-- (`matrix.go:126,165,205,236`), not the three priced plans.
 --
--- `plangate`'s matrix has FOUR keys, not three: `subscription.PlanTrial` has a
--- full row of its own, and `subscription.PlanMarketplace` deliberately has
--- none (`models.go:15-19`, `matrix.go:126`). The omission of `trial` here is
--- deliberate and is worth stating, because someone comparing the two lists will
--- notice it and may read it as an oversight to tidy up.
+-- That is deliberately WIDER than `promo_codes.allowed_plans` (0051) and wider
+-- than the `mark8ly_<plan>_<period>_…_v1` lookup keys, and the difference is the
+-- point rather than an inconsistency to tidy away.
 --
--- This table describes the plan CATALOG — what is priced, published to Stripe,
--- and parity-checked against it. `trial` is priced nowhere, has no lookup key,
--- appears in no revision, and is a lifecycle state a tenant passes through
--- rather than a plan anyone buys. Admitting it would mean this table could hold
--- rows the catalog has no revision to publish and no price to compare, and
--- every consumer would then need a branch for the plan that is in the
--- entitlements and not in the catalog.
+-- An earlier draft of this file admitted only the three priced plans, arguing
+-- that this table "describes the plan CATALOG — what is priced, published to
+-- Stripe, and parity-checked against it". That argument is sound for
+-- `plan_catalog_prices` and wrong here, because it imports the PRICE table's
+-- justification into a table that answers a different question.
 --
--- WHAT THAT COSTS, stated rather than implied: the console's entitlement view
--- is NOT the whole of what `plangate` enforces. Trial tenants are gated by a
--- row this table does not carry. Anyone reasoning about "what is a tenant
--- entitled to today" from this table alone will be wrong for tenants on trial,
--- and the parity check will be silent about it, because it compares only the
--- three plans that exist on both sides.
+-- STRIPE KNOWS NOTHING ABOUT ENTITLEMENTS. No entitlement is published to a
+-- Stripe account and none is compared against one. This table's counterparty is
+-- `plangate`'s compiled matrix — and that matrix HAS a `trial` row, so a trial
+-- tenant is gated by it exactly as a `pro` tenant is.
+--
+-- So excluding `trial` costs nothing in the Stripe direction, because there is
+-- no Stripe direction, and costs completeness in the only direction this table
+-- is ever checked. The parity run would compare three of the four enforced
+-- plans and report clean, while a quarter of what the platform actually gates
+-- on went unexamined — a check that CANNOT be complete, presented as one that
+-- is. tesserix-home#582 was closed on that exact distinction a day before this
+-- file was written.
+--
+-- A plan with entitlements and no price is a coherent row, not an anomaly:
+-- entitlements hang off a revision as a SET, and the revision publishes them
+-- together. Nothing requires a matching price for a plan to be entitled to
+-- something, and `trial` is the case that proves it — a tenant is on it, and is
+-- gated while on it.
+--
+-- ══ WHY `marketplace` IS NOT ONE OF THEM ══
+--
+-- `subscription.PlanMarketplace` exists (`models.go:19`, "hidden from UI") and
+-- is deliberately ABSENT from `featureMatrix`. `AllFeatureLimits` therefore
+-- resolves it to all-Disabled through the fail-closed default rather than
+-- through a row anybody wrote.
+--
+-- There is nothing to mirror. Storing 26 zeros for it would assert a policy no
+-- one authored, and would then compare EQUAL against a matrix that never
+-- described it — turning an absence of policy into an apparent agreement.
 --
 -- ══ WHY `value >= -2` ══
 --
@@ -227,11 +245,11 @@ CREATE TABLE IF NOT EXISTS plan_catalog_entitlements (
            CONSTRAINT plan_catalog_entitlements_source_is_a_known_source
            CHECK (source IN ('mark8ly')),
 
-    -- The three priced plans. `trial` is a `plangate` plan and is deliberately
-    -- not one of these — see the header for what that costs.
+    -- `plangate`'s four matrix keys, NOT the three priced plans. `trial` IS
+    -- one of these and `marketplace` is not — see the header for both reasons.
     plan text NOT NULL
          CONSTRAINT plan_catalog_entitlements_plan_is_a_known_plan
-         CHECK (plan IN ('starter', 'studio', 'pro')),
+         CHECK (plan IN ('trial', 'starter', 'studio', 'pro')),
 
     -- `plangate`'s `Feature` constants, in `allFeatures` order so the two
     -- lists read side by side. A typo here is an entitlement that renders as

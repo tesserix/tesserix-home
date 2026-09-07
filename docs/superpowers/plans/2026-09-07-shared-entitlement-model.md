@@ -16,7 +16,7 @@
 - **Migrations are manual and deploys are not.** Apply `0052` to production BEFORE merging Task 1. Use `node apps/web/scripts/db-migrate.mjs` — never pipe the `.sql` through `psql`, which writes the DDL without `schema_migrations` and makes #613's preflight refuse to start.
 - **Never run tests from the primary checkout.** `pnpm --filter` there tests the primary checkout and goes green without executing worktree changes. Every command uses the worktree as cwd.
 - **This repo is pnpm.** `npm ci` fails; there is no `package-lock.json`. `pnpm --filter @tesserix/console-core --filter @tesserix/platform-auth build` is required before `typecheck`.
-- **Entitlement vocabulary, exact:** plans `starter`, `studio`, `pro` (lower-case). Sentinels `0` disabled, `-1` unlimited, `-2` negotiated; positive integers are caps.
+- **Entitlement vocabulary, exact:** plans `trial`, `starter`, `studio`, `pro` (lower-case). FOUR, not three — `plangate`'s matrix keys on all four and a trial tenant is gated by its row. `marketplace` is excluded: it is absent from the matrix and resolves to all-Disabled by the fail-closed default, so there is nothing to mirror. Sentinels `0` disabled, `-1` unlimited, `-2` negotiated; positive integers are caps.
 - **`0` is the zero value and means Disabled.** Nothing may make an absent entitlement permissive.
 - **Migration style:** heavy header explaining WHY, `IF NOT EXISTS` / `DROP CONSTRAINT IF EXISTS` throughout, every CHECK named. Read `0051_promo_codes_scoping.sql` first.
 - **No memory-style `[[wiki-links]]` in any committed file.** Write the idea out.
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS plan_catalog_entitlements (
            CHECK (source IN ('mark8ly')),
     plan text NOT NULL
          CONSTRAINT plan_catalog_entitlements_plan_is_a_known_plan
-         CHECK (plan IN ('starter', 'studio', 'pro')),
+         CHECK (plan IN ('trial', 'starter', 'studio', 'pro')),
     feature text NOT NULL
             CONSTRAINT plan_catalog_entitlements_feature_is_a_known_feature
             CHECK (feature IN (
@@ -159,7 +159,7 @@ git commit -m "feat(billing): a versioned entitlement per plan and feature (#146
 
 **Interfaces:**
 - Produces: `GET /admin/billing/entitlements` returning
-  `{"source":"mark8ly","catalog_mode":"test","features":[...],"plans":{"starter":{"stores":1,...},"studio":{...},"pro":{...}}}`
+  `{"source":"mark8ly","catalog_mode":"test","features":[...],"plans":{"trial":{...},"starter":{"stores":1,...},"studio":{...},"pro":{...}}}`
 
 - [ ] **Step 1: Write the failing handler test**
 
@@ -184,11 +184,11 @@ func TestEntitlementsHandlerReportsTheCompiledMatrix(t *testing.T) {
 	require.Equal(t, "mark8ly", body.Source)
 	require.Equal(t, "test", body.CatalogMode)
 	require.Len(t, body.Features, len(plangate.AllFeatures()))
-	require.Len(t, body.Plans, 3)
+	require.Len(t, body.Plans, 4)
 
 	// DERIVED, never restated: assert against plangate itself, so a matrix
 	// change moves this test rather than leaving it asserting a stale copy.
-	for _, p := range []subscription.SubscriptionPlan{"starter", "studio", "pro"} {
+	for _, p := range []subscription.SubscriptionPlan{"trial", "starter", "studio", "pro"} {
 		require.Equal(t, plangate.AllFeatureLimits(p), body.Plans[string(p)])
 	}
 }
@@ -323,7 +323,7 @@ In `plan-catalog-repo.ts`, matching that file's existing conventions (parameteri
 
 - [ ] **Step 5: Write the seed script**
 
-`apps/console/scripts/seed-entitlements.ts`: fetch `/v1/billing/entitlements`, write every `(plan, feature, value)` onto a named revision. It must be **derived, never transcribed** — the script fails loudly if the endpoint returns fewer than 26 features or fewer than 3 plans, rather than seeding a partial matrix that later reads as agreement.
+`apps/console/scripts/seed-entitlements.ts`: fetch `/v1/billing/entitlements`, write every `(plan, feature, value)` onto a named revision. It must be **derived, never transcribed** — the script fails loudly if the endpoint returns fewer than 26 features or fewer than 4 plans, rather than seeding a partial matrix that later reads as agreement.
 
 Bundle it like the existing scripts if it needs to run in the image: `esbuild ... --external:pg` following `build:cron` in `apps/console/package.json`. If it is only ever run by an operator locally, say so in its header and skip the bundling.
 
