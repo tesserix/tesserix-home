@@ -800,15 +800,30 @@ export async function fetchEstateSubscriptions(): Promise<
 /**
  * The estate's expiring trials — contract §8.2.
  *
- * Stripe-managed trials are excluded by default on the product side and this
- * does not opt them back in: they are not the rows anyone acts on, and §8.2's
- * question is "which trials expire this week, with dunning state".
+ * Every part of the scope is the caller's to name, and an omitted option sends
+ * nothing rather than a console-side default: with no `days` the product
+ * applies its own 7-day expiry window — the same one its trials_expiring KPI
+ * counts — and keeps Stripe-managed trials out, which is the work queue §8.2's
+ * question asks for ("which trials expire this week, with dunning state").
+ *
+ * The scope a surface should pass is built by `trialQueryFor` in
+ * `lib/trial-scope`, which is where the two policy decisions live: that the
+ * default window sends nothing at all, and that the widest window always
+ * carries the Stripe-managed opt-in. Both are asserted through this function
+ * in `platform-api.test.ts`.
  */
-export async function fetchEstateTrials(): Promise<import("./billing").TrialPage> {
+export async function fetchEstateTrials(
+  query: import("./trial-scope").TrialQuery = {},
+): Promise<import("./billing").TrialPage> {
   const { parseTrials } = await import("./billing");
-  const query = new URLSearchParams({ limit: String(BILLING_LIMIT) });
+  const params = new URLSearchParams({ limit: String(BILLING_LIMIT) });
+  if (query.source) params.set("source", query.source);
+  if (query.days !== undefined) params.set("days", String(query.days));
+  // Only `true` is sent, and only when asked: the platform API reads any other
+  // value as absent, so sending `false` would be a parameter that says nothing.
+  if (query.includeStripeManaged) params.set("include_stripe_managed", "true");
   return parseTrials(
-    await platformRequest("trials", `/v1/billing/trials?${query.toString()}`),
+    await platformRequest("trials", `/v1/billing/trials?${params.toString()}`),
   );
 }
 

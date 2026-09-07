@@ -227,3 +227,37 @@ func TestRefusesAnUnknownSource(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnknownSource", err)
 	}
 }
+
+// The expiry window travels to the product ONLY when the caller named one.
+//
+// An absent `days` is not "0 days": the product applies its own
+// DefaultExpiryWindow (7 days on mark8ly) and that is the console's landing
+// state, so a Query that names no window must produce the byte-identical
+// request the console has always sent.
+func TestTrialsForwardTheExpiryWindowOnlyWhenAsked(t *testing.T) {
+	s, asked := svc(t, map[string]string{"mark8ly": mark8lyTrials})
+	if _, err := s.Trials(context.Background(), op(), Query{Limit: 100}); err != nil {
+		t.Fatalf("Trials: %v", err)
+	}
+	if bytes.Contains([]byte(*asked["mark8ly"]), []byte("days")) {
+		t.Errorf("asked %q, want no window sent when none was named", *asked["mark8ly"])
+	}
+	if _, err := s.Trials(context.Background(), op(), Query{Limit: 100, Days: 30}); err != nil {
+		t.Fatalf("Trials: %v", err)
+	}
+	if !bytes.Contains([]byte(*asked["mark8ly"]), []byte("days=30")) {
+		t.Errorf("asked %q, want the window forwarded", *asked["mark8ly"])
+	}
+}
+
+// Subscriptions have no expiry window — `days` is a trials-only parameter and
+// must not leak onto the other path just because both share a Query type.
+func TestSubscriptionsNeverSendAWindow(t *testing.T) {
+	s, asked := svc(t, map[string]string{"mark8ly": mark8lySubs})
+	if _, err := s.Subscriptions(context.Background(), op(), Query{Limit: 100, Days: 30}); err != nil {
+		t.Fatalf("Subscriptions: %v", err)
+	}
+	if bytes.Contains([]byte(*asked["mark8ly"]), []byte("days")) {
+		t.Errorf("asked %q, want no window on the subscriptions path", *asked["mark8ly"])
+	}
+}

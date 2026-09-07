@@ -246,12 +246,12 @@ claim({
 
 claim({
   file: "apps/console/lib/platform-api.test.ts",
-  says: "all 41 call sites are inside `it()` bodies",
+  says: "all 42 call sites are inside `it()` bodies",
   // The count only; where the calls sit is not checkable here. The trailing
   // paren excludes the file's two non-call mentions — the generic declaration
   // and the error string — so no subtraction is needed.
   check: () =>
-    occurrencesOf("installFetchStub(", "apps/console/lib/platform-api.test.ts") === 41,
+    occurrencesOf("installFetchStub(", "apps/console/lib/platform-api.test.ts") === 42,
 });
 
 claim({

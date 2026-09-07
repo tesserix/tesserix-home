@@ -5,6 +5,10 @@
 //	     ?source=<slug>              narrow to one product
 //	     ?limit=<n>                  rows asked of each product (default 100)
 //	     ?include_stripe_managed=true  trials only; opts in rows products exclude
+//	     ?days=<n>                 trials only; how far ahead to look. Absent
+//	                               means the product's own default (7 days on
+//	                               mark8ly, the same window its trials_expiring
+//	                               KPI counts). Clamped to MaxDays.
 //	POST /v1/billing/tenants/{id}/discount         apply a platform coupon
 //	POST /v1/billing/tenants/{id}/discount/remove  take it back off
 //
@@ -101,7 +105,21 @@ const DefaultLimit = 100
 const MaxLimit = 500
 
 var subscriptionParameters = []string{"source", "limit"}
-var trialParameters = []string{"source", "limit", "include_stripe_managed"}
+var trialParameters = []string{"source", "limit", "include_stripe_managed", "days"}
+
+// MaxDays is the widest expiry window this surface will ask a product for.
+//
+// 365 because that is mark8ly's own MaxExpiryWindow, and it is a bound rather
+// than a claim: an operator-extended trial can end beyond a year, so the
+// widest window is NOT "every trial" and no copy should say it is.
+//
+// CLAMPED, not refused — the opposite of MaxLimit above, and for the opposite
+// reason. The product clamps to the same bound itself, so refusing here would
+// invent a stricter contract than the one the product offers; and a window is
+// declared on screen (the console names the active one), so a clamped window
+// cannot be mistaken for a complete answer the way a silently shortened page
+// can.
+const MaxDays = 365
 
 // noParameters: the discount writes take none, so any query string is refused.
 // The id in the path already names the tenant and the product, and a caller
@@ -289,6 +307,11 @@ func (h *Handler) trials(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err, h.log)
 		return
 	}
+	days, err := readDays(query.Get("days"))
+	if err != nil {
+		httpx.WriteError(w, r, err, h.log)
+		return
+	}
 
 	page, err := h.svc.Trials(r.Context(), operatorFor(principal), service.Query{
 		Source: strings.TrimSpace(query.Get("source")),
@@ -297,6 +320,7 @@ func (h *Handler) trials(w http.ResponseWriter, r *http.Request) {
 		// than rejected: this is a widening flag, and the safe reading of an
 		// unrecognised value is the narrower result.
 		IncludeStripeManaged: query.Get("include_stripe_managed") == "true",
+		Days:                 days,
 	})
 	if err != nil {
 		h.writeReadError(w, r, err)
@@ -346,6 +370,28 @@ func (h *Handler) writeReadError(w http.ResponseWriter, r *http.Request, err err
 	default:
 		httpx.WriteError(w, r, httpx.Unavailable("the billing sources could not be read"), h.log)
 	}
+}
+
+// readDays validates the expiry window, in days.
+//
+// An empty value returns 0, which `trialsPath` sends as nothing at all: the
+// product then applies its own default, which is the request the console has
+// always made. Junk is refused here rather than forwarded for the product to
+// reject — a surface that passes nonsense on is one refactor away from passing
+// it somewhere that does not check.
+func readDays(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, httpx.BadRequest("days must be a positive integer")
+	}
+	if n > MaxDays {
+		return MaxDays, nil
+	}
+	return n, nil
 }
 
 func readLimit(raw string) (int, error) {

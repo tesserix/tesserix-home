@@ -285,3 +285,73 @@ func TestNotImplementedWhenNoProductDeclaresBilling(t *testing.T) {
 		}
 	}
 }
+
+// `days` widens the trials window. Forwarded verbatim, so the product applies
+// the window the operator chose rather than its own default.
+func TestTrialsForwardTheDaysWindow(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/trials?days=30"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+	got, called := a.lastCall()
+	if !called {
+		t.Fatal("the product was never called")
+	}
+	if !strings.Contains(got.url, "days=30") {
+		t.Errorf("product asked %q, want the window forwarded", got.url)
+	}
+}
+
+// No `days` sends no `days`: the product's own DefaultExpiryWindow applies,
+// which is the request the console has always made and the definition
+// /admin/kpis's trials_expiring counter shares.
+func TestTrialsWithoutADaysWindowSendNone(t *testing.T) {
+	a := serve(t)
+	a.get("/v1/billing/trials")
+	got, called := a.lastCall()
+	if !called {
+		t.Fatal("the product was never called")
+	}
+	if strings.Contains(got.url, "days") {
+		t.Errorf("product asked %q, want no window when the caller named none", got.url)
+	}
+}
+
+// Clamped, not refused, and the difference from `limit` is deliberate: the
+// product clamps at MaxExpiryWindow (365 days) itself, so refusing here would
+// invent a stricter contract than the one the product actually offers.
+func TestTrialsClampAnOversizedDaysWindow(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/trials?days=4000"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+	got, called := a.lastCall()
+	if !called {
+		t.Fatal("the product was never called")
+	}
+	if !strings.Contains(got.url, "days=365") {
+		t.Errorf("product asked %q, want the window clamped to 365", got.url)
+	}
+}
+
+// Junk is refused at this boundary rather than forwarded for the product to
+// reject: a surface that passes nonsense through is one refactor away from
+// passing it somewhere that does not check.
+func TestTrialsRefuseAJunkDaysWindow(t *testing.T) {
+	a := serve(t)
+	for _, raw := range []string{"abc", "0", "-3", "7.5"} {
+		got := a.get("/v1/billing/trials?days=" + raw)
+		if got.status != http.StatusBadRequest {
+			t.Errorf("days=%s: status = %d, want 400: %s", raw, got.status, got.raw)
+		}
+	}
+}
+
+// `days` is a TRIALS parameter. On subscriptions it is an unknown one, and a
+// rejected typo is cheaper than a filter that silently did nothing.
+func TestSubscriptionsRejectADaysWindow(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/subscriptions?days=30"); got.status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400: %s", got.status, got.raw)
+	}
+}

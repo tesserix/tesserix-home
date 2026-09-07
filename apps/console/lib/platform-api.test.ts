@@ -9,6 +9,7 @@ import {
   fetchPlatformSources,
   fetchProductEntities,
   fetchProductKpis,
+  fetchEstateTrials,
   parseDashboard,
   fetchSupportAnalytics,
   fetchTicketDetail,
@@ -21,6 +22,7 @@ import {
 // below that stands in for a paged platform-api response uses one of these
 // rather than a bare object literal, so the shape it asserts is a deliberate
 // choice, not a guess that happens to match the parser under test.
+import { MAX_TRIAL_WINDOW_DAYS, trialQueryFor } from "./trial-scope";
 import {
   paginationCursorMeta,
   paginationInMeta,
@@ -110,7 +112,7 @@ beforeEach((ctx) => {
 function installFetchStub<T extends (...args: never[]) => unknown>(impl: T): T {
   const owner = scope;
   if (!owner) {
-    // Unreachable today — all 41 call sites are inside `it()` bodies or helpers
+    // Unreachable today — all 42 call sites are inside `it()` bodies or helpers
     // called from them, so `beforeEach` has always run. Guarded anyway because
     // it is the one path that would fail silently: with no scope to record a
     // leak against, every call would be withheld and the test would hang to a
@@ -1548,5 +1550,86 @@ describe("fetchProductKpis", () => {
     );
 
     await expect(fetchProductKpis("mark8ly")).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+/**
+ * The estate trials read, and the scope it asks for.
+ *
+ * Asserted against the platform API's own contract — `/v1/billing/trials`
+ * accepts `source`, `limit`, `include_stripe_managed` and `days` — rather than
+ * against whatever this module happens to build. The default case is the one
+ * that matters most: it is what production sends today, and a `days` appearing
+ * there would move the window without anyone asking.
+ */
+describe("fetchEstateTrials", () => {
+  const ROW = {
+    source: "mark8ly",
+    tenant_id: "t3",
+    trial_ends_at: "2026-09-10T00:00:00Z",
+    days_remaining: 2,
+    plan: "pro",
+    payment_method_on_file: false,
+    status: "trialing",
+  };
+
+  function respond() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(envelope({ data: [ROW], total: 1, failures: [] })), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    installFetchStub(fetchMock);
+    return fetchMock;
+  }
+
+  function sent(fetchMock: ReturnType<typeof vi.fn>): URL {
+    return new URL(fetchMock.mock.calls[0][0] as string);
+  }
+
+  // Production's request, unchanged: page size only. No `days` — the product
+  // applies its own 7-day default, which is the same window its
+  // trials_expiring KPI counts.
+  it("asks for nothing but a page size by default", async () => {
+    const fetchMock = respond();
+
+    await fetchEstateTrials();
+
+    expect(sent(fetchMock).pathname).toBe("/v1/billing/trials");
+    expect([...sent(fetchMock).searchParams.keys()].sort()).toEqual(["limit"]);
+    expect(sent(fetchMock).searchParams.get("limit")).toBe("100");
+  });
+
+  it("sends a widened window under the API's own parameter name", async () => {
+    const fetchMock = respond();
+
+    await fetchEstateTrials(trialQueryFor({ days: 30 }));
+
+    expect(sent(fetchMock).searchParams.get("days")).toBe("30");
+    expect(sent(fetchMock).searchParams.has("include_stripe_managed")).toBe(false);
+  });
+
+  // THE coupling, asserted end to end rather than only on `trialQueryFor`:
+  // "Any" that quietly excluded Stripe-managed rows would be the same
+  // invisible-scope bug one level down.
+  it("sends BOTH the widest window and the Stripe-managed opt-in for Any", async () => {
+    const fetchMock = respond();
+
+    await fetchEstateTrials(trialQueryFor({ days: MAX_TRIAL_WINDOW_DAYS }));
+
+    expect(sent(fetchMock).searchParams.get("days")).toBe("365");
+    expect(sent(fetchMock).searchParams.get("include_stripe_managed")).toBe("true");
+  });
+
+  it("narrows to one product with `source`", async () => {
+    const fetchMock = respond();
+
+    await fetchEstateTrials(trialQueryFor({ days: 7, source: "mark8ly" }));
+
+    expect(sent(fetchMock).searchParams.get("source")).toBe("mark8ly");
+    expect(sent(fetchMock).searchParams.has("days")).toBe(false);
   });
 });
