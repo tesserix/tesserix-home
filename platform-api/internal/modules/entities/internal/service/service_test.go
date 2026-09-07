@@ -37,8 +37,7 @@ func svc(t *testing.T, body string, types map[string][]string) (*Service, *strin
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", BaseURL: srv.URL, Secret: "s"},
-	}), srv.Client())
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 	return New(fed, types, testLogger()), &asked
 }
 

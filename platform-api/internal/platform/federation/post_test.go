@@ -46,7 +46,7 @@ func TestPostSignsTheBodyItSends(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: secret}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: secret}}}}), srv.Client())
 
 	if _, err := c.Post(context.Background(), "mark8ly", "/admin/tenants/t1/suspend", body, operator(), postOpts()); err != nil {
 		t.Fatalf("Post: %v", err)
@@ -90,7 +90,7 @@ func TestPostSendsTheIdempotencyKeyAndContentType(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	if _, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), PostOptions{IdempotencyKey: "k-42"}); err != nil {
 		t.Fatalf("Post: %v", err)
@@ -113,7 +113,7 @@ func TestPostRefusesWithoutAnIdempotencyKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), PostOptions{})
 	if !errors.Is(err, ErrIdempotencyKeyRequired) {
@@ -128,7 +128,7 @@ func TestPostRefusesToCallWithoutAnOperator(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	if _, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), Operator{}, postOpts()); err == nil {
 		t.Fatal("a write without an operator must be refused")
@@ -153,7 +153,7 @@ func TestPostSurfacesTheStatusOnANonSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
 	if err == nil {
@@ -184,7 +184,7 @@ func TestPostWithNoBodyHashesAsEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: secret}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: secret}}}}), srv.Client())
 
 	if _, err := c.Post(context.Background(), "mark8ly", "/x", nil, operator(), postOpts()); err != nil {
 		t.Fatalf("Post: %v", err)
@@ -201,7 +201,7 @@ func TestPostReturnsTheResponseBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	got, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
 	if err != nil {
@@ -231,7 +231,7 @@ func TestPostAppliesTheClientTimeout(t *testing.T) {
 
 	hc := srv.Client()
 	hc.Timeout = 2 * time.Second
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), hc)
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), hc)
 
 	if _, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts()); err != nil {
 		t.Fatalf("Post: %v", err)
@@ -248,7 +248,7 @@ func TestPostCarriesTheProductsErrorCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
 	code, ok := ErrorCode(err)
@@ -268,7 +268,7 @@ func TestPostDoesNotExposeTheProductsFreeTextMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
 	if strings.Contains(err.Error(), secret) {
@@ -285,7 +285,7 @@ func TestPostWithAnUnparseableErrorBodyStillFails(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
 	if err == nil {
@@ -333,7 +333,7 @@ func TestPutSendsThePutMethodAndSignsItsBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: secret}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: secret}}}}), srv.Client())
 
 	if _, err := c.Put(context.Background(), "mark8ly",
 		"/admin/email-templates/orderdoc_invoice", body, operator(), postOpts()); err != nil {
@@ -354,7 +354,7 @@ func TestPutRefusesWithoutAnIdempotencyKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Put(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), PostOptions{})
 	if !errors.Is(err, ErrIdempotencyKeyRequired) {
@@ -369,7 +369,7 @@ func TestPutCarriesTheProductsErrorCode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	_, err := c.Put(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
 	code, ok := ErrorCode(err)

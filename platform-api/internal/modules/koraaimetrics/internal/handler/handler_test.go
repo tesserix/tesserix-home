@@ -64,7 +64,7 @@ func serveKora(t *testing.T, status int, body string, configured bool) *api {
 
 	var products []federation.Product
 	if configured {
-		products = []federation.Product{{Slug: koraSlug, BaseURL: product.URL, Secret: "test-secret"}}
+		products = []federation.Product{{Slug: koraSlug, Services: []federation.Service{{Name: koraSlug, BaseURL: product.URL, Secret: "test-secret"}}}}
 	}
 	fed := federation.NewClient(federation.NewRegistry(products), product.Client())
 
@@ -91,8 +91,7 @@ func serveKoraRecordingQuery(t *testing.T, captured *url.Values) *api {
 	t.Cleanup(product.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: koraSlug, BaseURL: product.URL, Secret: "test-secret"},
-	}), product.Client())
+		{Slug: koraSlug, Services: []federation.Service{{Name: koraSlug, BaseURL: product.URL, Secret: "test-secret"}}}}), product.Client())
 
 	mux := http.NewServeMux()
 	verifier := auth.NewVerifier(stubParser{claims: tokenFor("platform")}, projectID)

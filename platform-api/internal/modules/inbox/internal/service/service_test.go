@@ -38,9 +38,7 @@ func svc(t *testing.T, bodies map[string]string) *Service {
 	products := make([]federation.Product, 0, len(bodies))
 	slugs := make([]string, 0, len(bodies))
 	for slug, body := range bodies {
-		products = append(products, federation.Product{
-			Slug: slug, BaseURL: serving(t, body).URL, Secret: "s",
-		})
+		products = append(products, federation.Product{Slug: slug, Services: []federation.Service{{Name: slug, BaseURL: serving(t, body).URL, Secret: "s"}}})
 		slugs = append(slugs, slug)
 	}
 	fed := federation.NewClient(federation.NewRegistry(products), nil)
@@ -149,9 +147,8 @@ func TestEstateReportsAFailedProductWithoutLosingTheOthers(t *testing.T) {
 	t.Cleanup(broken.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", BaseURL: serving(t, koraQueue).URL, Secret: "s"},
-		{Slug: "other", BaseURL: broken.URL, Secret: "s"},
-	}), nil)
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: serving(t, koraQueue).URL, Secret: "s"}}},
+		{Slug: "other", Services: []federation.Service{{Name: "other", BaseURL: broken.URL, Secret: "s"}}}}), nil)
 
 	page, err := New(fed, []string{"kora", "other"}, testLogger()).
 		Estate(context.Background(), op(), Query{Limit: 100})

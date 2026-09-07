@@ -264,16 +264,30 @@ func (c *Client) do(
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrProductNotConfigured, slug)
 	}
+	// soleService, not one of Registry.ServicesServing/ServicesImplementing:
+	// this call has a slug and a path, not the entity or endpoint that path
+	// answers for, so there is nothing here to resolve an ambiguous product
+	// with. Every product configured today has exactly one service, so this
+	// is unreachable in production; it exists so a product configured with
+	// more than one, before any call site is taught to pick between them,
+	// fails loudly here instead of silently calling the wrong front door
+	// with the wrong secret.
+	svc, ok := product.soleService()
+	if !ok {
+		return nil, fmt.Errorf(
+			"%w: %s has more than one service and this call has no entity or endpoint to resolve one with",
+			ErrProductNotConfigured, slug)
+	}
 
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, product.BaseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, svc.BaseURL+path, reader)
 	if err != nil {
 		return nil, fmt.Errorf("federation: building request for %s: %w: %w", slug, ErrRequestInvalid, err)
 	}
-	if err := c.sign(req, product.Secret, op, body); err != nil {
+	if err := c.sign(req, svc.Secret, op, body); err != nil {
 		return nil, fmt.Errorf("federation: signing request for %s: %w: %w", slug, ErrSigning, err)
 	}
 	req.Header.Set("Accept", "application/json")

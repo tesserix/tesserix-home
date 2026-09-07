@@ -130,8 +130,7 @@ func serveWith(t *testing.T, upstream http.Handler, slugs []string, roles ...str
 	t.Cleanup(srv.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: productSlug, BaseURL: srv.URL, Secret: "test-secret"},
-	}), srv.Client())
+		{Slug: productSlug, Services: []federation.Service{{Name: productSlug, BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	mux := http.NewServeMux()
 	verifier := auth.NewVerifier(stubParser{claims: tokenFor(roles...)}, projectID)
@@ -374,8 +373,7 @@ func TestAConfiguredButUnreachableProductIs503AndNot501(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: productSlug, BaseURL: dead.URL, Secret: "s"},
-	}), dead.Client())
+		{Slug: productSlug, Services: []federation.Service{{Name: productSlug, BaseURL: dead.URL, Secret: "s"}}}}), dead.Client())
 	mux := http.NewServeMux()
 	verifier := auth.NewVerifier(stubParser{claims: tokenFor("platform")}, projectID)
 	httpx.RegisterModule(mux, verifier, "emailtemplates", func(m *http.ServeMux) {

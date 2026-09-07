@@ -25,8 +25,7 @@ func build(t *testing.T, slugs []string) *service.Service {
 	t.Cleanup(srv.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"},
-	}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 	return service.New(fed, slugs, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 

@@ -59,7 +59,7 @@ func TestGetSignsTheRequestTheWayTheServerVerifiesIt(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: secret}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: secret}}}}), srv.Client())
 
 	if _, err := c.Get(context.Background(), "mark8ly", "/admin/audit-logs?limit=200&since_hours=720", operator()); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -111,7 +111,7 @@ func TestGetSignsTheDecodedPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: secret}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: secret}}}}), srv.Client())
 
 	if _, err := c.Get(context.Background(), "mark8ly", "/admin/tenants/t%20one", operator()); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -133,7 +133,7 @@ func TestGetSendsAFreshNonceEachCall(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "shh"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "shh"}}}}), srv.Client())
 	for range 3 {
 		if _, err := c.Get(context.Background(), "mark8ly", "/admin/audit-logs", operator()); err != nil {
 			t.Fatalf("Get: %v", err)
@@ -156,7 +156,7 @@ func TestGetRefusesWhenTheRequestCannotBeSigned(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: ""}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: ""}}}}), srv.Client())
 
 	_, err := c.Get(context.Background(), "mark8ly", "/admin/audit-logs", operator())
 	if !errors.Is(err, ErrSigning) {
@@ -180,7 +180,7 @@ func TestGetRefusesToCallWithoutAnOperator(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	if _, err := c.Get(context.Background(), "mark8ly", "/admin/audit-logs", Operator{}); err == nil {
 		t.Fatal("an anonymous federated call must be refused, not sent")
@@ -193,7 +193,7 @@ func TestGetTurnsANonSuccessIntoAnError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	if _, err := c.Get(context.Background(), "mark8ly", "/x", operator()); err == nil {
 		t.Fatal("503 must surface as an error, not as an empty success")
@@ -238,11 +238,7 @@ func TestGetReproducesAGoldenVectorEndToEnd(t *testing.T) {
 	// The base URL carries the /api/v1/platform prefix the vector's path
 	// includes — and that mark8ly's routes.go requires for a reason that has
 	// nothing to do with signing. See registry.go.
-	c := NewClient(NewRegistry([]Product{{
-		Slug:    "mark8ly",
-		BaseURL: srv.URL + "/api/v1/platform",
-		Secret:  want.Secret,
-	}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL + "/api/v1/platform", Secret: want.Secret}}}}), srv.Client())
 	c.now = func() time.Time { return time.Unix(ts, 0) }
 	c.nonce = func() (string, error) { return want.Nonce, nil }
 
@@ -265,7 +261,7 @@ func TestStatusOfDistinguishesARefusalFromAnOutage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "kora", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "kora", Services: []Service{{Name: "kora", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 	_, err := c.Get(context.Background(), "kora", "/admin/kpis", Operator{ID: "op", Capability: "platform"})
 	if err == nil {
 		t.Fatal("expected a refusal")
