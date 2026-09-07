@@ -377,6 +377,26 @@ git commit -m "feat(billing): seed console entitlements from the enforcing matri
 - Consumes: Task 4's `readEntitlements`; Task 3's `/v1/billing/entitlements`.
 - Produces: `compareEntitlements(consoleRows, productMatrix): EntitlementDifference[]` where `EntitlementDifference = { plan: string; feature: string; consoleValue: number | null; productValue: number | null }`.
 
+**CORRECTED 2026-09-08, from Task 4's findings — read before starting:**
+
+- **The file list below is incomplete, as every previous task's was.** Two files
+  outside billing will need touching and neither is optional:
+  - `apps/console/lib/claims.guard.test.ts` — this repo runs a prose-vs-code
+    guard suite. `platform-api.test.ts` carries the comment "all N call sites
+    are inside `it()` bodies" and the guard asserts
+    `occurrencesOf("installFetchStub(", …) === N`. **Adding any
+    fetch-stubbing test to `platform-api.test.ts` reds a file in an unrelated
+    suite.** Task 4 hit this; update the count and the prose together.
+  - `apps/console/lib/billing.ts` — the parser half of the
+    "parse-then-return" shape lives here, not in `platform-api.ts`.
+- **Do not copy `limit` or `total` from the subscriptions reader.** The
+  entitlements endpoint's parameter allowlist is `source` ALONE
+  (`entitlementParameters`, validated in `h.begin`), so a copied `limit` is
+  an unexpected parameter; and there is no `total`, so a copied parser
+  rejects every valid response.
+- **`readEntitlements` takes `source`**, and must: 0052's PK is
+  `(revision_id, source, plan, feature)`.
+
 - [ ] **Step 1: Write the failing comparator test**
 
 Pure function, no database, no network — the same split `parity.ts` already keeps:
