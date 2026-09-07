@@ -10,8 +10,19 @@ import {
   type SurfaceError,
   type SurfaceState,
 } from "@/components/kit/surface-state";
+import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar";
 import { fetchEstateSubscriptions, fetchEstateTrials } from "@/lib/platform-api";
 import type { SubscriptionPage, TrialPage } from "@/lib/billing";
+import { sourceLabel } from "@/lib/audit";
+import {
+  BILLING_PRODUCT_SOURCES,
+  DEFAULT_TRIAL_WINDOW_DAYS,
+  TRIAL_WINDOWS,
+  isTrialWindow,
+  trialQueryFor,
+  trialsEmptyMessage,
+  type TrialScope,
+} from "@/lib/trial-scope";
 import { BillingViews, CatalogLink } from "./billing-views";
 
 /**
@@ -57,6 +68,84 @@ export function billingReadError(caught: unknown): SurfaceError | null {
   };
 }
 
+/**
+ * The trials tab's two filters.
+ *
+ * Keys are the platform API's own parameter names (`days`, `source`), so the
+ * descriptor key, the URL param and the upstream param are one name — the same
+ * choice the ticket queue makes.
+ *
+ * `days` carries a `defaultValue` because its unset state is not "no filter":
+ * the product applies a 7-day expiry window whether or not anyone asked. See
+ * `FilterDescriptor.defaultValue`.
+ */
+export const TRIAL_FILTERS: FilterDescriptor[] = [
+  {
+    key: "days",
+    label: "Expiring",
+    type: "select",
+    defaultValue: String(DEFAULT_TRIAL_WINDOW_DAYS),
+    options: TRIAL_WINDOWS.map((window) => ({ value: window.value, label: window.label })),
+  },
+  {
+    key: "source",
+    label: "Product",
+    type: "select",
+    options: BILLING_PRODUCT_SOURCES.map((source) => ({
+      value: source,
+      label: sourceLabel(source),
+    })),
+  },
+];
+
+export type BillingSearchParams = Record<string, string | string[] | undefined>;
+
+/**
+ * Read the trials scope out of the URL.
+ *
+ * Untrusted input, so a value survives only if this surface offers it. An
+ * unrecognised window falls back to the default rather than travelling on: the
+ * platform boundary would clamp or refuse it, and the bar would then display a
+ * scope that is not the one in effect. A repeated param arrives as an array
+ * and is ignored for the same reason — the endpoint takes one value per key.
+ *
+ * `days` is always resolved to a number: the default is a SELECTION, not an
+ * absence. What the request omits is decided by `trialQueryFor`, not here.
+ */
+export function readTrialScope(searchParams: BillingSearchParams): TrialScope {
+  const rawDays = searchParams.days;
+  const days =
+    typeof rawDays === "string" && isTrialWindow(rawDays)
+      ? Number(rawDays)
+      : DEFAULT_TRIAL_WINDOW_DAYS;
+
+  const rawSource = searchParams.source;
+  const source =
+    typeof rawSource === "string" &&
+    (BILLING_PRODUCT_SOURCES as readonly string[]).includes(rawSource)
+      ? rawSource
+      : undefined;
+
+  return source ? { days, source } : { days };
+}
+
+/**
+ * The applied scope as the bar's display values — what the server actually
+ * asked for, never what the URL happens to say. The two differ when a URL
+ * carries a value no descriptor offers, and a bar showing a filter that is not
+ * in effect is the same class of lie as a scope that is invisible.
+ *
+ * The default window is omitted rather than written out: `FilterBar` renders
+ * the descriptor's `defaultValue` for an absent value, and including it would
+ * light up "Clear filters" for something nobody chose.
+ */
+export function toTrialFilterValues(scope: TrialScope): FilterValues {
+  const values: FilterValues = {};
+  if (scope.days !== DEFAULT_TRIAL_WINDOW_DAYS) values.days = String(scope.days);
+  if (scope.source) values.source = scope.source;
+  return values;
+}
+
 export interface ViewStateInput {
   readonly error: unknown;
   readonly rows: readonly unknown[];
@@ -65,10 +154,14 @@ export interface ViewStateInput {
 /**
  * Which state one view is in.
  *
- * `filtered` is false: this surface offers no filters yet, and claiming
- * otherwise renders the kit's "no results — clear filters" copy for a list
- * that is simply empty, turning a good answer into an apparent operator
- * mistake.
+ * `filtered` stays false even though the trials tab now has filters, and that
+ * is deliberate. `filtered-empty` renders the kit's fixed "No rows match the
+ * current filters — clear them to see everything" copy, which cannot name the
+ * window and offers a clearing that does not exist: the 7-day window is in
+ * effect whether or not anyone chose it, so there is no unfiltered state to
+ * return to. The `empty` copy this page supplies names the active scope
+ * instead, which is the sentence the operator needed; the filter bar renders
+ * above it either way, so the way out is still on screen.
  */
 export function viewState(input: ViewStateInput): SurfaceState {
   return resolveState({
@@ -82,14 +175,43 @@ export function viewState(input: ViewStateInput): SurfaceState {
 const EMPTY_SUBSCRIPTIONS: SubscriptionPage = { data: [], total: 0, failures: [] };
 const EMPTY_TRIALS: TrialPage = { data: [], total: 0, failures: [] };
 
-export default async function EstateBilling() {
+/**
+ * The operator's own URL as a relative path, so signing in again returns them
+ * to the scope they were looking at rather than to the default one. Same shape
+ * `middleware.ts` and the ticket queue build.
+ */
+function currentPath(searchParams: BillingSearchParams): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (typeof value === "string") {
+      params.set(key, value);
+    } else if (Array.isArray(value)) {
+      for (const entry of value) params.append(key, entry);
+    }
+  }
+  const qs = params.toString();
+  return qs ? `/platform/billing?${qs}` : "/platform/billing";
+}
+
+export default async function EstateBilling({
+  searchParams,
+}: {
+  searchParams: Promise<BillingSearchParams>;
+}) {
+  const resolvedSearchParams = await searchParams;
+  const scope = readTrialScope(resolvedSearchParams);
+
   // Fetched together and settled independently — one endpoint failing must not
   // take the other's tab down with it. `Promise.allSettled`, not `all`, for
   // exactly that reason: `all` rejects on the first failure and would discard
   // a perfectly good second answer.
+  //
+  // Only the trials read is scoped. The subscriptions tab is a different
+  // question with no expiry window, and it already answers "every tenant on a
+  // trial" through its own `plan` filter.
   const [subsResult, trialsResult] = await Promise.allSettled([
     fetchEstateSubscriptions(),
-    fetchEstateTrials(),
+    fetchEstateTrials(trialQueryFor(scope)),
   ]);
 
   const subscriptions =
@@ -115,7 +237,13 @@ export default async function EstateBilling() {
           error: trialsResult.status === "rejected" ? trialsResult.reason : null,
           rows: trials.data,
         })}
-        reauthReturnTo="/platform/billing"
+        trialFilters={TRIAL_FILTERS}
+        trialFilterValues={toTrialFilterValues(scope)}
+        trialsEmptyMessage={trialsEmptyMessage({
+          days: scope.days,
+          sourceLabel: scope.source ? sourceLabel(scope.source) : undefined,
+        })}
+        reauthReturnTo={currentPath(resolvedSearchParams)}
       />
     </div>
   );

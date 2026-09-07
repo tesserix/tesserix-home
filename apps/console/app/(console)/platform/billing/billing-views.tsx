@@ -16,6 +16,12 @@ import {
 } from "@tesserix/web";
 import { AlertTriangle } from "lucide-react";
 import { consolePath } from "@tesserix/console-core";
+import {
+  FilterBar,
+  useUrlFilters,
+  type FilterDescriptor,
+  type FilterValues,
+} from "@/components/kit/filter-bar";
 import { SurfaceTabs } from "@/components/kit/surface-tabs";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
@@ -119,6 +125,20 @@ export interface BillingViewsProps {
   trials: TrialPage;
   subscriptionsState: SurfaceState;
   trialsState: SurfaceState;
+  /** The trials tab's scope controls, declared by the page — see
+   *  `TRIAL_FILTERS`. */
+  trialFilters: FilterDescriptor[];
+  /**
+   * The scope the server actually applied, not what the URL happens to say.
+   * The two differ when a URL carries a window or product this surface does
+   * not offer: the page ignores it when fetching, so the bar must show it as
+   * unset too. Reading the URL again here would display a scope that is not in
+   * effect.
+   */
+  trialFilterValues: FilterValues;
+  /** Names the active scope — the sentence an empty list needs. Built by the
+   *  page, which is the half that knows what it asked for. */
+  trialsEmptyMessage: string;
   reauthReturnTo: string;
 }
 
@@ -127,8 +147,21 @@ export function BillingViews({
   trials,
   subscriptionsState,
   trialsState,
+  trialFilters,
+  trialFilterValues,
+  trialsEmptyMessage,
   reauthReturnTo,
 }: BillingViewsProps) {
+  // Only the mutations live here; the values come down as props. The
+  // navigation re-runs the server component, which re-fetches with the new
+  // scope — the same split the ticket queue makes.
+  //
+  // No `dropOnChange`: this surface does not page. It asks each product for
+  // one page of `BILLING_LIMIT` rows and renders it, so there is no cursor to
+  // strand an operator past the end of a narrowed list, and the `page` param
+  // `mergeFiltersIntoQuery` already clears is one nothing here sets.
+  const { set, clear } = useUrlFilters(trialFilters);
+
   return (
     <SurfaceTabs
       label="Billing views"
@@ -141,6 +174,16 @@ export function BillingViews({
           label: "Trials",
           content: (
             <div className="flex flex-col gap-4">
+              {/* Above the state branch, never inside it: an empty list is
+                  exactly when an operator needs to widen the window, and a
+                  bar that disappears with the table turns the empty state's
+                  sentence into a dead end. */}
+              <FilterBar
+                descriptors={trialFilters}
+                values={trialFilterValues}
+                onChange={set}
+                onClear={clear}
+              />
               <IncompleteBilling failures={trials.failures} />
               {trialsState.kind === "ready" ? (
                 <>
@@ -186,7 +229,7 @@ export function BillingViews({
               ) : (
                 <SurfaceStateView
                   state={trialsState}
-                  emptyMessage="No trials are expiring. Every product that answered has none."
+                  emptyMessage={trialsEmptyMessage}
                   reauthReturnTo={reauthReturnTo}
                 />
               )}
