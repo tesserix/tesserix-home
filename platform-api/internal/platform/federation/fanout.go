@@ -212,6 +212,23 @@ type ServiceResult struct {
 	Err     error
 }
 
+// Failure builds the same safe-to-render Failure FanOut's own per-product
+// loop builds, for one ServiceResult that failed.
+//
+// product is the caller's, not this package's: FanOutServices already knows
+// which product it was calling (the slug parameter), but ServiceResult itself
+// does not carry it back — Service alone (see its doc comment) is what tells
+// two results apart, and a caller merging several slugs' results still needs
+// the product name on the failure line. Exists so a module built on
+// FanOutServices (mark8ly's split email-template registry,
+// tesserix/mark8ly#720) renders a failed service exactly as safely as FanOut
+// already renders a failed product — via the same sanitize, not a second
+// copy of its judgment calls — rather than reaching for r.Err.Error() and
+// leaking a hostname into a browser.
+func (r ServiceResult) Failure(product string) Failure {
+	return Failure{Product: product, Error: sanitize(r.Err), cause: r.Err}
+}
+
 // FanOutServices calls every one of slug's services matching sel, concurrently,
 // and returns one ServiceResult per match — in Service declaration order, so
 // two identical configurations produce identically ordered results.
