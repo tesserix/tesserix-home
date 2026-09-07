@@ -13,6 +13,7 @@ import {
   recordStripeCoupon,
   updatePromoCode,
   type PromoCodeDiscount,
+  type PromoCodePlan,
 } from "@/lib/db/promo-codes-repo";
 import {
   StripeCouponTermsError,
@@ -148,8 +149,56 @@ const PROMO_REFUSALS: Readonly<Record<string, string>> = {
     "The redemption cap has to be above zero. Leave it empty for an uncapped code.",
   promo_codes_validity_window_is_ordered:
     "The end of the validity window has to be after its start.",
+  // 0051's rules. NOT re-checked before the INSERT — see this module's header
+  // on why the database keeps every rule — so these are the sentences an
+  // operator gets when a request arrives carrying something the three
+  // checkboxes cannot produce. That is not a hypothetical shape: a server
+  // action's argument is whatever the client sent, and `PromoCodePlan` is a
+  // compile-time claim about the caller, not a runtime one.
+  //
+  // `promo_codes_allowed_plans_is_not_empty` is deliberately absent: an empty
+  // list is the one shape this module DOES translate, because it is what the
+  // form's untouched checkbox group means. See {@link authoredScope}.
+  promo_codes_allowed_plans_are_known_plans:
+    "A code can be scoped to Starter, Studio or Pro. Leave every box unticked for a code that applies to all three.",
+  promo_codes_allowed_plans_has_no_null_elements:
+    "The plan list arrived with an empty entry in it. Re-pick the plans this code applies to.",
+  promo_codes_allowed_plans_has_no_duplicates:
+    "The same plan was listed twice. Re-pick the plans this code applies to.",
   promo_code_stripe_coupons_pkey: ALREADY_MINTED_MESSAGE,
 };
+
+/**
+ * The form's selection, as the database spells it: `null` for unscoped.
+ *
+ * THIS IS THE ONE PLACE THE EMPTY LIST IS TRANSLATED, and it belongs here
+ * rather than in the repository on purpose. `createPromoCode` refuses to make
+ * this call — its doc says so at length — because an `[]` arriving there is
+ * ambiguous: a caller that built it might have meant "no plans" (nothing can
+ * redeem this) or "I did not scope it" (everything can), and guessing the
+ * second would ship the widest possible scope for a code someone believed they
+ * had narrowed. That refusal is right, and nothing below weakens it — the
+ * repository still receives `null` or a non-empty list and still lets
+ * `promo_codes_allowed_plans_is_not_empty` answer anything else.
+ *
+ * What this layer has that the repository does not is the KNOWLEDGE OF THE
+ * FORM. The control is a checkbox group with no third state, so an untouched
+ * one is an operator who did not scope the code — which is exactly the reading
+ * the repository would have had to guess at, and is not a guess here. The
+ * ambiguity is resolved where the meaning is known, and once.
+ *
+ * A `null` argument means the same thing and is passed through, so a caller may
+ * spell "unscoped" either way and neither reaches the database as `[]`.
+ *
+ * IT DOES NOT TAKE `undefined`, and the omission is load-bearing on the
+ * amendment path: there, `undefined` means "leave the scope alone" and `null`
+ * means "clear it", so a signature that swallowed both would turn every
+ * amendment of the validity window into a silent widening of the scope. The
+ * caller has to say which it means, and the compiler makes it.
+ */
+function authoredScope(plans: readonly PromoCodePlan[] | null): readonly PromoCodePlan[] | null {
+  return plans === null || plans.length === 0 ? null : plans;
+}
 
 /** The constraint a driver error names, if it names one. `pg` sets
  *  `constraint`; the message carries the name too, and is read as the
@@ -223,6 +272,16 @@ export interface PromoCodeDraftInput {
   readonly validFrom: string | null;
   readonly validUntil: string | null;
   readonly maxRedemptions: number | null;
+  /**
+   * The plans this code is scoped to. The EMPTY LIST is accepted and means
+   * unscoped — the form's untouched checkbox group — and never reaches the
+   * database as `[]`; see {@link authoredScope}.
+   */
+  readonly allowedPlans: readonly PromoCodePlan[] | null;
+  /** No monthly counterpart, because mark8ly's redeemer has none. 0051's
+   *  header, and `promo-codes-panel.tsx`'s `NO_MONTHLY_ONLY_NOTE`, which is
+   *  the operator-facing half of the same fact. */
+  readonly annualOnly: boolean;
 }
 
 /** Author a definition. See this module's header on why nothing here
@@ -241,6 +300,12 @@ export async function createPromoCodeAction(
         validFrom: input.validFrom,
         validUntil: input.validUntil,
         maxRedemptions: input.maxRedemptions,
+        allowedPlans: authoredScope(input.allowedPlans),
+        // `=== true` and not a pass-through: this is a server action, so the
+        // argument is whatever the client sent, and every other field here is
+        // one the database will judge. A boolean column would take a truthy
+        // string quietly.
+        annualOnly: input.annualOnly === true,
         createdBy: actor.sub,
       }),
     (row) => ({
@@ -271,6 +336,20 @@ export interface PromoCodeAmendment {
   readonly validFrom?: string;
   readonly validUntil?: string | null;
   readonly maxRedemptions?: number | null;
+  /**
+   * THE CAMPAIGN SCOPE IS AMENDABLE, unlike the terms above it, and the reason
+   * is that Stripe holds no copy of it to diverge from: a Coupon knows about
+   * money and nothing about plans, so re-scoping a definition leaves a minted
+   * coupon untouched and still correct.
+   *
+   * Omit to leave the scope alone; the empty list and `null` both mean
+   * unscoped, which WIDENS the code to every plan. What this does not do is
+   * reach mark8ly for a code it has already ingested — see
+   * `promo-codes-panel.tsx`'s `describeScopeSyncGap`, which is where an
+   * operator is told so.
+   */
+  readonly allowedPlans?: readonly PromoCodePlan[] | null;
+  readonly annualOnly?: boolean;
 }
 
 export async function updatePromoCodeAction(
@@ -280,7 +359,22 @@ export async function updatePromoCodeAction(
 ): Promise<PromoActionResult> {
   const result = await withPromoWrite(
     code,
-    () => updatePromoCode(id, changes),
+    () =>
+      updatePromoCode(id, {
+        ...changes,
+        // Each spread ONLY when the caller sent the key, because `undefined`
+        // and `null` are different instructions here — "leave it" and "clear
+        // it" — and `updatePromoCode` distinguishes them by presence. Writing
+        // `allowedPlans: authoredScope(changes.allowedPlans ?? null)`
+        // unconditionally would clear the scope on every amendment that never
+        // mentioned it.
+        ...(changes.allowedPlans === undefined
+          ? {}
+          : { allowedPlans: authoredScope(changes.allowedPlans) }),
+        ...(changes.annualOnly === undefined
+          ? {}
+          : { annualOnly: changes.annualOnly === true }),
+      }),
     (row) => ({
       action: "billing.promo.update",
       // `updatePromoCode` returns null for an unknown id AND for an empty

@@ -23,6 +23,7 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 import {
   PromoCodesPanel,
   REDEMPTIONS_UNREPORTED,
+  describeScopeSyncGap,
   describeTrialRepeatingConflict,
   type PromoCodeView,
 } from "./promo-codes-panel";
@@ -37,6 +38,8 @@ const DISCOUNT_CODE: PromoCodeView = {
   validFrom: "2026-09-01T00:00:00.000Z",
   validUntil: null,
   maxRedemptions: 100,
+  allowedPlans: null,
+  annualOnly: false,
   isActive: true,
   coupons: [],
 };
@@ -49,6 +52,8 @@ const TRIAL_ONLY_CODE: PromoCodeView = {
   validFrom: "2026-09-01T00:00:00.000Z",
   validUntil: "2026-12-31T00:00:00.000Z",
   maxRedemptions: null,
+  allowedPlans: ["pro"],
+  annualOnly: true,
   isActive: true,
   coupons: [],
 };
@@ -140,6 +145,10 @@ describe("authoring a definition", () => {
       validFrom: null,
       validUntil: null,
       maxRedemptions: 100,
+      // Untouched scope controls, sent as the empty selection they are — the
+      // action is what turns that into the stored NULL.
+      allowedPlans: [],
+      annualOnly: false,
     });
   });
 
@@ -329,6 +338,10 @@ describe("the discount terms cannot be amended, and the surface says where to go
       validFrom: "2026-09-01",
       validUntil: null,
       maxRedemptions: 100,
+      // The row's own scope, unchanged — an amendment that did not touch the
+      // checkboxes must not re-scope the code.
+      allowedPlans: [],
+      annualOnly: false,
     });
   });
 
@@ -445,8 +458,15 @@ describe("redemption counts", () => {
     expect(redeemed).toHaveLength(2);
     expect(REDEMPTIONS_UNREPORTED).toMatch(/mark8ly/);
 
+    // Found by its HEADER rather than by a literal index: the index moved when
+    // the Scope column landed (#593), and a positional assertion that survives
+    // a column being inserted before it is asserting about the wrong cell.
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    const redeemedColumn = headers.indexOf("Redeemed");
+    expect(redeemedColumn).toBeGreaterThan(-1);
+
     for (const row of screen.getAllByRole("row").slice(1)) {
-      const redeemedCell = within(row).getAllByRole("cell")[4];
+      const redeemedCell = within(row).getAllByRole("cell")[redeemedColumn];
       expect(redeemedCell).toHaveTextContent(REDEMPTIONS_UNREPORTED);
       expect(redeemedCell?.textContent?.trim()).not.toBe("0");
     }
@@ -524,5 +544,150 @@ describe("the surface's own states", () => {
     });
 
     expect(screen.getByText(/No promo codes have been authored yet/)).toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * Campaign scope (tesserix-home#593)
+ * ------------------------------------------------------------------------ */
+
+describe("authoring a campaign scope", () => {
+  /** THE POINT OF THE SENTENCE. Three unticked boxes look like a decision not
+   *  yet made; unscoped is a decision, it is the default, and it is the most
+   *  consequential answer on the form. */
+  it("states the unscoped default in words rather than leaving it to empty boxes", () => {
+    renderPanel();
+
+    expect(
+      screen.getByText("This code applies to every plan, and to both monthly and annual billing."),
+    ).toBeInTheDocument();
+  });
+
+  /** A lone "Annual billing only" box reads like half a pair. mark8ly has no
+   *  monthly-only branch, so the missing half has to be explained rather than
+   *  inferred. */
+  it("says why there is no monthly-only option", () => {
+    renderPanel();
+
+    expect(screen.getByText(/no monthly-only option/)).toBeInTheDocument();
+  });
+
+  it("sends the ticked plans and the annual-only flag with the rest of the draft", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    type("Code", "PROANNUAL");
+    type(/Trial extension/, "30");
+    await user.click(screen.getByLabelText("Pro"));
+    await user.click(screen.getByLabelText("Annual billing only"));
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole("form", { name: /Author a promo code/ }));
+    });
+
+    expect(createPromoCodeAction.mock.calls[0][0]).toMatchObject({
+      allowedPlans: ["pro"],
+      annualOnly: true,
+    });
+  });
+
+  /** One scope, one spelling: the stored order is the plan ladder's, not the
+   *  order the operator happened to click in. */
+  it("stores the selection in ladder order however it was clicked", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    type("Code", "TWOPLANS");
+    type(/Trial extension/, "30");
+    await user.click(screen.getByLabelText("Pro"));
+    await user.click(screen.getByLabelText("Starter"));
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole("form", { name: /Author a promo code/ }));
+    });
+
+    expect(createPromoCodeAction.mock.calls[0][0]).toMatchObject({
+      allowedPlans: ["starter", "pro"],
+    });
+  });
+
+  it("shows a scoped row's scope in the table, and an unscoped one's too", () => {
+    renderPanel({ codes: [DISCOUNT_CODE, TRIAL_ONLY_CODE] });
+
+    expect(screen.getByText("Every plan · any period")).toBeInTheDocument();
+    expect(screen.getByText("Pro · annual only")).toBeInTheDocument();
+  });
+});
+
+describe("the warning that a re-scope may not reach mark8ly", () => {
+  it("appears when an amendment changes the scope", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "Amend" }));
+    const form = screen.getByRole("form", { name: "Amend LAUNCH50" });
+    await user.click(within(form).getByLabelText("Pro"));
+
+    expect(screen.getByText(/A scope change may not reach mark8ly yet/)).toBeInTheDocument();
+    expect(screen.getByText(/author a replacement code with it and deactivate this one/)).toBeInTheDocument();
+  });
+
+  /** WARNED, NOT REFUSED — #521 decision 3's shape. The edit is stored and
+   *  served; what the operator cannot have is the timing. */
+  it("does not block the save", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "Amend" }));
+    const form = screen.getByRole("form", { name: "Amend LAUNCH50" });
+    await user.click(within(form).getByLabelText("Pro"));
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    expect(updatePromoCodeAction.mock.calls[0][2]).toMatchObject({ allowedPlans: ["pro"] });
+  });
+
+  it("stays absent for an amendment that leaves the scope alone", () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "Amend" }));
+    fireEvent.change(screen.getByLabelText("Trial days"), { target: { value: "14" } });
+
+    expect(screen.queryByText(/may not reach mark8ly/)).toBeNull();
+  });
+});
+
+describe("describeScopeSyncGap", () => {
+  const unscoped = { allowedPlans: null, annualOnly: false };
+
+  it("says nothing when the scope is unchanged", () => {
+    expect(describeScopeSyncGap(unscoped, { allowedPlans: [], annualOnly: false })).toBeNull();
+  });
+
+  /** `{pro,studio}` and `{studio,pro}` are the same scope — 0051 refuses
+   *  duplicates, so membership plus length is set equality — and re-ordering a
+   *  selection is not a change to warn about. */
+  it("is order-insensitive", () => {
+    expect(
+      describeScopeSyncGap(
+        { allowedPlans: ["studio", "pro"], annualOnly: false },
+        { allowedPlans: ["pro", "studio"], annualOnly: false },
+      ),
+    ).toBeNull();
+  });
+
+  it("warns on a period change as well as a plan change", () => {
+    expect(describeScopeSyncGap(unscoped, { allowedPlans: [], annualOnly: true })).toMatch(
+      /mark8ly keeps the scope it first ingested/,
+    );
+  });
+
+  /** It never claims the edit is lost — it is stored, served, and applied by
+   *  the first sync after mark8ly starts reading these fields. */
+  it("says the change is kept, not discarded", () => {
+    expect(describeScopeSyncGap(unscoped, { allowedPlans: ["pro"], annualOnly: false })).toMatch(
+      /The change is not lost/,
+    );
   });
 });

@@ -31,3 +31,16 @@ if (typeof Element !== "undefined") {
   Element.prototype.releasePointerCapture ??= () => {};
   Element.prototype.scrollIntoView ??= () => {};
 }
+
+// The same class of gap, for the same reason: Radix's `Checkbox` measures its
+// hidden bubble input with `useSize`, which constructs a `ResizeObserver`
+// jsdom does not implement — so RENDERING one throws, before any assertion.
+// Three CRM suites already carry this stub locally; it lives here so a surface
+// that adopts the design system's `Checkbox` (the promo scope controls,
+// `ConsoleDataTable`'s row selection) does not have to rediscover why its
+// render failed. `??=` so a suite that installs its own spy keeps it.
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
