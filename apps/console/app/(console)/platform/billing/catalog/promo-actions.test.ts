@@ -110,6 +110,8 @@ const DEFINITION: PromoCodeRow = {
   validFrom: "2026-09-01T00:00:00.000Z",
   validUntil: null,
   maxRedemptions: 100,
+  allowedPlans: null,
+  annualOnly: false,
   isActive: true,
   createdBy: "operator-1",
   createdAt: "2026-09-01T00:00:00.000Z",
@@ -170,6 +172,8 @@ describe("createPromoCodeAction", () => {
       validFrom: null,
       validUntil: null,
       maxRedemptions: 100,
+      allowedPlans: null,
+      annualOnly: false,
     });
 
     expect(result).toEqual({ ok: true });
@@ -185,6 +189,8 @@ describe("createPromoCodeAction", () => {
       validFrom: null,
       validUntil: null,
       maxRedemptions: 100,
+      allowedPlans: null,
+      annualOnly: false,
       createdBy: "operator-1",
     });
     expect(lastAuditInsert()).toEqual({
@@ -205,6 +211,8 @@ describe("createPromoCodeAction", () => {
       validFrom: null,
       validUntil: null,
       maxRedemptions: null,
+      allowedPlans: null,
+      annualOnly: false,
     });
 
     expect(result).toEqual({ ok: false, message: NO_PERMISSION });
@@ -233,6 +241,8 @@ describe("createPromoCodeAction", () => {
       validFrom: null,
       validUntil: null,
       maxRedemptions: null,
+      allowedPlans: null,
+      annualOnly: false,
     });
 
     expect(result.ok).toBe(false);
@@ -254,6 +264,8 @@ describe("createPromoCodeAction", () => {
       validFrom: null,
       validUntil: null,
       maxRedemptions: null,
+      allowedPlans: null,
+      annualOnly: false,
     });
 
     expect(result).toEqual({ ok: false, message: "That change was not saved." });
@@ -279,6 +291,8 @@ describe("createPromoCodeAction", () => {
         validFrom: null,
         validUntil: null,
         maxRedemptions: null,
+        allowedPlans: null,
+        annualOnly: false,
       });
 
       expect(spy).toHaveBeenCalledWith(expect.stringContaining("LAUNCH50"), cause);
@@ -305,6 +319,8 @@ describe("createPromoCodeAction", () => {
         validFrom: null,
         validUntil: null,
         maxRedemptions: null,
+        allowedPlans: null,
+        annualOnly: false,
       });
 
       expect(result.ok).toBe(false);
@@ -351,6 +367,132 @@ describe("updatePromoCodeAction", () => {
     const result = await updatePromoCodeAction("promo-1", "LAUNCH50", { maxRedemptions: 5 });
     expect(result).toEqual({ ok: false, message: NO_PERMISSION });
     expect(updatePromoCode).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * Campaign scope (tesserix-home#593)
+ * ------------------------------------------------------------------------ */
+
+describe("the scope an action sends to the repository", () => {
+  /** The one thing this layer translates: an untouched checkbox group is an
+   *  operator who did not scope the code, and the database stores that as
+   *  NULL. `[]` reaching `createPromoCode` would be refused BY NAME, so this
+   *  is asserted on what was SENT and not on what came back. */
+  it("sends null, never the empty array, for an unscoped new code", async () => {
+    signIn(["billing"]);
+    vi.mocked(createPromoCode).mockResolvedValue(DEFINITION);
+
+    await createPromoCodeAction({
+      code: "LAUNCH50",
+      trialExtensionDays: 30,
+      discount: null,
+      validFrom: null,
+      validUntil: null,
+      maxRedemptions: null,
+      allowedPlans: [],
+      annualOnly: false,
+    });
+
+    expect(vi.mocked(createPromoCode).mock.calls[0][0].allowedPlans).toBeNull();
+  });
+
+  it("passes a real selection through untouched, in the order it was given", async () => {
+    signIn(["billing"]);
+    vi.mocked(createPromoCode).mockResolvedValue(DEFINITION);
+
+    await createPromoCodeAction({
+      code: "PROONLY",
+      trialExtensionDays: null,
+      discount: null,
+      validFrom: null,
+      validUntil: null,
+      maxRedemptions: null,
+      allowedPlans: ["studio", "pro"],
+      annualOnly: true,
+    });
+
+    expect(vi.mocked(createPromoCode).mock.calls[0][0]).toMatchObject({
+      allowedPlans: ["studio", "pro"],
+      annualOnly: true,
+    });
+  });
+
+  /** A client is not the compiler. `annualOnly` is a boolean column and a
+   *  truthy string would reach it quietly. */
+  it("coerces a non-boolean annualOnly rather than forwarding it", async () => {
+    signIn(["billing"]);
+    vi.mocked(createPromoCode).mockResolvedValue(DEFINITION);
+
+    await createPromoCodeAction({
+      code: "LAUNCH50",
+      trialExtensionDays: 1,
+      discount: null,
+      validFrom: null,
+      validUntil: null,
+      maxRedemptions: null,
+      allowedPlans: null,
+      // The shape a hand-rolled request can carry; the type says otherwise.
+      annualOnly: "yes" as unknown as boolean,
+    });
+
+    expect(vi.mocked(createPromoCode).mock.calls[0][0].annualOnly).toBe(false);
+  });
+
+  /** THE ASYMMETRY THAT MATTERS ON THE AMEND PATH: `undefined` means "leave
+   *  the scope alone" and `null` means "clear it". Collapsing them would widen
+   *  every code whose validity window was ever edited. */
+  it("leaves the scope alone when an amendment does not mention it", async () => {
+    signIn(["billing"]);
+    vi.mocked(updatePromoCode).mockResolvedValue(DEFINITION);
+
+    await updatePromoCodeAction("promo-1", "LAUNCH50", { maxRedemptions: 5 });
+
+    const changes = vi.mocked(updatePromoCode).mock.calls[0][1];
+    expect("allowedPlans" in changes).toBe(false);
+    expect("annualOnly" in changes).toBe(false);
+  });
+
+  it("clears the scope when an amendment unticks every plan", async () => {
+    signIn(["billing"]);
+    vi.mocked(updatePromoCode).mockResolvedValue(DEFINITION);
+
+    await updatePromoCodeAction("promo-1", "LAUNCH50", {
+      allowedPlans: [],
+      annualOnly: false,
+    });
+
+    expect(vi.mocked(updatePromoCode).mock.calls[0][1]).toEqual({
+      allowedPlans: null,
+      annualOnly: false,
+    });
+  });
+
+  /** 0051's rules are NOT re-checked before the INSERT — the database keeps
+   *  them — so what this module owes is the wording of each refusal. */
+  it.each([
+    ["promo_codes_allowed_plans_are_known_plans", /Starter, Studio or Pro/],
+    ["promo_codes_allowed_plans_has_no_null_elements", /empty entry/],
+    ["promo_codes_allowed_plans_has_no_duplicates", /listed twice/],
+  ])("answers %s with a sentence written for an operator", async (constraint, expected) => {
+    signIn(["billing"]);
+    vi.mocked(createPromoCode).mockRejectedValue(constraintViolation(constraint));
+
+    const result = await createPromoCodeAction({
+      code: "LAUNCH50",
+      trialExtensionDays: 1,
+      discount: null,
+      validFrom: null,
+      validUntil: null,
+      maxRedemptions: null,
+      allowedPlans: ["pro"],
+      annualOnly: false,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.message).toMatch(expected);
+    expect(result.message).not.toMatch(/relation|constraint|promo_codes_/);
   });
 });
 

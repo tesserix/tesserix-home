@@ -149,6 +149,39 @@ export type PromoCodeDiscount = {
   | { kind: "amount_off"; amountOffMinor: number; currency: string }
 );
 
+/**
+ * The plans a code may be scoped to.
+ *
+ * An ARRAY WITH A DERIVED TYPE rather than a bare union, unlike
+ * {@link DiscountDuration} above: that one is only ever spelled at a call site,
+ * while this one also has to be iterated — an authoring surface renders one
+ * control per plan, and the tests below check the closed set against the
+ * database. `STRIPE_MODES` and `CATALOG_SOURCES` are the same shape for the
+ * same reason, and this file already imports both.
+ *
+ * SPELLED HERE AND NOT BORROWED FROM THE PLAN CATALOG, which is the obvious
+ * place to look for it: `plan_catalog_prices.plan` is `string` all the way
+ * through `plan-catalog-repo.ts`, and deliberately — the catalog's plan axis is
+ * open, and `publish-plan.test.ts` exercises an `enterprise` that has never
+ * been a mark8ly subscription plan. Reusing it would import an OPEN set to
+ * express a CLOSED one, which is the opposite of what
+ * {@link PromoCodeSource}'s reuse of `CATALOG_SOURCES` buys.
+ *
+ * Lower-case, matching 0051's `promo_codes_allowed_plans_are_known_plans`,
+ * mark8ly's `pricing.Plan` constants, and every `mark8ly_<plan>_<period>_…_v1`
+ * lookup key this console stores. Case is NOT what the rule rests on —
+ * mark8ly's redeemer compares with `strings.EqualFold`, so `Starter` would in
+ * fact redeem — but MEMBERSHIP is, and a typo'd `prro` is a code that applies
+ * to nothing while rendering as scoped everywhere. 0051's header has the long
+ * version.
+ *
+ * Adding a fourth plan is a migration AND an edit here. That is the price of
+ * the closed set and it is the same one `CATALOG_SOURCES` pays.
+ */
+export const PROMO_CODE_PLANS = ["starter", "studio", "pro"] as const;
+
+export type PromoCodePlan = (typeof PROMO_CODE_PLANS)[number];
+
 /** A promo code definition, as the console and the served contract see it. */
 export interface PromoCodeRow {
   id: string;
@@ -171,6 +204,30 @@ export interface PromoCodeRow {
   validUntil: string | null;
   /** Null means uncapped. EXACT only while mark8ly is the sole redeemer. */
   maxRedemptions: number | null;
+  /**
+   * The plans this code applies to, or NULL FOR EVERY PLAN — which is the
+   * default, the common case, and the ONLY spelling of "unscoped" there is.
+   *
+   * NEVER `[]`. To mark8ly's redeemer `{}` and NULL are the same fact (its plan
+   * check is guarded by `len(AllowedPlans) > 0`), but they do not read the same
+   * to anything here: an empty array has a scoping constraint's name on it and
+   * renders as "scoped" to any surface that asks whether the field is set.
+   * 0051's `promo_codes_allowed_plans_is_not_empty` makes it unstorable, so a
+   * caller never has to branch on it — see {@link toAllowedPlans} for what
+   * happens if one arrives anyway.
+   */
+  allowedPlans: readonly PromoCodePlan[] | null;
+  /**
+   * Annual billing only.
+   *
+   * A BOOLEAN AND NOT THE SYMMETRIC `allowedPeriods`, because mark8ly can
+   * express exactly one period restriction and has no monthly-only branch and
+   * no reject reason for one. An array here would let an operator author
+   * `{monthly}`, have it render as a restriction on every surface, and have
+   * every annual checkout redeem it anyway. 0051's header records the
+   * asymmetry rather than papering over it.
+   */
+  annualOnly: boolean;
   isActive: boolean;
   createdBy: string;
   createdAt: string;
@@ -194,6 +251,20 @@ interface PromoCodeDbRow {
   valid_from: unknown;
   valid_until: unknown;
   max_redemptions: number | null;
+  /**
+   * `text[]`. VERIFIED, not assumed: `pg` registers `postgres-array` for OID
+   * 1009 and hands back a real JS array — `{pro,studio}` arrives as
+   * `["pro", "studio"]`, `NULL` as `null`, and pglite agrees.
+   *
+   * Typed `unknown[] | null` and NOT `PromoCodePlan[] | null`, for the same
+   * reason `discount_percent_off` is typed `string | number | null`: this
+   * interface describes what the DRIVER produces, and the driver produces
+   * whatever is in the column. That parser will also return `["pro", null]` for
+   * `{pro,NULL}` and `[]` for `{}` — both unstorable under 0051, so meeting one
+   * means a constraint is gone. Narrowed by {@link toAllowedPlans}.
+   */
+  allowed_plans: unknown[] | null;
+  annual_only: boolean;
   is_active: boolean;
   created_by: string;
   created_at: unknown;
@@ -245,6 +316,50 @@ function toNumericOrNull(value: string | number | null): number | null {
 }
 
 /**
+ * Narrow the driver's `text[]` into the closed vocabulary, or null.
+ *
+ * THIS IS THE SAME KIND OF FUNCTION AS {@link toNumericOrNull}, and it exists
+ * for the same reason: `pg` hands back what the column contains, and the
+ * TypeScript type on the far side is a claim the driver never checked. Verified
+ * against both drivers rather than assumed — `postgres-array` (OID 1009) turns
+ * `{pro,studio}` into `["pro", "studio"]`, `{}` into `[]`, and `{pro,NULL}` into
+ * `["pro", null]`.
+ *
+ * THROWS on every shape 0051 refuses, and does not repair any of them:
+ *
+ *  - `[]` — the second spelling of NULL, and {@link PromoCodeRow.allowedPlans}
+ *    promises it never appears. Coercing it to null here would be the kinder
+ *    line and the wrong one: it would let a row that violates
+ *    `promo_codes_allowed_plans_is_not_empty` be read back as a perfectly
+ *    ordinary unscoped code, which is precisely the state that constraint
+ *    exists to make impossible. If one is ever read, the constraint is gone.
+ *  - a NULL or unknown element — `promo_codes_allowed_plans_has_no_null_elements`
+ *    and `..._are_known_plans`. Silently dropping an unrecognised plan would
+ *    WIDEN the code's scope (fewer entries, and `[]` reads as every plan), so
+ *    the quiet failure mode here is a discount applying where nobody scoped it.
+ *
+ * Same argument as {@link toDiscount}'s throw: a shape the database refuses,
+ * met on the read path, means the SELECT lost a column or a constraint was
+ * dropped, and rendering it as a normal answer hides both.
+ */
+function toAllowedPlans(value: unknown[] | null): readonly PromoCodePlan[] | null {
+  if (value === null || value === undefined) return null;
+
+  if (value.length === 0) {
+    throw new Error(
+      "promo-codes-repo: read an empty allowed_plans — NULL is the only spelling of unscoped",
+    );
+  }
+
+  return value.map((plan) => {
+    if (typeof plan !== "string" || !PROMO_CODE_PLANS.includes(plan as PromoCodePlan)) {
+      throw new Error(`promo-codes-repo: allowed_plans contains an unknown plan ${String(plan)}`);
+    }
+    return plan as PromoCodePlan;
+  });
+}
+
+/**
  * Reassemble the discount terms from six flat columns into the discriminated
  * union.
  *
@@ -291,6 +406,8 @@ function toPromoCodeRow(row: PromoCodeDbRow): PromoCodeRow {
     validFrom: toIsoRequired(row.valid_from),
     validUntil: toIsoNullable(row.valid_until),
     maxRedemptions: toIntOrNull(row.max_redemptions),
+    allowedPlans: toAllowedPlans(row.allowed_plans),
+    annualOnly: row.annual_only,
     isActive: row.is_active,
     createdBy: row.created_by,
     createdAt: toIsoRequired(row.created_at),
@@ -304,7 +421,8 @@ function toPromoCodeRow(row: PromoCodeDbRow): PromoCodeRow {
 const PROMO_CODE_COLUMNS = `id, source, code, trial_extension_days,
                             discount_percent_off, discount_amount_off, discount_currency,
                             discount_duration, discount_duration_in_months,
-                            valid_from, valid_until, max_redemptions, is_active,
+                            valid_from, valid_until, max_redemptions,
+                            allowed_plans, annual_only, is_active,
                             created_by, created_at, updated_at`;
 
 export interface CreatePromoCodeInput {
@@ -318,6 +436,25 @@ export interface CreatePromoCodeInput {
   validFrom?: Date | string | null;
   validUntil?: Date | string | null;
   maxRedemptions?: number | null;
+  /**
+   * Omit — or pass null — for a code that applies to EVERY plan, which is the
+   * default and what an operator who did not think about scoping meant.
+   *
+   * `[]` IS NOT NORMALISED TO NULL HERE, and that is the decision rather than
+   * an oversight. An empty array reaching this function is a caller bug — a
+   * form that serialised "no boxes ticked" as a list instead of as an absence,
+   * or a filter that removed every element — and the two readings of it point
+   * opposite ways: the author of that form probably meant "no plans", while
+   * mark8ly would redeem it as "all plans". Quietly picking the second and
+   * writing NULL would ship the widest possible scope for a code someone
+   * believed they had narrowed. So it goes to the database and
+   * `promo_codes_allowed_plans_is_not_empty` refuses it BY NAME, which is the
+   * same treatment every other rule on this table gets — see this function's
+   * doc on why no rule is re-implemented here as an early return.
+   */
+  allowedPlans?: readonly PromoCodePlan[] | null;
+  /** Defaults to `false` — not annual-only — in the database when omitted. */
+  annualOnly?: boolean;
   isActive?: boolean;
   createdBy: string;
 }
@@ -373,11 +510,13 @@ export async function createPromoCode(input: CreatePromoCodeInput): Promise<Prom
        (source, code, trial_extension_days,
         discount_percent_off, discount_amount_off, discount_currency,
         discount_duration, discount_duration_in_months,
-        valid_from, valid_until, max_redemptions, is_active, created_by)
+        valid_from, valid_until, max_redemptions,
+        allowed_plans, annual_only, is_active, created_by)
      VALUES ($1, $2, $3,
              $4::numeric, $5::bigint, $6, $7, $8,
              COALESCE($9::timestamptz, now()), $10::timestamptz,
-             $11, COALESCE($12::boolean, true), $13)
+             $11, $12::text[], COALESCE($13::boolean, false),
+             COALESCE($14::boolean, true), $15)
      RETURNING ${PROMO_CODE_COLUMNS}`,
     [
       input.source ?? DEFAULT_PROMO_CODE_SOURCE,
@@ -391,6 +530,13 @@ export async function createPromoCode(input: CreatePromoCodeInput): Promise<Prom
       input.validFrom ?? null,
       input.validUntil ?? null,
       input.maxRedemptions ?? null,
+      // `== null` and not a truthiness test, so an EMPTY array is spread and
+      // sent rather than collapsed to NULL. See the input's doc: `[]` is a
+      // caller bug and `promo_codes_allowed_plans_is_not_empty` is what says
+      // so. The spread is because `pg` takes a mutable array, per
+      // `readStripeCoupons`'s `[...STRIPE_MODES]`.
+      input.allowedPlans == null ? null : [...input.allowedPlans],
+      input.annualOnly ?? null,
       input.isActive ?? null,
       input.createdBy,
     ],
@@ -494,12 +640,34 @@ export async function listPromoCodes(
  * table that every future caller has to remember to make. Authoring a
  * replacement and deactivating the old one is correct in both states and
  * requires no such check.
+ *
+ * THE CAMPAIGN SCOPE IS PRESENT, unlike the terms, and the difference is that
+ * Stripe holds no copy of it to diverge from. A Coupon knows about money and
+ * nothing about plans, so re-scoping a definition leaves the minted object
+ * untouched and still correct — which is precisely what is not true of
+ * `percent_off`.
+ *
+ * WHAT AN EDIT HERE DOES NOT YET DO, and it is the cross-repo half of #593:
+ * mark8ly's re-sync PRESERVES `allowed_plans` and `annual_only` on an existing
+ * row rather than overwriting them — they are absent from `upsertColumns` in
+ * `services/marketplace-api/internal/billing/consolepromo/store.go`, alongside
+ * the two abuse controls the console deliberately cannot author. So until
+ * mark8ly#795 moves these two into that list, a re-scope reaches the published
+ * contract and stops there for any code mark8ly has already ingested. Nothing
+ * in this repo can observe that, which is why it is written down here.
  */
 export interface UpdatePromoCodeInput {
   trialExtensionDays?: number | null;
   validFrom?: Date | string;
   validUntil?: Date | string | null;
   maxRedemptions?: number | null;
+  /** `undefined` leaves the scope alone; `null` CLEARS it, which widens the
+   *  code to every plan. `[]` is refused by the database, per
+   *  {@link CreatePromoCodeInput.allowedPlans}. */
+  allowedPlans?: readonly PromoCodePlan[] | null;
+  /** No `null`: the column is NOT NULL and `false` is what "not annual-only"
+   *  MEANS, so there is nothing to clear it to. */
+  annualOnly?: boolean;
   isActive?: boolean;
 }
 
@@ -511,6 +679,8 @@ const UPDATABLE_COLUMNS = {
   validFrom: "valid_from",
   validUntil: "valid_until",
   maxRedemptions: "max_redemptions",
+  allowedPlans: "allowed_plans",
+  annualOnly: "annual_only",
   isActive: "is_active",
 } as const satisfies Record<keyof UpdatePromoCodeInput, string>;
 

@@ -381,6 +381,11 @@ async function readPromoCodes(): Promise<PromoCodeView[]> {
       validFrom: row.validFrom,
       validUntil: row.validUntil,
       maxRedemptions: row.maxRedemptions,
+      // Passed through as stored, `null` and all: the panel is the only layer
+      // that holds unscoped as an empty list, because a checkbox group has no
+      // other way to hold it (#593).
+      allowedPlans: row.allowedPlans,
+      annualOnly: row.annualOnly,
       isActive: row.isActive,
       coupons: (await readStripeCoupons(row.id)).map((coupon) => ({
         mode: coupon.mode,
