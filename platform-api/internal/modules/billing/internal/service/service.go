@@ -20,6 +20,10 @@ import (
 const (
 	subscriptionsPath = "/admin/billing/subscriptions"
 	trialsPath        = "/admin/billing/trials"
+	// entitlementsPath takes no parameters at all, unlike the two above: the
+	// matrix is compiled into the product's binary and answered whole, so
+	// there is no page to bound and no window to name.
+	entitlementsPath = "/admin/billing/entitlements"
 )
 
 // ErrNotInstrumented is the answer when no product declares §8.2.
@@ -272,6 +276,77 @@ func nonNilSubscriptions(rows []domain.Subscription) []domain.Subscription {
 func nonNilTrials(rows []domain.Trial) []domain.Trial {
 	if rows == nil {
 		return []domain.Trial{}
+	}
+	return rows
+}
+
+// ErrEmptyMatrix is a product answering 200 with no plans.
+//
+// Its own fact, and refused rather than passed on for the reason
+// ErrNotInstrumented exists one level up: an empty matrix is
+// indistinguishable from every feature being Disabled for every plan, which is
+// a real and different answer — 0 is Disabled AND the zero value. A console
+// shown an empty matrix would render "this product entitles nothing", and a
+// parity run comparing against it would report every console row as drift.
+// Both are confident wrong answers built out of a product that is simply
+// deviating.
+var ErrEmptyMatrix = errors.New("billing: the product returned a matrix with no plans")
+
+// Entitlements reads every configured product's compiled plan-feature matrix.
+//
+// Federated exactly like Subscriptions — same fan-out, same selector, same
+// failure handling — but the rows are NOT merged into one matrix. See
+// domain.EntitlementPage for why a feature vocabulary is the one thing on this
+// surface that does not mean the same whoever issued it.
+func (s *Service) Entitlements(
+	ctx context.Context, op federation.Operator, q Query,
+) (domain.EntitlementPage, error) {
+	slugs, err := s.resolve(q.Source)
+	if err != nil {
+		return domain.EntitlementPage{}, err
+	}
+
+	rows, failures := federation.FanOut(ctx, s.fed, slugs, entitlementsPath, op,
+		// slugs came from SlugsImplementing("billing") — see FanOut's doc
+		// comment on why this must be the same endpoint.
+		federation.ForEndpoint("billing"),
+		func(slug string, body []byte) ([]domain.EntitlementMatrix, error) {
+			// NOT wrapped in a `data` envelope, because the product does not
+			// wrap it: mark8ly's handler writes the four fields at the top
+			// level, the same way its discount report is unwrapped.
+			var matrix domain.EntitlementMatrix
+			if err := json.Unmarshal(body, &matrix); err != nil {
+				return nil, fmt.Errorf("decoding %s entitlements: %w", slug, err)
+			}
+			if len(matrix.Plans) == 0 {
+				return nil, fmt.Errorf("%w: %s", ErrEmptyMatrix, slug)
+			}
+			// Stamped from the slug the call was MADE to, overwriting whatever
+			// the body claimed: a product cannot name itself into another
+			// product's entitlements.
+			matrix.Source = slug
+			// CatalogMode, Features and Plans are passed through untouched —
+			// including an empty CatalogMode, which must read as unset rather
+			// than be defaulted to a mode nobody reported.
+			return []domain.EntitlementMatrix{matrix}, nil
+		})
+
+	s.logFailures("entitlements", failures)
+
+	// By source, so two runs of the same estate produce the same document.
+	// There is no other ordering to prefer: unlike a renewal date or a days
+	// remaining, no field here makes one product's matrix more urgent.
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Source < rows[j].Source })
+
+	return domain.EntitlementPage{
+		Data:     nonNilMatrices(rows),
+		Failures: toFailures(failures),
+	}, nil
+}
+
+func nonNilMatrices(rows []domain.EntitlementMatrix) []domain.EntitlementMatrix {
+	if rows == nil {
+		return []domain.EntitlementMatrix{}
 	}
 	return rows
 }

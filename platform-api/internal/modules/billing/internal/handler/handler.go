@@ -2,6 +2,8 @@
 //
 //	GET  /v1/billing/subscriptions   every product's recurring plans
 //	GET  /v1/billing/trials          every product's expiring trials
+//	GET  /v1/billing/entitlements    every product's compiled plan-feature
+//	                                 matrix, and the catalog mode it reads
 //	     ?source=<slug>              narrow to one product
 //	     ?limit=<n>                  rows asked of each product (default 100)
 //	     ?include_stripe_managed=true  trials only; opts in rows products exclude
@@ -94,6 +96,8 @@ var RouteTable = []Route{
 		handler: func(h *Handler) http.HandlerFunc { return h.subscriptions }},
 	{Method: http.MethodGet, Pattern: "/v1/billing/trials",
 		handler: func(h *Handler) http.HandlerFunc { return h.trials }},
+	{Method: http.MethodGet, Pattern: "/v1/billing/entitlements",
+		handler: func(h *Handler) http.HandlerFunc { return h.entitlements }},
 	{Method: http.MethodPost, Pattern: "/v1/billing/tenants/{id}/discount", Write: true,
 		handler: func(h *Handler) http.HandlerFunc { return h.applyDiscount }},
 	{Method: http.MethodPost, Pattern: "/v1/billing/tenants/{id}/discount/remove", Write: true,
@@ -108,6 +112,13 @@ const DefaultLimit = 100
 const MaxLimit = 500
 
 var subscriptionParameters = []string{"source", "limit"}
+
+// entitlementParameters: `source` narrows to one product, and that is all.
+// This read is one document per product rather than a page of rows, so
+// `limit` is an unknown parameter here — refused rather than ignored, because
+// a caller who sent one has a wrong model of the surface and a silently
+// dropped bound is how someone comes to believe a matrix was truncated.
+var entitlementParameters = []string{"source"}
 var trialParameters = []string{"source", "limit", "include_stripe_managed", "include_signup", "days"}
 
 // MaxDays is the widest expiry window this surface will ask a product for.
@@ -294,6 +305,31 @@ func (h *Handler) subscriptions(w http.ResponseWriter, r *http.Request) {
 		Limit:  limit,
 	})
 	if err != nil {
+		h.writeReadError(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, page, h.log)
+}
+
+// entitlements serves the compiled plan-feature matrix of every product that
+// declares §8.2.
+//
+// No `limit` and no window: the matrix is compiled into the product's binary
+// and answered whole, so there is nothing to bound.
+func (h *Handler) entitlements(w http.ResponseWriter, r *http.Request) {
+	principal, query, ok := h.begin(w, r, entitlementParameters)
+	if !ok {
+		return
+	}
+
+	page, err := h.svc.Entitlements(r.Context(), operatorFor(principal), service.Query{
+		Source: strings.TrimSpace(query.Get("source")),
+	})
+	if err != nil {
+		// The same mapping the two list reads use, and ErrNotInstrumented is
+		// the branch that matters: 501, never an empty 200. An estate that
+		// federates no billing product must not render as one whose plans
+		// entitle nothing.
 		h.writeReadError(w, r, err)
 		return
 	}
