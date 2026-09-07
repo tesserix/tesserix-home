@@ -281,9 +281,23 @@ git commit -m "feat(billing): federate the plan-feature matrix from products (#1
 ### Task 4: Seed the console from the endpoint
 
 **Files:**
-- Create: `apps/console/scripts/seed-entitlements.ts`
 - Modify: `apps/console/lib/db/plan-catalog-repo.ts` (write + read entitlements)
-- Test: `apps/console/lib/db/plan-catalog-entitlements.integration.test.ts` (extend)
+- Modify: `apps/console/lib/platform-api.ts` (`fetchProductEntitlements`)
+- Create: `apps/console/app/(console)/platform/billing/catalog/entitlement-actions.ts` (the seeding server action)
+- Test: `apps/console/lib/db/plan-catalog-entitlements.integration.test.ts` (extend), plus a test for the action
+
+**CORRECTED 2026-09-08 — this is a server action, NOT a script.** The original
+plan said `apps/console/scripts/seed-entitlements.ts` would fetch
+`/v1/billing/entitlements`. **It cannot.** `resolvePlatformApiToken`
+(`lib/auth/platform-token.ts`) is session-bound: it resolves the OPERATOR's
+Zitadel token from their session and refresh token. A standalone script has no
+session and no way to mint one — there is no machine credential for the
+console -> platform-api direction. (mark8ly -> console has one,
+`CONSOLE_CATALOG_CLIENT_ID`; the reverse does not exist.)
+
+A server action is also what this codebase does anyway: console mutations are
+server actions without exception, and a write that skipped one would skip the
+audit trail every sibling write produces.
 
 **Interfaces:**
 - Consumes: Task 3's `/v1/billing/entitlements`; Task 1's table.
@@ -323,22 +337,30 @@ In `plan-catalog-repo.ts`, matching that file's existing conventions (parameteri
 
 `pnpm exec vitest run lib/db/plan-catalog-entitlements.integration.test.ts` — PASS.
 
-- [ ] **Step 5: Write the seed script**
+- [ ] **Step 5: Add `fetchProductEntitlements` to `lib/platform-api.ts`**
 
-`apps/console/scripts/seed-entitlements.ts`: fetch `/v1/billing/entitlements`, write every `(plan, feature, value)` onto a named revision. It must be **derived, never transcribed** — the script fails loudly if the endpoint returns fewer than 26 features or fewer than 4 plans, rather than seeding a partial matrix that later reads as agreement.
+Mirror `fetchEstateSubscriptions` exactly — same `platformRequest` call, same parse-then-return shape. It reads `GET /v1/billing/entitlements`. Keep the doc comment's habit of naming which capability a 403 means.
 
-Bundle it like the existing scripts if it needs to run in the image: `esbuild ... --external:pg` following `build:cron` in `apps/console/package.json`. If it is only ever run by an operator locally, say so in its header and skip the bundling.
+- [ ] **Step 6: Write the seeding server action**
 
-- [ ] **Step 6: Run typecheck, lint and the console suite**
+`entitlement-actions.ts`, following `promo-actions.ts`'s shape — the same `withPromoWrite`-style audit wrapper the sibling actions use, `revalidatePath` after, and a `PromoActionResult`-shaped return.
+
+It fetches the product's matrix, then writes every `(plan, feature, value)` onto the given revision. **Derived, never transcribed**, and it refuses rather than partially seeding: if the response carries fewer than 26 features or fewer than 4 plans, it returns an error and writes nothing. A partial seed would later compare as agreement on the rows that exist and be silent about the rows that do not, which is the failure this whole task exists to prevent.
+
+No script, no bundling, no `build:*` entry — see the correction above.
+
+- [ ] **Step 7: Run typecheck, lint and the console suite**
 
 From `<worktree>/apps/console`: `pnpm typecheck && pnpm lint && pnpm exec vitest run`. All must pass. Report real counts.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add apps/console/lib/db/plan-catalog-repo.ts \
         apps/console/lib/db/plan-catalog-entitlements.integration.test.ts \
-        apps/console/scripts/seed-entitlements.ts apps/console/package.json
+        apps/console/lib/platform-api.ts \
+        "apps/console/app/(console)/platform/billing/catalog/entitlement-actions.ts" \
+        "apps/console/app/(console)/platform/billing/catalog/entitlement-actions.test.ts"
 git commit -m "feat(billing): seed console entitlements from the enforcing matrix (#146)"
 ```
 
