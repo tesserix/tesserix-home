@@ -127,6 +127,19 @@ func StatusOf(err error) (int, bool) {
 	return se.Status, true
 }
 
+// ErrUnknownService is a slug/serviceName pair naming a product this
+// deployment knows, but no service of it by that name — a typo'd service
+// name, or one that has been renamed/removed from FEDERATION_<SLUG>_SERVICES.
+//
+// Distinct from ErrNoMatchingService: that one is "no service declares this
+// endpoint/entity", answered by resolving a Selector against every service;
+// this one is "no service has this NAME at all", answered by GetForService /
+// PostForService / PutForService, which address a specific service a caller
+// already named (mark8ly's split email-template registry,
+// tesserix/mark8ly#720, addressing "platform-api" out of an id's
+// `slug/service` half) rather than one FanOutServices resolved for them.
+var ErrUnknownService = errors.New("federation: unknown service")
+
 // Operator is who the call is being made on behalf of, and under what
 // authority.
 //
@@ -316,6 +329,123 @@ func (c *Client) PutForEndpoint(
 	opts PostOptions,
 ) ([]byte, error) {
 	return c.write(ctx, http.MethodPut, slug, path, body, op, opts, ForEndpoint(endpoint))
+}
+
+// GetForService reads from the ONE named service of slug, addressed by name
+// rather than resolved by Selector.
+//
+// Added for tesserix/mark8ly#720's split email-template registry: a
+// `slug/service:key` id already names which of a product's services owns the
+// row, and re-resolving that through GetForEndpoint's Selector would 501 with
+// ErrAmbiguousService — the very failure this method exists to avoid, because
+// the caller is not asking "which service serves this", it is TELLING this
+// package which one. GetForEndpoint remains right for a bare `slug:key` id,
+// where the caller has no service name and wants the product's default.
+func (c *Client) GetForService(ctx context.Context, slug, serviceName, path string, op Operator) ([]byte, error) {
+	return c.forService(ctx, http.MethodGet, slug, serviceName, path, nil, op, nil)
+}
+
+// PostForService is Post, addressed to the one named service — see
+// GetForService.
+func (c *Client) PostForService(
+	ctx context.Context, slug, serviceName, path string, body []byte, op Operator, opts PostOptions,
+) ([]byte, error) {
+	if opts.IdempotencyKey == "" {
+		return nil, fmt.Errorf("%w: %s/%s", ErrIdempotencyKeyRequired, slug, path)
+	}
+	headers := map[string]string{"Idempotency-Key": opts.IdempotencyKey, "Content-Type": "application/json"}
+	return c.forService(ctx, http.MethodPost, slug, serviceName, path, body, op, headers)
+}
+
+// PutForService is Put, addressed to the one named service — see
+// GetForService.
+func (c *Client) PutForService(
+	ctx context.Context, slug, serviceName, path string, body []byte, op Operator, opts PostOptions,
+) ([]byte, error) {
+	if opts.IdempotencyKey == "" {
+		return nil, fmt.Errorf("%w: %s/%s", ErrIdempotencyKeyRequired, slug, path)
+	}
+	headers := map[string]string{"Idempotency-Key": opts.IdempotencyKey, "Content-Type": "application/json"}
+	return c.forService(ctx, http.MethodPut, slug, serviceName, path, body, op, headers)
+}
+
+// forService is what GetForService, PostForService and PutForService share:
+// look up slug's product, find the one service named serviceName, and call
+// it directly — no Selector, no ambiguity to fail closed on, because the
+// caller already named the exact service.
+func (c *Client) forService(
+	ctx context.Context,
+	method, slug, serviceName, path string,
+	body []byte,
+	op Operator,
+	headers map[string]string,
+) ([]byte, error) {
+	if op.ID == "" || op.Capability == "" {
+		return nil, fmt.Errorf("federation: refusing to call %s/%s without an operator", slug, path)
+	}
+	product, ok := c.reg.Get(slug)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrProductNotConfigured, slug)
+	}
+	for _, svc := range product.Services {
+		if svc.Name == serviceName {
+			return c.callService(ctx, method, slug, svc, path, body, op, headers)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s/%s", ErrUnknownService, slug, serviceName)
+}
+
+// ServiceNamesFor is the names of slug's own services that declare endpoint,
+// in Product.Services declaration order — the same set FanOutServices(ctx, c,
+// slug, ForEndpoint(endpoint), …) calls.
+//
+// Returns only names, never a Service value: a caller outside this package
+// (the emailtemplates module building Sources(), tesserix/mark8ly#720) needs
+// to enumerate and label services, not to hold their BaseURL or Secret.
+// Returns nil for an unconfigured slug, the same absence-means-no-data shape
+// the rest of this package's lookups take.
+func (c *Client) ServiceNamesFor(slug, endpoint string) []string {
+	product, ok := c.reg.Get(slug)
+	if !ok {
+		return nil
+	}
+	matches := product.resolve(ForEndpoint(endpoint))
+	names := make([]string, 0, len(matches))
+	for _, svc := range matches {
+		names = append(names, svc.Name)
+	}
+	return names
+}
+
+// DefaultServiceName is the service a bare, unqualified call — a
+// selector-less Get/Post/Put, or a `slug:key` id with no `/service` half —
+// resolves to for slug: Product.DefaultService for a multi-service product,
+// or its one service's name otherwise (Product.resolve never consults
+// DefaultService there either — see resolveDefaultService — so kora and
+// mark8ly-before-#720 are unaffected). The second return is false for an
+// unconfigured slug, a product with no services, or a multi-service product
+// with no DefaultService set (which LoadRegistry itself refuses at boot, so
+// reaching this in production means the Product was built directly rather
+// than loaded).
+func (c *Client) DefaultServiceName(slug string) (string, bool) {
+	product, ok := c.reg.Get(slug)
+	if !ok || len(product.Services) == 0 {
+		return "", false
+	}
+	if len(product.Services) == 1 {
+		return product.Services[0].Name, true
+	}
+	if product.DefaultService == "" {
+		return "", false
+	}
+	return product.DefaultService, true
+}
+
+// IsDefaultService reports whether serviceName is the service DefaultServiceName
+// names for slug — false for an unconfigured slug or a name that is not it.
+func (c *Client) IsDefaultService(slug, serviceName string) bool {
+	def, ok := c.DefaultServiceName(slug)
+	return ok && def == serviceName
 }
 
 // write is what Post and Put share, so the idempotency guard and the headers
