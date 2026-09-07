@@ -63,7 +63,7 @@ mark8ly#703 has landed. Not before, and this plan does not pre-empt it.
 2. **No subscriber price-distribution view in this change.** With zero
    subscribers it would read `0` forever, and a metric that reads zero for the
    wrong reason is indistinguishable from one reading zero for the right one —
-   the failure [[an-absent-metric-never-fires]] describes. It also cannot be
+   an absent signal never fires, and a zero one fires no differently. It also cannot be
    built honestly yet: a discounted subscriber legitimately pays less than the
    catalog amount, and #593 has just made scoped promo codes real, so a naive
    amount-vs-catalog comparison would flag every redemption as drift. Build it
