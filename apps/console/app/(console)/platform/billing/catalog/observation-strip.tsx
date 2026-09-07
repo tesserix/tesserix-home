@@ -316,6 +316,40 @@ function RerunControl({ lossy }: { lossy: boolean }) {
 }
 
 /* ------------------------------------------------------------------------ *
+ * What a clean window is evidence OF
+ * ------------------------------------------------------------------------ */
+
+/**
+ * The boundary the verdict line does not carry on its own.
+ *
+ * "Satisfied — 7/7 days clean, both pairs" is read as "billing is correct".
+ * What it actually says is that the catalog and Stripe agree about PRICE
+ * OBJECTS: the check lists Prices and compares amounts, currencies and tax
+ * behaviour, and it never reads a Subscription (`stripe-read.ts` declares one
+ * Price-listing method and no other, deliberately — #579 owns that scope).
+ * So the window is fully clean in the case tesserix-home#582 describes, where
+ * a published price change has moved nobody onto it. Stating that here is the
+ * whole fix; DO NOT close the gap by widening the check or by inventing an
+ * amber verdict for it, which would make a correct check start reporting a
+ * question it was never asked.
+ *
+ * ALWAYS RENDERED, outside the disclosure — a satisfied window is COLLAPSED
+ * by default (see `defaultExpanded`), and satisfied is exactly the state this
+ * sentence is needed in. Inside the body it would be hidden from every
+ * operator it is written for.
+ *
+ * One sentence, muted, below the verdict rather than beside it: the strip
+ * exists because the window used to be a wall an operator scrolled past, and
+ * a second competing claim on the header line would start rebuilding it.
+ */
+const PARITY_SCOPE_NOTE =
+  "Clean compares the catalog against Stripe's Price objects only — it never reads a subscription, so it does not say what existing subscribers are being charged.";
+
+function ParityScopeNote() {
+  return <p className="text-xs text-muted-foreground">{PARITY_SCOPE_NOTE}</p>;
+}
+
+/* ------------------------------------------------------------------------ *
  * The strip
  * ------------------------------------------------------------------------ */
 
@@ -389,6 +423,7 @@ export function ObservationStrip({
           <h2 className="text-sm font-medium">Observation window</h2>
           <RerunControl lossy={rerunIsLossy(windowStatus)} />
         </div>
+        <ParityScopeNote />
         {body}
       </div>
     );
@@ -426,6 +461,7 @@ export function ObservationStrip({
         </button>
         <RerunControl lossy={rerunIsLossy(windowStatus)} />
       </div>
+      <ParityScopeNote />
       <div id={bodyId} hidden={!expanded}>
         {body}
       </div>

@@ -253,6 +253,43 @@ describe("ObservationStrip", () => {
     });
   });
 
+  it("states parity's boundary VISIBLY, even while a satisfied window is collapsed", () => {
+    // tesserix-home#582: "Satisfied — 7/7 days clean, both pairs" is read as
+    // "billing is correct", and the check never reads a Subscription. The
+    // satisfied case is the one the sentence exists for, and it is also the
+    // case the body is hidden in — so the note must sit OUTSIDE the
+    // disclosure or it is invisible to every operator it is written for.
+    renderStrip(SATISFIED);
+
+    const note = screen.getByText(/never reads a subscription/i);
+    expect(note).toBeVisible();
+    expect(note).toHaveTextContent(/what existing subscribers are being charged/i);
+    // The verdict itself is untouched: stating the boundary must not weaken
+    // the signal (#579 owns parity's scope).
+    expect(strip()).toHaveAccessibleName("Satisfied — 7/7 days clean, both pairs");
+  });
+
+  it("states it on a window with no summary too", () => {
+    // The boundary is a fact about what the check reads, not about what this
+    // particular window found, so it does not blink out when the read fails.
+    render(
+      <ObservationStrip
+        windowStatus={null}
+        windowState={resolveState({
+          isLoading: false,
+          error: { message: "could not read the observation window" },
+          rows: [],
+          filtered: false,
+        })}
+        runs={noRuns}
+        runsState={resolveState({ isLoading: false, error: null, rows: noRuns, filtered: false })}
+        windowDays={7}
+      />,
+    );
+
+    expect(screen.getByText(/never reads a subscription/i)).toBeVisible();
+  });
+
   it("shows the state view with no disclosure when the window read has not resolved", () => {
     // Nothing to summarize, so there is nothing to hide: an error or an empty
     // window must not sit behind a click.

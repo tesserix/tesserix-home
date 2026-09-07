@@ -458,7 +458,7 @@ function dialogDescription(params: {
   if (confirmations.some((breach) => breach.rule === "breadth")) {
     reasons.push(`more than ${BREADTH_THRESHOLD} entries change at once`);
   }
-  if (reasons.length === 0) return `${head} Existing subscribers are not repriced.`;
+  if (reasons.length === 0) return `${head} Existing subscribers are not repriced, by design.`;
 
-  return `${head} Confirmation is required because ${reasons.join(", and ")}. Existing subscribers are not repriced.`;
+  return `${head} Confirmation is required because ${reasons.join(", and ")}. Existing subscribers are not repriced, by design.`;
 }
