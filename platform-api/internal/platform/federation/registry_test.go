@@ -232,6 +232,7 @@ func TestLoadRegistryParsesMultipleServices(t *testing.T) {
 	env := map[string]string{
 		"FEDERATION_PRODUCTS":                         "mark8ly",
 		"FEDERATION_MARK8LY_SERVICES":                 "marketplace-api,platform-api",
+		"FEDERATION_MARK8LY_DEFAULT_SERVICE":          "marketplace-api",
 		"FEDERATION_MARK8LY_MARKETPLACE_API_BASE_URL": "http://marketplace",
 		"FEDERATION_MARK8LY_MARKETPLACE_API_SECRET":   "s1",
 		"FEDERATION_MARK8LY_MARKETPLACE_API_ENTITIES": "tenants",
@@ -318,6 +319,7 @@ func TestTwoServicesMayShareAnEndpointAndBothAreReturned(t *testing.T) {
 	env := map[string]string{
 		"FEDERATION_PRODUCTS":                          "mark8ly",
 		"FEDERATION_MARK8LY_SERVICES":                  "platform-api,marketplace-api",
+		"FEDERATION_MARK8LY_DEFAULT_SERVICE":           "platform-api",
 		"FEDERATION_MARK8LY_PLATFORM_API_BASE_URL":     "http://platform",
 		"FEDERATION_MARK8LY_PLATFORM_API_SECRET":       "s1",
 		"FEDERATION_MARK8LY_PLATFORM_API_ENDPOINTS":    "email-templates",

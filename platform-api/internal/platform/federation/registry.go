@@ -118,6 +118,28 @@ type Product struct {
 	// (the order FEDERATION_<SLUG>_SERVICES named them, or a single
 	// synthesized entry for the legacy shape — see LoadRegistry).
 	Services []Service
+	// DefaultService is the Service.Name that answers a selector-less call
+	// (Selector{}) when this product has more than one Service.
+	//
+	// It exists because of a class of endpoint this package cannot make
+	// Selector-aware, not because Selector adoption is incomplete: §3.1/§3.2
+	// contract endpoints like `/admin/audit-logs` and `/admin/kpis` are
+	// "every federating product serves this", so no Service ever opts into
+	// them via Endpoints, and Client.Get/Post/Put for those paths will always
+	// be called with a zero-value Selector — today, and by whoever adds the
+	// next universal endpoint later. Product.resolve's zero-Selector branch
+	// therefore cannot just refuse to pick when there are multiple Services;
+	// it has to have somewhere to route. DefaultService is that somewhere.
+	//
+	// Set from FEDERATION_<SLUG>_DEFAULT_SERVICE by LoadRegistry, which
+	// enforces the two invariants that keep this field trustworthy: a
+	// multi-service product MUST declare it (an unset default on a
+	// multi-service product is a config gap, not a legitimate "no opinion"),
+	// and it MUST name one of that product's own Services. Both are boot
+	// errors, not per-request ones — see loadServices. A single-service
+	// product needs neither: Product.resolve never consults DefaultService
+	// when there is nothing to disambiguate between.
+	DefaultService string
 }
 
 // Entities is the union of every service's Entities, sorted and deduplicated.
@@ -217,21 +239,27 @@ func (s Selector) describe() string {
 // resolve is Client.do's (and FanOut's) answer to "which of this product's
 // services is this call for", given the caller's Selector.
 //
-// A zero-value Selector — no endpoint, no entity — returns every one of the
-// product's Services, unfiltered: the caller gave no context to narrow an
-// ambiguous product with, so whether that is fine (exactly one Service) or
-// not (more than one) is Client.do's call to make, not this method's — see
-// its doc comment on the len(services) switch. This is the path every call
-// site not yet updated for tesserix/mark8ly#720 takes, and for a
-// single-service product it is unchanged: one Service in, one Service out.
+// A zero-value Selector — no endpoint, no entity — is "no context to narrow
+// an ambiguous product with". For a single-service product that is moot: one
+// Service in, one Service out, exactly as before #720. For a multi-service
+// product it means the call is for one of the universal contract endpoints
+// (`/admin/audit-logs`, `/admin/kpis`) that no Service declares in Endpoints
+// — see DefaultService's doc comment for why those exist and cannot be made
+// Selector-aware — so resolution falls back to whichever Service
+// DefaultService names, when one is declared. A product with more than one
+// Service and NO DefaultService reaches this branch only if it slipped past
+// LoadRegistry's boot check (a Product built directly, as some tests do, or
+// a future loader that forgets the check); returning every Service
+// unfiltered there preserves the pre-DefaultService behaviour of failing
+// closed with ErrAmbiguousService in Client.do rather than guessing.
 //
 // A non-zero Selector filters this product's OWN Services — not the whole
 // registry the way Registry.ServicesServing / ServicesImplementing do — by
 // the matching Entities or Endpoints list. Zero, one, or more than one
-// Service may match; again, Client.do is what turns "more than one" into a
-// fail-closed error, because whether that is legitimate (the split
-// email-template registry) or a real ambiguity is a question about the CALL,
-// not about resolution.
+// Service may match; DefaultService plays no part here — Client.do is what
+// turns "more than one" into a fail-closed error, because whether that is
+// legitimate (the split email-template registry) or a real ambiguity is a
+// question about the CALL, not about resolution.
 func (p Product) resolve(sel Selector) []Service {
 	switch {
 	case sel.endpoint != "":
@@ -243,7 +271,12 @@ func (p Product) resolve(sel Selector) []Service {
 			return containsString(svc.Entities, sel.entity)
 		})
 	default:
-		return p.Services
+		if len(p.Services) <= 1 || p.DefaultService == "" {
+			return p.Services
+		}
+		return matchingServices(p.Services, func(svc Service) bool {
+			return svc.Name == p.DefaultService
+		})
 	}
 }
 
@@ -456,7 +489,11 @@ func LoadRegistry(getenv func(string) string) (*Registry, error) {
 		if err != nil {
 			return nil, err
 		}
-		products = append(products, Product{Slug: slug, Services: services})
+		defaultService, err := resolveDefaultService(getenv, slug, prefix, services)
+		if err != nil {
+			return nil, err
+		}
+		products = append(products, Product{Slug: slug, Services: services, DefaultService: defaultService})
 	}
 	return NewRegistry(products), nil
 }
@@ -563,6 +600,52 @@ func loadServices(getenv func(string) string, slug, prefix string) ([]Service, e
 		})
 	}
 	return services, nil
+}
+
+// resolveDefaultService reads FEDERATION_<SLUG>_DEFAULT_SERVICE and enforces
+// the two invariants Product.DefaultService's doc comment promises.
+//
+// A single-service product (including the legacy flat shape, which always
+// produces exactly one Service) needs no default — Product.resolve never
+// consults it when there is nothing to disambiguate — so DEFAULT_SERVICE is
+// read but not required there; a value given anyway is honoured rather than
+// rejected, since naming your one service is harmless, not a config error.
+//
+// A multi-service product is where this matters: leaving DEFAULT_SERVICE
+// unset there is not "no opinion", it is the exact gap tesserix/mark8ly#720
+// left open — a selector-less call (the universal `/admin/audit-logs`,
+// `/admin/kpis` contract endpoints, see DefaultService) has nowhere to route
+// and Client.do fails every such call with ErrAmbiguousService. That must be
+// a startup error an operator sees as a crashload, not a 500 a user reports
+// weeks later, so it fails here, at boot, the same posture BASE_URL and
+// SECRET already take. A DEFAULT_SERVICE naming a service this product does
+// not have is the same class of error — a config typo that would otherwise
+// silently degrade every selector-less call to ErrNoMatchingService — so it
+// is refused here too, rather than in Product.resolve.
+func resolveDefaultService(getenv func(string) string, slug, prefix string, services []Service) (string, error) {
+	defaultService := strings.TrimSpace(getenv(prefix + "DEFAULT_SERVICE"))
+
+	if len(services) <= 1 {
+		return defaultService, nil
+	}
+
+	names := make([]string, 0, len(services))
+	for _, svc := range services {
+		names = append(names, svc.Name)
+	}
+
+	if defaultService == "" {
+		return "", fmt.Errorf(
+			"federation: product %q has %d services (%s) but no %sDEFAULT_SERVICE — "+
+				"a selector-less call (audit logs, KPIs) has nowhere to route",
+			slug, len(services), strings.Join(names, ", "), prefix)
+	}
+	if !containsString(names, defaultService) {
+		return "", fmt.Errorf(
+			"federation: product %q sets %sDEFAULT_SERVICE=%q, which is not one of its services (%s)",
+			slug, prefix, defaultService, strings.Join(names, ", "))
+	}
+	return defaultService, nil
 }
 
 // splitList parses a comma-separated env value, trimming each element and
