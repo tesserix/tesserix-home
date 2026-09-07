@@ -34,10 +34,11 @@
 -- person to notice the gap will read this file and will not read #593.
 --
 -- (mark8ly's ingest omits both fields from `upsertColumns`
--- — `internal/billing/consolepromo/store.go` — so a console publication cannot
--- overwrite them today. Do NOT read that as mark8ly having made this same
--- decision independently: its comment gives the reason as "mark8ly policy the
--- console cannot express", which is a statement about what the CONTRACT could
+-- — `services/marketplace-api/internal/billing/consolepromo/store.go:32` —
+-- so a console publication cannot overwrite them today. Do NOT read that as
+-- mark8ly having made this same decision independently: its comment gives the
+-- reason as "mark8ly policy the console cannot express", which is a statement
+-- about what the CONTRACT could
 -- carry, not about what the console SHOULD be trusted with. The two happen to
 -- agree on these two fields and stop agreeing on the other two — mark8ly#795
 -- moves `allowed_plans` and `annual_only` INTO that list for exactly the reason
@@ -72,10 +73,11 @@
 -- value a column arrives with. What must not exist is a SECOND spelling of it.
 --
 -- mark8ly's plan check is guarded by `len(in.PromoCode.AllowedPlans) > 0`
--- (`internal/promo/validator.go`), so `{}` and NULL are THE SAME FACT to the
--- only redeemer there is: both mean every plan. But `{}` does not read that
--- way. It is an array with a scoping constraint's name on it, it renders as
--- "scoped" to anything that asks whether the field is set, and it redeems as
+-- (`services/marketplace-api/internal/promo/validator.go:107`), so `{}` and
+-- NULL are THE SAME FACT to the only redeemer there is: both mean every plan.
+-- But `{}` does not read that way. It is an array with a scoping constraint's
+-- name on it, it renders as "scoped" to anything that asks whether the field is
+-- set, and it redeems as
 -- unscoped. Every reader would then need a branch distinguishing "null" from
 -- "empty" and concluding they are identical — which is 0043's standing argument
 -- and 0046's for `max_redemptions > 0`, one object over.
@@ -89,8 +91,9 @@
 -- ══ WHY THE VOCABULARY IS CHECKED RATHER THAN FREE TEXT ══
 --
 -- `starter`, `studio`, `pro`. The closed set, and the same spelling as
--- mark8ly's `pricing.Plan` constants (`internal/billing/pricing/catalog.go`)
--- and as every `mark8ly_<plan>_<period>_…_v1` lookup key this console already
+-- mark8ly's `pricing.Plan` constants
+-- (`services/marketplace-api/internal/billing/pricing/catalog.go:41-43`) and as
+-- every `mark8ly_<plan>_<period>_…_v1` lookup key this console already
 -- stores.
 --
 -- The failure this prevents is a TYPO, and it is a silent one in both
@@ -101,7 +104,8 @@
 -- the evidence is a rejection reason in another product's metrics.
 --
 -- Case is a weaker argument than it looks and is not what this constraint rests
--- on: mark8ly compares with `strings.EqualFold`, so `Starter` would in fact
+-- on: mark8ly compares with `strings.EqualFold` (`validator.go:110`), so
+-- `Starter` would in fact
 -- redeem. Lower-case is enforced anyway because it is the canonical form
 -- everywhere else in this schema and one spelling is cheaper than two — but the
 -- rule that earns its keep is membership, not case.
