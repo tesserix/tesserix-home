@@ -87,7 +87,9 @@ vi.mock("./tesserix", () => ({
 import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 
-const { readWindowStatus, readLatestRuns } = await import("./plan-catalog-repo");
+const { readWindowStatus, readLatestRuns, readLatestEntitlementRun } = await import(
+  "./plan-catalog-repo",
+);
 
 let db: PGlite;
 
@@ -616,5 +618,47 @@ describe("entitlement runs are not price evidence", () => {
     )!;
 
     expect(latest.run).toMatchObject({ outcome: "differences", differenceCount: 2 });
+  });
+
+  /**
+   * And the mirror image — #146 T2's read, whose `check_kind = 'entitlement'`
+   * filter is the same guard pointing the other way.
+   *
+   * A `readLatestEntitlementRun` that forgot the predicate would hand the
+   * entitlement surface a PRICE run: an outcome badge over a `differences`
+   * report whose entries carry a `kind` and no plan or feature, which that
+   * surface has no labels for. Worse, on an estate where the nightly price
+   * check runs every night and nobody has ever pressed the entitlement
+   * button, it would report a clean run daily for a comparison that has never
+   * been performed once.
+   */
+  it("reads only entitlement rows, and never the price run beside them", async () => {
+    // A price run recorded MORE RECENTLY than the entitlement one, so a read
+    // without the filter would prefer it under `ORDER BY ran_at DESC`.
+    await recordEntitlement("test", "differences", 2, 3);
+    await record("test", "clean", 0);
+
+    const latest = await readLatestEntitlementRun(SOURCE);
+
+    expect(latest).toMatchObject({ outcome: "differences", differenceCount: 3, mode: "test" });
+    // The report is the entitlement shape, not the price one.
+    expect(latest!.differences[0]).toMatchObject({ plan: "pro", feature: "sso" });
+  });
+
+  it("reports never-run as null even while price runs fill the table", async () => {
+    await cleanWeek("test");
+
+    // The state production is actually in: seven nights of price evidence and
+    // not one entitlement comparison. `null` is the answer, and the surface
+    // is required to render it as the absence of evidence rather than as
+    // agreement.
+    expect(await readLatestEntitlementRun(SOURCE)).toBeNull();
+  });
+
+  it("returns the most recent entitlement run when several exist", async () => {
+    await recordEntitlement("test", "differences", 3, 1);
+    await recordEntitlement("test", "clean", 1);
+
+    expect(await readLatestEntitlementRun(SOURCE)).toMatchObject({ outcome: "clean" });
   });
 });

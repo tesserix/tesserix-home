@@ -106,6 +106,20 @@ export interface CatalogSurfaceProps {
    * to do with.
    */
   readonly divergence: ReactNode;
+  /**
+   * The entitlement section (#146, T2), built by `page.tsx` from its own two
+   * reads.
+   *
+   * Its own prop and its own section for the reason `divergence` has one, with
+   * a sharper edge on it: 0053 separated price and entitlement evidence in the
+   * database precisely so neither can be read as the other, and the
+   * observation strip's verdict is #327's gate evidence — the clean days that
+   * justify revoking mark8ly's Stripe write key, every one of them produced by
+   * the nightly PRICE check. An entitlement outcome rendered inside that
+   * verdict would widen a claim whose exact width is why it is trusted. So
+   * this is a sibling, never a row inside `observation`.
+   */
+  readonly entitlements: ReactNode;
   readonly browse: ReactNode;
   readonly authoring: ReactNode;
   /**
@@ -146,6 +160,7 @@ export function CatalogSurface({
   mode,
   observation,
   divergence,
+  entitlements,
   browse,
   authoring,
   promoCodes,
@@ -183,6 +198,17 @@ export function CatalogSurface({
           whole page, not about either tab. */}
       <section className="flex flex-col gap-3" aria-label="Test and live catalog">
         {divergence}
+      </section>
+
+      {/* A THIRD section beside the other two, and deliberately not a line
+          inside either. Its own `aria-label` so a screen-reader operator hears
+          it announced as its own subject: the observation window is about the
+          catalog against Stripe, the line above it is about the two modes
+          against each other, and this is about the plan gate against what the
+          console stores. See the `entitlements` prop for why folding it into
+          the first would cost more than a label. */}
+      <section className="flex flex-col gap-3" aria-label="Entitlements">
+        {entitlements}
       </section>
 
       <div className="flex items-center justify-end">

@@ -1191,3 +1191,82 @@ export async function recordEntitlementParityRun(run: EntitlementParityRun): Pro
     ],
   );
 }
+
+/**
+ * The most recent entitlement parity run for one product — tesserix-home#146.
+ *
+ * # `check_kind = 'entitlement'`, and that filter is the whole point
+ *
+ * 0053 put both kinds of evidence in one table and separated them by column
+ * precisely so neither can be read as the other. This read is the entitlement
+ * half; {@link readLatestRuns} is the price half and carries the mirror-image
+ * filter. A read here that forgot the predicate would hand the entitlement
+ * surface a PRICE run — and, worse, its `differences` are `Difference`s, a
+ * shape no entitlement reader has a label for, so the surface would render an
+ * outcome badge over a report it could not describe.
+ *
+ * # ONE row, not one per (mode, source) pair
+ *
+ * {@link readLatestRuns} is keyed by pair because the price check is RUN per
+ * pair — the CronJob loops over both modes every night, and each pair's window
+ * is judged separately for #327's gate. The entitlement check is not: it runs
+ * when an operator presses a button, and it files itself under whichever mode
+ * the PRODUCT reported reading (`performEntitlementParityCheck` takes the mode
+ * off the response, because the console cannot see mark8ly's
+ * `CONSOLE_CATALOG_MODE` and it moves at the live-key swap). So "the latest
+ * run for `test`" is not a question an operator can act on — they never chose
+ * that mode and cannot make a run happen under the other one. "The latest
+ * entitlement run, and which mode it turned out to be filed under" is, and
+ * that is what this returns, with {@link LatestEntitlementRun.mode} carrying
+ * the answer rather than the key.
+ *
+ * `null` means no entitlement run has ever been recorded for this source. It
+ * is an ANSWER, not an absence and emphatically not a clean run — the surface
+ * is required to say so in those words.
+ */
+export interface LatestEntitlementRun {
+  /** The mode the run was filed under, which is the mode the PRODUCT reported
+   *  reading and never one the operator picked. Carried out to the surface so
+   *  a run recorded against a different mode than the page is showing can say
+   *  so, instead of silently appearing to describe the mode on screen. */
+  readonly mode: StripeMode;
+  readonly outcome: ParityOutcome;
+  /** ISO 8601, UTC. */
+  readonly ranAt: string;
+  readonly differenceCount: number;
+  /** `EntitlementDifference`, never `Difference` — see this function's note on
+   *  the `check_kind` filter for what reading the wrong kind would render. */
+  readonly differences: readonly EntitlementDifference[];
+  /** Non-null exactly when `outcome` is `failed`, per 0033's CHECK. Already
+   *  redacted and truncated by `parity-run.ts`, so a reader may put it on
+   *  screen as-is — the same guarantee {@link LatestParityRun.error} gives. */
+  readonly error: string | null;
+}
+
+export async function readLatestEntitlementRun(
+  source: CatalogSource,
+): Promise<LatestEntitlementRun | null> {
+  const rows = await tesserixQuery<LatestRunRow>(
+    `SELECT mode, source, outcome, ran_at, difference_count, differences, error
+       FROM plan_catalog_parity_runs
+      WHERE check_kind = 'entitlement' AND source = $1
+      ORDER BY ran_at DESC
+      LIMIT 1`,
+    [source],
+  );
+
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    mode: row.mode,
+    outcome: row.outcome,
+    // Same driver caveat `toLatestParityRun` documents: a `Date` from `pg`, a
+    // string from pglite, and `new Date(x)` accepts both.
+    ranAt: new Date(row.ran_at).toISOString(),
+    differenceCount: row.difference_count,
+    // jsonb, already parsed by both drivers — never a string needing a second
+    // `JSON.parse`.
+    differences: row.differences as EntitlementDifference[],
+    error: row.error,
+  };
+}

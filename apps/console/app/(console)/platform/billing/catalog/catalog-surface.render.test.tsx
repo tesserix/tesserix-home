@@ -46,6 +46,7 @@ function renderSurface(over: Partial<Parameters<typeof CatalogSurface>[0]> = {})
       mode="test"
       observation={<p>Satisfied — 7/7 days clean, both pairs</p>}
       divergence={<p>Test and live serve the same catalog</p>}
+        entitlements={<p>the entitlement panel</p>}
       browse={<p>the published catalog</p>}
       authoring={<p>the authoring panel</p>}
       promoCodes={<p>the promo codes panel</p>}
@@ -99,6 +100,37 @@ describe("CatalogSurface — both panels are reachable, one at a time", () => {
       "aria-selected",
       "true",
     );
+  });
+});
+
+/**
+ * #146's decision 4, held here rather than in the panel's own suite: the
+ * separation is a fact about the SHELL, and the panel cannot assert where the
+ * shell puts it.
+ */
+describe("the entitlement section", () => {
+  it("is its own labelled section, not part of the observation window", () => {
+    // Migration 0053 separated price and entitlement evidence in the database
+    // so neither can be read as the other. The observation strip's verdict is
+    // #327's gate evidence — the clean days that justify revoking mark8ly's
+    // Stripe write key, every one of them produced by the nightly PRICE check.
+    // An entitlement outcome rendered inside that region would widen a claim
+    // whose exact width is the reason it is trusted.
+    renderSurface();
+
+    const entitlements = screen.getByRole("region", { name: "Entitlements" });
+    expect(within(entitlements).getByText("the entitlement panel")).toBeInTheDocument();
+
+    const observation = screen.getByRole("region", { name: "Observation window" });
+    expect(within(observation).queryByText("the entitlement panel")).toBeNull();
+    // And the verdict line itself is untouched by anything on this section.
+    expect(within(observation).getByText("Satisfied — 7/7 days clean, both pairs")).toBeInTheDocument();
+  });
+
+  it("rides above the tabs, visible from either", () => {
+    renderSurface();
+    fireEvent.click(draftTab());
+    expect(screen.getByText("the entitlement panel")).toBeInTheDocument();
   });
 });
 
