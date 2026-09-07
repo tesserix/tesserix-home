@@ -433,7 +433,18 @@ it("does not treat an absent console row as a disabled one", () => {
 
 - [ ] **Step 5: Record the run against the mode the product reports**
 
-Extend `parity-run.ts` to fetch `/v1/billing/entitlements`, read `catalog_mode` from the response, read the console entitlements for **that mode's live publication**, compare, and record via the existing `recordParityRun`. The mode written to `plan_catalog_parity_runs.mode` is the one the product reported — never a hard-coded `test`, and never a sentinel. A comment must state why: the console cannot see `CONSOLE_CATALOG_MODE`, the value moves at the Stripe live-key swap, and comparing the other mode's revision against a matrix nobody applies it to is permanent unactionable drift.
+**The response is a FAN-OUT PAGE, not a flat document.** Task 3 shipped
+`EntitlementPage { data: []EntitlementMatrix, failures: []Failure }` — `data` is
+an ARRAY, one matrix per product, each carrying its own `source`,
+`catalog_mode`, `features` and `plans`. There is no top-level `catalog_mode` and
+no `total`. Select the row whose `source` matches the source being compared;
+do not index `data[0]` positionally.
+
+A `failures` entry for the source you are comparing is NOT a clean run and NOT
+zero differences — it is a run that could not be performed, and must be recorded
+as such rather than as agreement.
+
+Extend `parity-run.ts` to fetch `/v1/billing/entitlements`, take `catalog_mode` from **that product's matrix**, read the console entitlements for **that mode's live publication**, compare, and record via the existing `recordParityRun`. The mode written to `plan_catalog_parity_runs.mode` is the one the product reported — never a hard-coded `test`, and never a sentinel. A comment must state why: the console cannot see `CONSOLE_CATALOG_MODE`, the value moves at the Stripe live-key swap, and comparing the other mode's revision against a matrix nobody applies it to is permanent unactionable drift.
 
 - [ ] **Step 6: Run typecheck, lint and the full console suite**
 

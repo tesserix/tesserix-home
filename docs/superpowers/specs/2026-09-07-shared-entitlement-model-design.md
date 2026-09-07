@@ -178,7 +178,7 @@ copy.
    merge (Kargo deploys on merge; `db:migrate` does not ride along — and #613's
    preflight now refuses to start a console whose ledger is behind, so a missed
    apply stalls the rollout rather than breaking the surface).
-2. **Seed** — write plangate's 78 values onto a revision, so the table holds the
+2. **Seed** — write plangate's 104 values onto a revision, so the table holds the
    truth before anything compares it.
 3. **mark8ly endpoint** + **platform-api federation** — the comparison target.
 4. **Parity comparison** — the console reads both sides and records a run.
