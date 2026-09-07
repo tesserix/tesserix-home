@@ -42,6 +42,46 @@ export const DEFAULT_TRIAL_WINDOW_DAYS = 7;
  */
 export const MAX_TRIAL_WINDOW_DAYS = 365;
 
+/**
+ * The two populations a trials list can hold, and the vocabulary for choosing
+ * between them.
+ *
+ * `signup` is where mark8ly's `Bootstrap` leaves EVERY subscription: plan
+ * `trial`, status `signup`. Exactly one writer moves a row on to `trialing` —
+ * the `checkout.session.completed` webhook — so a tenant that abandons
+ * checkout stays at `signup` indefinitely, and `expiry_cron` (which only
+ * touches `trialing`) never ages it out either. An operator with three such
+ * tenants saw an empty trials list at every window.
+ *
+ * `all` is the widest scope this list has, not "every status in the product":
+ * these are the only two the trials endpoint can return, one of them by
+ * opt-in.
+ */
+export const TRIAL_STATUS_BOTH = "all";
+export const TRIAL_STATUS_TRIALING = "trialing";
+
+export type TrialStatusScope = typeof TRIAL_STATUS_BOTH | typeof TRIAL_STATUS_TRIALING;
+
+export interface TrialStatusOption {
+  readonly value: TrialStatusScope;
+  readonly label: string;
+}
+
+/** The statuses the Status filter offers, widest first. The labels name the
+ *  populations rather than saying "All": there are two, and enumerating them
+ *  is what tells an operator that a second one exists at all. */
+export const TRIAL_STATUSES: readonly TrialStatusOption[] = [
+  { value: TRIAL_STATUS_BOTH, label: "Trialing and signup" },
+  { value: TRIAL_STATUS_TRIALING, label: "Trialing only" },
+];
+
+/** Whether a raw URL value is one of the statuses this surface offers. Same
+ *  reason as `isTrialWindow`: a query string is untrusted input, and a value
+ *  nobody offered must not decide what the request asks for. */
+export function isTrialStatusScope(raw: string): raw is TrialStatusScope {
+  return TRIAL_STATUSES.some((status) => status.value === raw);
+}
+
 export interface TrialWindowOption {
   readonly value: string;
   readonly label: string;
@@ -79,9 +119,14 @@ export function isTrialWindow(raw: string): boolean {
 export const BILLING_PRODUCT_SOURCES = ["mark8ly"] as const;
 
 /** Which trials the view is asking for. `days` is always resolved — the
- *  default is a *selection*, not an absence. */
+ *  default is a *selection*, not an absence.
+ *
+ *  `status` is optional for the opposite reason, and shaped like `source`: its
+ *  absent state is the WIDEST scope this surface asks for, so an absent value
+ *  hides nothing. Only the narrowing is worth recording. */
 export interface TrialScope {
   readonly days: number;
+  readonly status?: TrialStatusScope;
   readonly source?: string;
 }
 
@@ -90,6 +135,7 @@ export interface TrialQuery {
   source?: string;
   days?: number;
   includeStripeManaged?: boolean;
+  includeSignup?: boolean;
 }
 
 /**
@@ -107,12 +153,33 @@ export interface TrialQuery {
  *     Stripe-managed rows would rebuild the same invisible-scope bug one level
  *     down. Narrower windows keep the work-queue exclusion — those rows
  *     convert rather than expire, so they are not what somebody acts on today.
+ *
+ *  3. Every scope but `Trialing only` carries `include_signup`. This CHANGES
+ *     THE DEFAULT REQUEST, which decision 1 above deliberately kept
+ *     byte-identical to production — and the two are not in tension, because
+ *     they are about different things. Decision 1 avoids duplicating a
+ *     *definition*: `DefaultExpiryWindow` is shared with the product's
+ *     trials_expiring KPI, so a window restated here could make the tab and
+ *     the counter disagree about the word "expiring". This is a caller
+ *     choosing a scope the API already offers — no constant is copied, no KPI
+ *     is touched, and the product keeps its own default for callers that do
+ *     not ask.
+ *
+ *     Default rather than opt-in because the reported bug IS the default: an
+ *     operator whose three tenants all sit at `signup` sees an empty page at
+ *     every window, and a signup tenant is the stronger work-queue case, not
+ *     the weaker one — nothing ages it out and nobody is chasing it.
+ *
+ *     `Trialing only` sends nothing rather than `include_signup=false`: the
+ *     API offers a widening opt-in and no exclusion, so `false` would be a
+ *     parameter that says nothing.
  */
 export function trialQueryFor(scope: TrialScope): TrialQuery {
   const query: TrialQuery = {};
   if (scope.source) query.source = scope.source;
   if (scope.days !== DEFAULT_TRIAL_WINDOW_DAYS) query.days = scope.days;
   if (scope.days === MAX_TRIAL_WINDOW_DAYS) query.includeStripeManaged = true;
+  if (scope.status !== TRIAL_STATUS_TRIALING) query.includeSignup = true;
   return query;
 }
 
@@ -135,12 +202,26 @@ function windowPhrase(days: number): string {
  *  - the way out. At a narrow window that is a wider one. At the widest there
  *    is none, so instead of inviting a widening that does not exist it says
  *    what this window still cannot see — an extended trial ending past a year.
+ *
+ * Under `Trialing only` the window is no longer the most likely reason the
+ * list is empty: signup rows are in by default, so the operator has just
+ * excluded the population that is usually there. That branch names the
+ * narrowing AND the window — dropping the window would move the invisible
+ * scope one filter along rather than fixing it.
  */
 export function trialsEmptyMessage(scope: {
   days: number;
+  status?: TrialStatusScope;
   sourceLabel?: string;
 }): string {
   const at = scope.sourceLabel ? ` at ${scope.sourceLabel}` : "";
+  if (scope.status === TRIAL_STATUS_TRIALING) {
+    return (
+      `No trials with a completed checkout are expiring in the ${windowPhrase(scope.days)}${at}. ` +
+      `Every product that answered has none — "Trialing and signup" also shows tenants that ` +
+      `signed up and never finished checkout.`
+    );
+  }
   const head = `No trials expiring in the ${windowPhrase(scope.days)}${at}.`;
   if (scope.days === MAX_TRIAL_WINDOW_DAYS) {
     return `${head} Every product that answered has none. A trial extended past a year would still not appear here.`;

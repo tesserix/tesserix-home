@@ -17,7 +17,11 @@ import { sourceLabel } from "@/lib/audit";
 import {
   BILLING_PRODUCT_SOURCES,
   DEFAULT_TRIAL_WINDOW_DAYS,
+  TRIAL_STATUSES,
+  TRIAL_STATUS_BOTH,
+  TRIAL_STATUS_TRIALING,
   TRIAL_WINDOWS,
+  isTrialStatusScope,
   isTrialWindow,
   trialQueryFor,
   trialsEmptyMessage,
@@ -69,15 +73,21 @@ export function billingReadError(caught: unknown): SurfaceError | null {
 }
 
 /**
- * The trials tab's two filters.
+ * The trials tab's three filters.
  *
- * Keys are the platform API's own parameter names (`days`, `source`), so the
+ * `days` and `source` are the platform API's own parameter names, so the
  * descriptor key, the URL param and the upstream param are one name — the same
- * choice the ticket queue makes.
+ * choice the ticket queue makes. `status` is the exception and deliberately
+ * so: the API expresses this scope as a widening boolean (`include_signup`),
+ * and a URL reading `include_signup=false` would name a parameter the request
+ * never sends. The key says what the operator chose; `trialQueryFor` turns it
+ * into what the API accepts.
  *
- * `days` carries a `defaultValue` because its unset state is not "no filter":
- * the product applies a 7-day expiry window whether or not anyone asked. See
- * `FilterDescriptor.defaultValue`.
+ * Two of the three carry a `defaultValue` — `days` and `status` — because
+ * neither unset state is "no filter": the product applies a 7-day expiry
+ * window whether or not anyone asked, and the status default is a real scope
+ * the request opts into. `source` keeps its "All products" option, which is a
+ * choice this surface can honour. See `FilterDescriptor.defaultValue`.
  */
 export const TRIAL_FILTERS: FilterDescriptor[] = [
   {
@@ -86,6 +96,13 @@ export const TRIAL_FILTERS: FilterDescriptor[] = [
     type: "select",
     defaultValue: String(DEFAULT_TRIAL_WINDOW_DAYS),
     options: TRIAL_WINDOWS.map((window) => ({ value: window.value, label: window.label })),
+  },
+  {
+    key: "status",
+    label: "Status",
+    type: "select",
+    defaultValue: TRIAL_STATUS_BOTH,
+    options: TRIAL_STATUSES.map((status) => ({ value: status.value, label: status.label })),
   },
   {
     key: "source",
@@ -119,6 +136,18 @@ export function readTrialScope(searchParams: BillingSearchParams): TrialScope {
       ? Number(rawDays)
       : DEFAULT_TRIAL_WINDOW_DAYS;
 
+  // Only the NARROWING is recorded. `all` is the widest scope this surface
+  // asks for, so an absent status hides nothing — and normalising an explicit
+  // `?status=all` to the same absence keeps one scope from having two
+  // representations. Anything else (including the product's own `signup`,
+  // which is a row status rather than a filter this surface offers) falls back
+  // to the default, as an unoffered window does.
+  const rawStatus = searchParams.status;
+  const status =
+    typeof rawStatus === "string" && isTrialStatusScope(rawStatus)
+      ? rawStatus
+      : TRIAL_STATUS_BOTH;
+
   const rawSource = searchParams.source;
   const source =
     typeof rawSource === "string" &&
@@ -126,7 +155,8 @@ export function readTrialScope(searchParams: BillingSearchParams): TrialScope {
       ? rawSource
       : undefined;
 
-  return source ? { days, source } : { days };
+  const narrowed = status === TRIAL_STATUS_TRIALING ? { status } : {};
+  return source ? { days, source, ...narrowed } : { days, ...narrowed };
 }
 
 /**
@@ -142,6 +172,10 @@ export function readTrialScope(searchParams: BillingSearchParams): TrialScope {
 export function toTrialFilterValues(scope: TrialScope): FilterValues {
   const values: FilterValues = {};
   if (scope.days !== DEFAULT_TRIAL_WINDOW_DAYS) values.days = String(scope.days);
+  // Same omission as the window, for the same reason: `FilterBar` renders the
+  // descriptor's `defaultValue` for an absent value, and writing it out would
+  // light up "Clear filters" for a scope nobody chose.
+  if (scope.status === TRIAL_STATUS_TRIALING) values.status = scope.status;
   if (scope.source) values.source = scope.source;
   return values;
 }
@@ -241,6 +275,7 @@ export default async function EstateBilling({
         trialFilterValues={toTrialFilterValues(scope)}
         trialsEmptyMessage={trialsEmptyMessage({
           days: scope.days,
+          status: scope.status,
           sourceLabel: scope.source ? sourceLabel(scope.source) : undefined,
         })}
         reauthReturnTo={currentPath(resolvedSearchParams)}

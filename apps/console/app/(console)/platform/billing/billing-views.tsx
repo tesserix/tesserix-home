@@ -68,6 +68,27 @@ export function trialTone(paymentMethodOnFile: boolean): "warning" | "neutral" {
   return paymentMethodOnFile ? "neutral" : "warning";
 }
 
+/**
+ * The product's word for a tenant that signed up and never completed checkout.
+ *
+ * Compared as a literal rather than translated: the console renders every
+ * product's status vocabulary verbatim, and this one value additionally
+ * changes how the row's date is read.
+ */
+export const TRIAL_STATUS_SIGNUP = "signup";
+
+/**
+ * Whether this row's end date is a projection rather than a deadline.
+ *
+ * A `signup` row's `trial_ends_at` is derived from `created_at + 90d`, and
+ * mark8ly's `expiry_cron` only ever acts on `trialing` rows — so nothing will
+ * happen on that date. Rendered identically to a real `trial_ends_at` it would
+ * read as an enforced deadline, which is worse than showing no date at all.
+ */
+export function endsIsNotional(status: string): boolean {
+  return status === TRIAL_STATUS_SIGNUP;
+}
+
 /** Days remaining, phrased so 0 and 1 do not read as bugs. */
 export function daysLabel(days: number): string {
   if (days < 0) return "ended";
@@ -187,10 +208,18 @@ export function BillingViews({
               <IncompleteBilling failures={trials.failures} />
               {trialsState.kind === "ready" ? (
                 <>
-                  <Table aria-label="Expiring trials">
+                  {/* "Trials", not "Expiring trials": the default scope now includes
+                      tenants that signed up and never completed checkout, and
+                      nothing expires those. */}
+                  <Table aria-label="Trials">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Ends</TableHead>
+                        {/* Beside Ends, not at the end of the row: it is what
+                            tells the operator whether that date means
+                            anything, and which of the two chases this row
+                            needs. */}
+                        <TableHead>Status</TableHead>
                         <TableHead>Tenant</TableHead>
                         <TableHead>Plan</TableHead>
                         <TableHead>Payment method</TableHead>
@@ -201,7 +230,30 @@ export function BillingViews({
                       {trials.data.map((row) => (
                         <TableRow key={`${row.source}:${row.tenantId}:${row.storeId ?? ""}`}>
                           <TableCell className="whitespace-nowrap tabular-nums">
-                            <time dateTime={row.trialEndsAt}>{daysLabel(row.daysRemaining)}</time>
+                            {endsIsNotional(row.status) ? (
+                              // No `<time dateTime>`: that element publishes a
+                              // machine-readable instant, and this one is a
+                              // projection nothing acts on. The qualifier is
+                              // visible text rather than a tooltip, so it
+                              // survives being read aloud or scanned.
+                              <span
+                                className="text-muted-foreground"
+                                title="Derived from the signup date. Nothing expires a trial that never started."
+                              >
+                                {daysLabel(row.daysRemaining)}{" "}
+                                <span className="text-xs">(notional)</span>
+                              </span>
+                            ) : (
+                              <time dateTime={row.trialEndsAt}>{daysLabel(row.daysRemaining)}</time>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {/* The product's own word, rendered verbatim — the
+                                same choice the subscriptions table makes. The
+                                two words call for different work: chase a
+                                `signup` tenant to finish checkout, chase a
+                                `trialing` one for a card. */}
+                            <Badge variant="neutral">{row.status}</Badge>
                           </TableCell>
                           <TableCell className="font-medium">
                             {row.tenantName ?? row.tenantId}

@@ -22,7 +22,12 @@ import {
 // below that stands in for a paged platform-api response uses one of these
 // rather than a bare object literal, so the shape it asserts is a deliberate
 // choice, not a guess that happens to match the parser under test.
-import { MAX_TRIAL_WINDOW_DAYS, trialQueryFor } from "./trial-scope";
+import {
+  DEFAULT_TRIAL_WINDOW_DAYS,
+  MAX_TRIAL_WINDOW_DAYS,
+  TRIAL_STATUS_TRIALING,
+  trialQueryFor,
+} from "./trial-scope";
 import {
   paginationCursorMeta,
   paginationInMeta,
@@ -1631,5 +1636,36 @@ describe("fetchEstateTrials", () => {
 
     expect(sent(fetchMock).searchParams.get("source")).toBe("mark8ly");
     expect(sent(fetchMock).searchParams.has("days")).toBe(false);
+  });
+
+  // THE request the fix turns on, asserted off the URL against the platform
+  // API's own parameter name. The console's landing scope opts into the
+  // tenants that signed up and never completed checkout — the population an
+  // operator with three such tenants saw nothing of at every window.
+  //
+  // It is not `fetchEstateTrials()`'s own default that changes: the bare call
+  // above still sends a page size and nothing else. What changes is the query
+  // the console builds for the scope it lands on.
+  it("carries `include_signup` for the console's default scope", async () => {
+    const fetchMock = respond();
+
+    await fetchEstateTrials(trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS }));
+
+    expect(sent(fetchMock).pathname).toBe("/v1/billing/trials");
+    expect([...sent(fetchMock).searchParams.keys()].sort()).toEqual(["include_signup", "limit"]);
+    expect(sent(fetchMock).searchParams.get("include_signup")).toBe("true");
+  });
+
+  // `Trialing only` is the absence of the flag: the API offers a widening
+  // opt-in and no exclusion, so sending `include_signup=false` would be a
+  // parameter that says nothing.
+  it("sends no `include_signup` when narrowed to Trialing only", async () => {
+    const fetchMock = respond();
+
+    await fetchEstateTrials(
+      trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS, status: TRIAL_STATUS_TRIALING }),
+    );
+
+    expect([...sent(fetchMock).searchParams.keys()].sort()).toEqual(["limit"]);
   });
 });

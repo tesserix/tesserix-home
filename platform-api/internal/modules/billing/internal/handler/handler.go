@@ -5,6 +5,9 @@
 //	     ?source=<slug>              narrow to one product
 //	     ?limit=<n>                  rows asked of each product (default 100)
 //	     ?include_stripe_managed=true  trials only; opts in rows products exclude
+//	     ?include_signup=true      trials only; opts in tenants that signed up
+//	                               and never completed checkout. Products
+//	                               exclude them by default.
 //	     ?days=<n>                 trials only; how far ahead to look. Absent
 //	                               means the product's own default (7 days on
 //	                               mark8ly, the same window its trials_expiring
@@ -105,7 +108,7 @@ const DefaultLimit = 100
 const MaxLimit = 500
 
 var subscriptionParameters = []string{"source", "limit"}
-var trialParameters = []string{"source", "limit", "include_stripe_managed", "days"}
+var trialParameters = []string{"source", "limit", "include_stripe_managed", "include_signup", "days"}
 
 // MaxDays is the widest expiry window this surface will ask a product for.
 //
@@ -320,7 +323,10 @@ func (h *Handler) trials(w http.ResponseWriter, r *http.Request) {
 		// than rejected: this is a widening flag, and the safe reading of an
 		// unrecognised value is the narrower result.
 		IncludeStripeManaged: query.Get("include_stripe_managed") == "true",
-		Days:                 days,
+		// Same reading, and for the same reason: an unrecognised value on a
+		// widening flag means the narrower result.
+		IncludeSignup: query.Get("include_signup") == "true",
+		Days:          days,
 	})
 	if err != nil {
 		h.writeReadError(w, r, err)

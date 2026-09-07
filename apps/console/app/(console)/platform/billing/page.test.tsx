@@ -17,7 +17,9 @@ import { PlatformApiError } from "@/lib/platform-api";
 import {
   DEFAULT_TRIAL_WINDOW_DAYS,
   MAX_TRIAL_WINDOW_DAYS,
+  TRIAL_STATUS_TRIALING,
   trialsEmptyMessage,
+  type TrialStatusScope,
 } from "@/lib/trial-scope";
 import type { SubscriptionPage, TrialPage } from "@/lib/billing";
 import {
@@ -28,7 +30,7 @@ import {
   toTrialFilterValues,
   viewState,
 } from "./page";
-import { BillingViews, daysLabel, trialTone } from "./billing-views";
+import { BillingViews, daysLabel, endsIsNotional, trialTone } from "./billing-views";
 
 const subscription = {
   source: "mark8ly",
@@ -51,6 +53,20 @@ const trial = {
   paymentMethodOnFile: false,
   status: "trialing",
   stripeManaged: false,
+};
+
+/**
+ * A tenant that signed up and never completed checkout.
+ *
+ * `status: "signup"` is where mark8ly's Bootstrap leaves every subscription,
+ * and only a completed Stripe checkout moves it on — so this row is not an
+ * edge case, it is the state an abandoned signup stays in forever.
+ */
+const signupTrial = {
+  ...trial,
+  tenantId: "t4",
+  tenantName: "Gamma Ltd",
+  status: "signup",
 };
 
 const subs = (over: Partial<SubscriptionPage> = {}): SubscriptionPage => ({
@@ -85,11 +101,14 @@ function renderViews(over: Partial<Parameters<typeof BillingViews>[0]> = {}) {
 
 /** An empty trials tab: no rows, no error — the state the original report
  *  was looking at. */
-function renderEmptyTrials(scope: { days: number; sourceLabel?: string }, over = {}) {
+function renderEmptyTrials(
+  scope: { days: number; status?: TrialStatusScope; sourceLabel?: string },
+  over = {},
+) {
   return renderViews({
     trials: trials({ data: [], total: 0, ...over }),
     trialsState: viewState({ error: null, rows: [] }),
-    trialFilterValues: toTrialFilterValues({ days: scope.days }),
+    trialFilterValues: toTrialFilterValues({ days: scope.days, status: scope.status }),
     trialsEmptyMessage: trialsEmptyMessage(scope),
   });
 }
@@ -130,6 +149,55 @@ describe("trialTone", () => {
   it("flags a trial with no payment method", () => {
     expect(trialTone(false)).toBe("warning");
     expect(trialTone(true)).toBe("neutral");
+  });
+});
+
+describe("endsIsNotional", () => {
+  // A `signup` row's trial_ends_at is derived from created_at + 90d and no
+  // expiry job ever acts on it, so the date is a projection rather than a
+  // deadline. A `trialing` row's is the real one.
+  it("marks a signup row's end date as derived, and a trialing row's as real", () => {
+    expect(endsIsNotional("signup")).toBe(true);
+    expect(endsIsNotional("trialing")).toBe(false);
+  });
+});
+
+describe("the two trial populations on screen", () => {
+  function renderBoth() {
+    return renderViews({
+      trials: trials({ data: [trial, signupTrial], total: 2 }),
+      trialsState: viewState({ error: null, rows: [trial, signupTrial] }),
+    });
+  }
+
+  // The status has been parsed since §8.2 landed and never rendered. The two
+  // populations need different actions — chase a signup to finish checkout,
+  // chase a trialing tenant for a card — so an undifferentiated list would
+  // trade one invisible scope for another.
+  it("renders each row's status in the product's own words", () => {
+    renderBoth();
+    expect(screen.getByText("trialing")).toBeInTheDocument();
+    expect(screen.getByText("signup")).toBeInTheDocument();
+  });
+
+  // A date that looks like an enforced deadline when nothing enforces it is
+  // worse than no date.
+  it("qualifies the signup row's end date and leaves the trialing one alone", () => {
+    renderBoth();
+    const signupRow = screen.getByText("Gamma Ltd").closest("tr");
+    const trialingRow = screen.getByText("Beta Co").closest("tr");
+    expect(signupRow).toHaveTextContent(/notional/i);
+    expect(trialingRow).not.toHaveTextContent(/notional/i);
+  });
+
+  // `<time dateTime=…>` states a machine-readable instant. A notional date is
+  // not one, so the signup row does not make that claim.
+  it("does not publish the notional date as a machine-readable time", () => {
+    renderBoth();
+    const signupRow = screen.getByText("Gamma Ltd").closest("tr");
+    const trialingRow = screen.getByText("Beta Co").closest("tr");
+    expect(signupRow?.querySelector("time")).toBeNull();
+    expect(trialingRow?.querySelector("time")).not.toBeNull();
   });
 });
 
@@ -195,6 +263,19 @@ describe("readTrialScope", () => {
     expect(readTrialScope({ days: ["7", "30"] }).days).toBe(DEFAULT_TRIAL_WINDOW_DAYS);
   });
 
+  // Absent means both populations — the widest scope this surface asks for,
+  // so an absent value narrows nothing and there is no invisible scope to
+  // record. Only the narrowing is written down.
+  it("records the status narrowing and nothing else", () => {
+    expect(readTrialScope({ status: "trialing" })).toEqual({
+      days: DEFAULT_TRIAL_WINDOW_DAYS,
+      status: TRIAL_STATUS_TRIALING,
+    });
+    expect(readTrialScope({ status: "all" }).status).toBeUndefined();
+    expect(readTrialScope({ status: "signup" }).status).toBeUndefined();
+    expect(readTrialScope({ status: ["trialing", "all"] }).status).toBeUndefined();
+  });
+
   it("keeps a product that federates billing and drops one that does not", () => {
     expect(readTrialScope({ source: "mark8ly" }).source).toBe("mark8ly");
     // platform-api answers 400 for a source it cannot call, so an invented one
@@ -237,6 +318,31 @@ describe("the trials scope on screen", () => {
     expect(pushedParams().get("source")).toBe("mark8ly");
   });
 
+  // The default is a SELECTION and renders as one. It is also the widening
+  // one: the tab lands showing both populations, which is the whole fix.
+  it("shows both populations as the selected status", () => {
+    renderViews();
+    expect(screen.getByLabelText("Status")).toHaveTextContent("Trialing and signup");
+  });
+
+  it("puts the status narrowing in the URL", () => {
+    renderViews();
+    fireEvent.click(screen.getByLabelText("Status"));
+    fireEvent.click(screen.getByRole("option", { name: "Trialing only" }));
+    expect(pushedParams().get("status")).toBe(TRIAL_STATUS_TRIALING);
+  });
+
+  // There is no "All statuses" to offer: the widest scope this list has is
+  // already the default, and an option that could only clear the param and
+  // land back on it is one the surface cannot honour.
+  it("offers no unhonourable All option beside the two statuses", () => {
+    renderViews();
+    fireEvent.click(screen.getByLabelText("Status"));
+    expect(screen.getByRole("option", { name: "Trialing and signup" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Trialing only" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /^All /i })).toBeNull();
+  });
+
   // The label must not promise what the window cannot deliver: 365 days is a
   // bound, and an extended trial can end past it.
   it("does not offer a window that claims every trial", () => {
@@ -268,6 +374,15 @@ describe("the empty trials tab", () => {
   it("keeps the filters reachable, so the window can be widened from here", () => {
     renderEmptyTrials({ days: DEFAULT_TRIAL_WINDOW_DAYS });
     expect(screen.getByLabelText("Expiring")).toBeInTheDocument();
+  });
+
+  // Two reasons for an empty list, and only one of them is the window. With
+  // signup rows in by default, an empty `Trialing only` list usually means
+  // the tenants are one filter away.
+  it("names the status narrowing rather than the window, when narrowed", () => {
+    renderEmptyTrials({ days: DEFAULT_TRIAL_WINDOW_DAYS, status: TRIAL_STATUS_TRIALING });
+    expect(screen.getByText(/completed checkout/)).toBeInTheDocument();
+    expect(screen.getByText(/Trialing and signup/)).toBeInTheDocument();
   });
 
   // `failures` renders above the list, empty or not: "no trials in this

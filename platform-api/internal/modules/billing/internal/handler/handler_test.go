@@ -355,3 +355,60 @@ func TestSubscriptionsRejectADaysWindow(t *testing.T) {
 		t.Errorf("status = %d, want 400: %s", got.status, got.raw)
 	}
 }
+
+// `include_signup` opts in the tenants that never completed checkout. mark8ly
+// is off by default about them, so an operator with three such tenants and no
+// running trial sees an empty list unless this parameter reaches the product.
+func TestTrialsForwardTheSignupOptIn(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/trials?include_signup=true"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+	got, called := a.lastCall()
+	if !called {
+		t.Fatal("the product was never called")
+	}
+	if !strings.Contains(got.url, "include_signup=true") {
+		t.Errorf("product asked %q, want the opt-in forwarded", got.url)
+	}
+}
+
+// A widening flag, read the same way as `include_stripe_managed`: the safe
+// reading of an unrecognised value is the narrower result, so anything but
+// `true` is treated as absent rather than rejected.
+func TestTrialsTreatAnUnrecognisedSignupOptInAsAbsent(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/trials?include_signup=yes"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+	got, called := a.lastCall()
+	if !called {
+		t.Fatal("the product was never called")
+	}
+	if strings.Contains(got.url, "include_signup") {
+		t.Errorf("product asked %q; only `true` opts in", got.url)
+	}
+}
+
+// No opt-in sends none: the platform API keeps the product's own default,
+// which is the request every caller that has not asked for signup rows makes.
+func TestTrialsWithoutTheSignupOptInSendNone(t *testing.T) {
+	a := serve(t)
+	a.get("/v1/billing/trials")
+	got, called := a.lastCall()
+	if !called {
+		t.Fatal("the product was never called")
+	}
+	if strings.Contains(got.url, "include_signup") {
+		t.Errorf("product asked %q, want no opt-in when the caller named none", got.url)
+	}
+}
+
+// `include_signup` is a TRIALS parameter. On subscriptions it is an unknown
+// one, and a rejected typo is cheaper than a filter that silently did nothing.
+func TestSubscriptionsRejectTheSignupOptIn(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/subscriptions?include_signup=true"); got.status != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400: %s", got.status, got.raw)
+	}
+}
