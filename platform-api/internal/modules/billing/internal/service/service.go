@@ -50,6 +50,19 @@ type Query struct {
 	// IncludeStripeManaged opts trials managed by Stripe back in. Products
 	// exclude them by default; forwarded rather than decided here.
 	IncludeStripeManaged bool
+	// IncludeSignup opts in tenants that signed up and never completed
+	// checkout. mark8ly's Bootstrap creates every subscription as a trial in
+	// `signup`, and only a completed Stripe checkout moves it to `trialing`,
+	// so a tenant that abandons checkout stays there indefinitely — and the
+	// product excludes those rows unless asked.
+	//
+	// Independent of IncludeStripeManaged: one is about who runs the trial,
+	// the other about whether checkout ever happened. Forwarded rather than
+	// decided here, like every other scope on this type.
+	//
+	// Trials only. The subscriptions path has no signup population and never
+	// sends this, even though both reads share this type.
+	IncludeSignup bool
 	// Days is how far ahead the trials read looks, in days. Zero sends
 	// nothing, which is NOT "no window": the product then applies its own
 	// default (mark8ly's DefaultExpiryWindow, 7 days), and that default is
@@ -73,6 +86,9 @@ func (q Query) trialsPath() string {
 	params.Set("limit", strconv.Itoa(q.Limit))
 	if q.IncludeStripeManaged {
 		params.Set("include_stripe_managed", "true")
+	}
+	if q.IncludeSignup {
+		params.Set("include_signup", "true")
 	}
 	if q.Days > 0 {
 		params.Set("days", strconv.Itoa(q.Days))

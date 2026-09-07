@@ -261,3 +261,40 @@ func TestSubscriptionsNeverSendAWindow(t *testing.T) {
 		t.Errorf("asked %q, want no window on the subscriptions path", *asked["mark8ly"])
 	}
 }
+
+// The signup opt-in travels the way the Stripe-managed one does: a widening
+// flag the product is off by default about, forwarded rather than decided
+// here.
+//
+// The two are independent and neither implies the other. `include_stripe_managed`
+// is about who runs the trial; `include_signup` is about a tenant that never
+// completed checkout at all, and mark8ly's Bootstrap creates every subscription
+// in that state.
+func TestTrialsForwardTheSignupOptIn(t *testing.T) {
+	s, asked := svc(t, map[string]string{"mark8ly": mark8lyTrials})
+	if _, err := s.Trials(context.Background(), op(), Query{Limit: 100}); err != nil {
+		t.Fatalf("Trials: %v", err)
+	}
+	if bytes.Contains([]byte(*asked["mark8ly"]), []byte("include_signup")) {
+		t.Errorf("asked %q, want no signup opt-in when none was asked for", *asked["mark8ly"])
+	}
+	if _, err := s.Trials(context.Background(), op(), Query{Limit: 100, IncludeSignup: true}); err != nil {
+		t.Fatalf("Trials: %v", err)
+	}
+	if !bytes.Contains([]byte(*asked["mark8ly"]), []byte("include_signup=true")) {
+		t.Errorf("asked %q, want the opt-in forwarded", *asked["mark8ly"])
+	}
+}
+
+// Subscriptions have no signup population to opt into — `include_signup` is a
+// trials-only parameter and must not leak onto the other path just because
+// both reads share a Query type.
+func TestSubscriptionsNeverSendTheSignupOptIn(t *testing.T) {
+	s, asked := svc(t, map[string]string{"mark8ly": mark8lySubs})
+	if _, err := s.Subscriptions(context.Background(), op(), Query{Limit: 100, IncludeSignup: true}); err != nil {
+		t.Fatalf("Subscriptions: %v", err)
+	}
+	if bytes.Contains([]byte(*asked["mark8ly"]), []byte("include_signup")) {
+		t.Errorf("asked %q, want no signup opt-in on the subscriptions path", *asked["mark8ly"])
+	}
+}
