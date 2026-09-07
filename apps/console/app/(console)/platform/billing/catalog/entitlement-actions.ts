@@ -10,7 +10,13 @@ import {
   type AuditDescription,
   type AuditableRefusal,
 } from "@/lib/db/audit-repo";
-import { writeEntitlements, type EntitlementRow } from "@/lib/db/plan-catalog-repo";
+import {
+  writeEntitlements,
+  type EntitlementRow,
+  type ParityOutcome,
+} from "@/lib/db/plan-catalog-repo";
+import { isDatabaseConfigured } from "@/lib/db/tesserix";
+import { runEntitlementParityCheck } from "@/lib/billing/parity-run";
 import { fetchProductEntitlements } from "@/lib/platform-api";
 
 /**
@@ -169,6 +175,29 @@ function seedRefusal(cause: unknown): string | null {
 }
 
 /**
+ * What an unrecognised failure is called when it reaches the operator, and
+ * what it is called in the server log.
+ *
+ * The wrapper serves two actions with different subjects — a seed WRITES the
+ * matrix, a parity run COMPARES against it — and "The entitlements were not
+ * seeded." is an untrue sentence to show someone who pressed the second one.
+ * Only the vocabulary is parameterised; the capability, the audit path and the
+ * constraint mapping are the same control for both, which is why this is one
+ * wrapper with two vocabularies rather than two wrappers.
+ */
+interface FailureVocabulary {
+  /** Shown verbatim when nothing more specific is known. */
+  readonly message: string;
+  /** Names the action in the server-side log line for an unrecognised cause. */
+  readonly context: string;
+}
+
+const SEED_FAILURE: FailureVocabulary = {
+  message: NOT_SEEDED_MESSAGE,
+  context: "entitlement seed",
+};
+
+/**
  * The wrapper: one capability, one audit row, one message vocabulary.
  *
  * The capability check runs INSIDE `operation`, so a `CapabilityError` reaches
@@ -182,6 +211,7 @@ async function withEntitlementWrite<T>(
   target: string,
   run: (actor: { sub: string }) => Promise<T>,
   describe: (result: T) => AuditDescription,
+  failure: FailureVocabulary = SEED_FAILURE,
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
@@ -209,11 +239,11 @@ async function withEntitlementWrite<T>(
       // discarding it would leave nobody able to say what happened — the same
       // reasoning `withPromoWrite` logs for.
       console.error(
-        `[console] entitlement seed failed for ${target} — cause not recognised`,
+        `[console] ${failure.context} failed for ${target} — cause not recognised`,
         cause,
       );
     }
-    return { ok: false, message: refusal ?? NOT_SEEDED_MESSAGE };
+    return { ok: false, message: refusal ?? failure.message };
   }
 }
 
@@ -362,4 +392,229 @@ export async function seedEntitlementsAction(
   if (!result.ok) return result;
   revalidatePath(CATALOG_SURFACE_PATH);
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------------ *
+ * Running entitlement parity
+ * ------------------------------------------------------------------------ */
+
+const PARITY_ACTION = "billing.entitlements.parity.run";
+
+/** The audit target for a run, which is per-PRODUCT and not per-revision: the
+ *  run picks its own revision from whatever is live for the mode the product
+ *  reports, so the source is the only thing the operator chose. Prefixed so it
+ *  cannot be mistaken for a revision id in the audit viewer. */
+function parityTarget(source: CatalogSource): string {
+  return `entitlements/${source}`;
+}
+
+/**
+ * Says nothing about the database, the product or the transport. Same
+ * discipline {@link NOT_SEEDED_MESSAGE} applies: the reason is `sanitizeReason`'d
+ * but still internal text — a fetch failure naming an internal host, a `pg`
+ * error naming the role — and none of it is an operator's to read. The reason
+ * is logged server-side instead.
+ */
+const PARITY_UNRECORDABLE_MESSAGE =
+  "That check ran but could not be recorded, so it does not count as a run. Try again shortly.";
+
+/**
+ * The sentence for the case that is NOT a run at all.
+ *
+ * Deliberately different words from {@link PARITY_UNRECORDABLE_MESSAGE}: that
+ * one means the comparison happened and the row did not land, this one means
+ * the comparison never happened. Both recorded nothing, and the operator's
+ * next move differs — retry versus go and look at the product.
+ */
+const PARITY_UNATTRIBUTABLE_MESSAGE =
+  "No comparison happened, so nothing was recorded and this does not count as a run. " +
+  "The product did not answer with a matrix, or reported reading a catalog mode the console cannot file a run under.";
+
+const PARITY_FAILURE: FailureVocabulary = {
+  message: "The entitlement parity check did not run.",
+  context: "entitlement parity run",
+};
+
+/**
+ * What one operator-triggered entitlement parity run produced.
+ *
+ * Five answers, and the reason there are five rather than two is the whole
+ * point of the type. `runEntitlementParityCheck` reports "no run could be
+ * attributed" and "the row could not be written" through ONE field
+ * (`notRecorded`), because to the parity TABLE they are the same fact: no
+ * evidence. To the OPERATOR they are not, so they are split back apart here —
+ * `run === null` is the discriminator — and neither is allowed to collapse
+ * into {@link EntitlementParityResult}'s `answered`.
+ *
+ *  - `answered` — a row was written. `runOutcome` says which of `clean`,
+ *    `differences` and `not_bootstrapped` it holds; all three are the check
+ *    RUNNING and answering, exactly as `rerunParityCheckAction` treats the
+ *    price path's three, and what they found is the surface's business to
+ *    display rather than this action's to relabel as failure.
+ *  - `check-failed` — a row was written SAYING the check could not run. That
+ *    is evidence and it counts as a run; it is `ok: false` only because the
+ *    operator has something to go and fix.
+ *  - `unrecordable` — the comparison happened, the row did not land.
+ *  - `unattributable` — no comparison happened at all.
+ *  - `not-run` — about the CALLER rather than the check: the capability was
+ *    refused, or the audit trail was unavailable, so nothing was attempted.
+ *
+ * `not_bootstrapped` staying inside `answered` rather than becoming a sixth
+ * member is deliberate. It is a RECORDED fact about a revision nobody has
+ * seeded — a row exists, the window counts it — and lifting it out would put
+ * it beside two outcomes that recorded nothing, which is the confusion this
+ * type exists to prevent. It is distinguishable where it belongs: on
+ * `runOutcome`.
+ */
+export type EntitlementParityResult =
+  | {
+      readonly ok: true;
+      readonly outcome: "answered";
+      readonly runOutcome: Exclude<ParityOutcome, "failed">;
+      /** How many cells disagreed. `0` for `clean` and, per 0033, for
+       *  `not_bootstrapped` — whose findings are discarded rather than
+       *  stored. */
+      readonly differences: number;
+    }
+  | { readonly ok: false; readonly outcome: "check-failed"; readonly message: string }
+  | { readonly ok: false; readonly outcome: "unrecordable"; readonly message: string }
+  | { readonly ok: false; readonly outcome: "unattributable"; readonly message: string }
+  | { readonly ok: false; readonly outcome: "not-run"; readonly message: string };
+
+/**
+ * Compare one product's entitlements against the matrix it enforces, record
+ * the run, and audit the attempt — tesserix-home#146.
+ *
+ * # Why a server action, and why this one exists at all
+ *
+ * `runEntitlementParityCheck` shipped with #146 and had no caller. A second
+ * copy of the entitlement matrix that nothing ever checks is worse than no
+ * copy, because it displays with authority; this is what ends that.
+ *
+ * It is an operator action rather than a pass inside the nightly CronJob
+ * because it CANNOT be one. The check reaches `fetchProductEntitlements` ->
+ * `platformRequest` -> `resolvePlatformApiToken`, which resolves the
+ * OPERATOR's Zitadel token from their session. `scripts/parity-check.ts` has
+ * no session and no way to mint one — there is no machine credential in the
+ * console -> platform-api direction — so an entitlement pass added there would
+ * fail every night. The price path runs unattended because Stripe and Postgres
+ * both have machine credentials; the asymmetry is structural. What it costs is
+ * stated rather than implied: entitlement drift is detected WHEN SOMEONE
+ * LOOKS. Making it continuous needs a `client_credentials` identity for that
+ * direction, and that is filed rather than assumed.
+ *
+ * # It never seeds
+ *
+ * A `not_bootstrapped` result does not trigger {@link seedEntitlementsAction},
+ * and must never be made to. A parity check that seeded from the product and
+ * then compared against the product would agree forever by construction — it
+ * would convert the one control that can detect drift into one that cannot.
+ * Two separate operator actions, always.
+ *
+ * # The database check is here, ahead of the audited path
+ *
+ * The same reasoning `rerunParityCheckAction` gives: `auditedOperation`
+ * refuses on its own with no database, but its answer is "not saved", and the
+ * fact worth telling an operator is that a run which cannot be recorded is not
+ * a run at all. Without this, the one case where NOTHING could be written
+ * would be reported as the one case where the caller was at fault.
+ *
+ * # Gated on `billing`, and nothing writes to Stripe
+ *
+ * `publish-catalog` is not checked, for the reason `rerunParityCheckAction`
+ * states: this reads and records, and no path here reaches a Stripe write.
+ */
+export async function runEntitlementParityAction(
+  source: CatalogSource = SINGLE_SOURCE,
+): Promise<EntitlementParityResult> {
+  if (!isDatabaseConfigured()) {
+    return { ok: false, outcome: "unrecordable", message: PARITY_UNRECORDABLE_MESSAGE };
+  }
+
+  const target = parityTarget(source);
+  const result = await withEntitlementWrite(
+    target,
+    // Never throws: an unattributable attempt and an unwritable row both come
+    // back as fields on the result, which is why the audit row below can
+    // describe an attempt that recorded nothing rather than recording nothing
+    // about it.
+    () => runEntitlementParityCheck(source),
+    (attempt) => ({
+      action: PARITY_ACTION,
+      // What the attempt PRODUCED, and the first two keys are the ones that
+      // matter: `recorded` says whether a row exists in
+      // `plan_catalog_parity_runs` at all, and `unattributable` says which
+      // kind of nothing happened when it does not. An auditor asking "was
+      // this checked?" must not have to infer it from the absence of an
+      // outcome key — an attempt that could not be attributed and one that
+      // came back clean would otherwise be told apart only by what is
+      // missing, and a missing key reads as agreement for the same reason a
+      // missing row does.
+      summary: {
+        recorded: attempt.run !== null && attempt.notRecorded === null ? 1 : 0,
+        unattributable: attempt.run === null ? 1 : 0,
+        unrecordable: attempt.run !== null && attempt.notRecorded !== null ? 1 : 0,
+        // Present only when there is a run to describe, so a summary with no
+        // `outcome_*` key is unambiguously an attempt that decided nothing.
+        ...(attempt.run
+          ? {
+              [`outcome_${attempt.run.outcome}`]: 1,
+              differences: attempt.run.differences.length,
+            }
+          : {}),
+        [`source_${source}`]: 1,
+      },
+      target,
+    }),
+    PARITY_FAILURE,
+  );
+
+  // A capability refusal, or an audit trail that was unavailable — either way
+  // nothing was attempted, so there is nothing new for the surface to re-read.
+  if (!result.ok) return { ok: false, outcome: "not-run", message: result.message };
+
+  const { run, notRecorded } = result.value;
+
+  if (run === null) {
+    // No comparison happened. The reason is internal text — it can carry a
+    // product's own error message or a transport failure — so it is logged
+    // rather than shown, the same split the seed's refusals make.
+    console.error(
+      `[console] entitlement parity for ${source} could not be attributed to a mode: ${notRecorded}`,
+    );
+    return { ok: false, outcome: "unattributable", message: PARITY_UNATTRIBUTABLE_MESSAGE };
+  }
+
+  if (notRecorded !== null) {
+    // The comparison happened and its row did not land. Outranks the run's own
+    // outcome below, the same ordering `rerunParityCheckAction` takes: a
+    // `failed` row is evidence, a missing row is a gap that reads as
+    // agreement, and the worse of the two is what the operator must be told.
+    console.error(
+      `[console] entitlement parity for ${source} could not be recorded: ${notRecorded}`,
+    );
+    return { ok: false, outcome: "unrecordable", message: PARITY_UNRECORDABLE_MESSAGE };
+  }
+
+  // A row landed, so the surface has something new to read — including a
+  // `failed` run's stored, redacted reason, which is the whole point of
+  // pressing this. Re-read on every recorded outcome, not only the clean one.
+  revalidatePath(CATALOG_SURFACE_PATH);
+
+  if (run.outcome === "failed") {
+    return {
+      ok: false,
+      outcome: "check-failed",
+      // Points at the stored reason rather than restating it: the row carries
+      // the redacted text and the surface renders it.
+      message: "The check could not complete. Its reason is shown with the run below.",
+    };
+  }
+
+  return {
+    ok: true,
+    outcome: "answered",
+    runOutcome: run.outcome,
+    differences: run.differences.length,
+  };
 }
