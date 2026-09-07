@@ -87,8 +87,7 @@ func serveSlugs(t *testing.T, slugs []string, roles ...string) *api {
 	t.Cleanup(product.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: productSlug, BaseURL: product.URL, Secret: "test-secret"},
-	}), product.Client())
+		{Slug: productSlug, Services: []federation.Service{{Name: productSlug, BaseURL: product.URL, Secret: "test-secret", Endpoints: []string{"outbox"}}}}}), product.Client())
 
 	mux := http.NewServeMux()
 	verifier := auth.NewVerifier(stubParser{claims: tokenFor(roles...)}, projectID)

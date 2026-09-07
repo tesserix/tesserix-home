@@ -141,7 +141,7 @@ func (s *Service) Read(
 		path += "?" + encoded
 	}
 
-	body, err := s.fed.Get(ctx, source, path, op)
+	body, err := s.fed.GetForEndpoint(ctx, source, "onboarding", path, op)
 	if err != nil {
 		// 404 and 501 are contract statements and stay distinguishable.
 		// Everything else — 5xx, DNS, TLS, timeout — is the product failing to

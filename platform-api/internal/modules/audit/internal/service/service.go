@@ -101,6 +101,18 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, q Query) (
 	}
 
 	entries, failures := federation.FanOut(ctx, s.fed, slugs, q.path(), op,
+		// Selector{} deliberately: /admin/audit-logs is identical on every
+		// product (slugs here is Registry.Slugs(), not a declared list), and
+		// nothing in Service.Endpoints names it — it is the "endpoint every
+		// federating product serves" Service.Endpoints' own doc comment
+		// carves out, not one a service opts into. There is today no way to
+		// ask "which of this product's services answers audit-logs", so a
+		// product declaring more than one service must still resolve via
+		// soleService here — which means a future second mark8ly service
+		// WILL make this call ambiguous (ErrAmbiguousService) unless audit is
+		// also given a per-service declaration. Out of scope for
+		// tesserix/mark8ly#720: see this task's own report for why.
+		federation.Selector{},
 		func(slug string, body []byte) ([]domain.Entry, error) {
 			// Decodes the SAME field names this module emits: the upstream
 			// product endpoint does not exist yet, and one vocabulary

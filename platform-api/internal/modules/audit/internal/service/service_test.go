@@ -44,8 +44,7 @@ func TestEstateStampsEveryRowWithItsSource(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"},
-	}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	log, _ := testLogger()
 	page, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), q(""))
@@ -65,9 +64,8 @@ func TestEstateNarrowsToOneSourceWhenAsked(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"},
-		{Slug: "kora", BaseURL: srv.URL, Secret: "test-secret"},
-	}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}},
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	log, _ := testLogger()
 	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), q("mark8ly"))
@@ -98,9 +96,8 @@ func TestEstateSurfacesAFailedSourceRatherThanFailingWhole(t *testing.T) {
 	defer down.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: ok.URL, Secret: "test-secret"},
-		{Slug: "kora", BaseURL: down.URL, Secret: "test-secret"},
-	}), ok.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: ok.URL, Secret: "test-secret"}}},
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: down.URL, Secret: "test-secret"}}}}), ok.Client())
 
 	log, _ := testLogger()
 	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), q(""))
@@ -127,8 +124,7 @@ func TestEstateLogsTheUnredactedCauseOfAFederationFailure(t *testing.T) {
 	unreachable := "127.0.0.1:1"
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", BaseURL: "http://" + unreachable, Secret: "test-secret"},
-	}), &http.Client{})
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: "http://" + unreachable, Secret: "test-secret"}}}}), &http.Client{})
 
 	log, buf := testLogger()
 	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), q(""))
@@ -282,8 +278,7 @@ func TestEstateNamespacesEveryRowIdWithItsSource(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"},
-	}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	log, _ := testLogger()
 	page, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), q(""))
@@ -308,8 +303,7 @@ func TestEstateOverridesTheSourceAndIdAProductClaimsForAnother(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", BaseURL: srv.URL, Secret: "test-secret"},
-	}), srv.Client())
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	log, _ := testLogger()
 	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), q(""))
@@ -352,8 +346,7 @@ func TestEstateStillDegradesWhenAConfiguredProductFails(t *testing.T) {
 	defer down.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", BaseURL: down.URL, Secret: "test-secret"},
-	}), down.Client())
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: down.URL, Secret: "test-secret"}}}}), down.Client())
 
 	log, _ := testLogger()
 	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), q(""))
@@ -377,8 +370,7 @@ func TestEstateAsksEachProductForABoundedWindow(t *testing.T) {
 	defer srv.Close()
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"},
-	}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	log, _ := testLogger()
 	_, err := New(fed, []string{"mark8ly"}, log).

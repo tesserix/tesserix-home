@@ -32,8 +32,7 @@ func answering(t *testing.T, status int, body string) *Service {
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: koraSlug, BaseURL: srv.URL, Secret: "s"},
-	}), srv.Client())
+		{Slug: koraSlug, Services: []federation.Service{{Name: koraSlug, BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 	return New(fed, testLogger())
 }
 
@@ -115,8 +114,7 @@ func TestReadForwardsTheQueryString(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: koraSlug, BaseURL: srv.URL, Secret: "s"},
-	}), srv.Client())
+		{Slug: koraSlug, Services: []federation.Service{{Name: koraSlug, BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 
 	query := url.Values{"from": {"2026-08-01T00:00:00Z"}, "page": {"2"}, "limit": {"50"}}
 	if _, _, err := New(fed, testLogger()).Read(context.Background(), op(), query); err != nil {

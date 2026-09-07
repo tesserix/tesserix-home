@@ -141,7 +141,7 @@ func (s *Service) ListSessions(
 		path += "?" + encoded
 	}
 
-	body, err := s.fed.Get(ctx, source, path, op)
+	body, err := s.fed.GetForEndpoint(ctx, source, "onboarding", path, op)
 	if err != nil {
 		if status, ok := federation.StatusOf(err); ok {
 			switch status {

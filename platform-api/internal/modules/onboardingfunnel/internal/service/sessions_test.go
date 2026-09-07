@@ -39,8 +39,7 @@ func sessionsAnswering(t *testing.T, status int, body string) (*Service, *bytes.
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: mark8ly, BaseURL: srv.URL, Secret: "s", Endpoints: []string{"onboarding"}},
-	}), srv.Client())
+		{Slug: mark8ly, Services: []federation.Service{{Name: mark8ly, BaseURL: srv.URL, Secret: "s", Endpoints: []string{"onboarding"}}}}}), srv.Client())
 	var logged bytes.Buffer
 	return New(fed, []string{mark8ly}, slog.New(slog.NewTextHandler(&logged, nil))), &logged
 }
@@ -240,8 +239,7 @@ func TestTheNarrowedQueryReachesTheProductUnchanged(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: mark8ly, BaseURL: srv.URL, Secret: "s", Endpoints: []string{"onboarding"}},
-	}), srv.Client())
+		{Slug: mark8ly, Services: []federation.Service{{Name: mark8ly, BaseURL: srv.URL, Secret: "s", Endpoints: []string{"onboarding"}}}}}), srv.Client())
 	svc := New(fed, []string{mark8ly}, testLogger())
 
 	if _, _, err := listSessions(t, svc, url.Values{

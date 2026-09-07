@@ -30,8 +30,7 @@ func answering(t *testing.T, status int, body string) *Service {
 	}))
 	t.Cleanup(srv.Close)
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "kora", BaseURL: srv.URL, Secret: "s"},
-	}), srv.Client())
+		{Slug: "kora", Services: []federation.Service{{Name: "kora", BaseURL: srv.URL, Secret: "s"}}}}), srv.Client())
 	return New(fed, []string{"kora"}, testLogger())
 }
 

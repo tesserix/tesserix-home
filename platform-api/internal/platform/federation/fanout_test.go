@@ -37,11 +37,10 @@ func TestFanOutMergesEverySourceThatAnswered(t *testing.T) {
 	defer down.Close()
 
 	c := NewClient(NewRegistry([]Product{
-		{Slug: "mark8ly", BaseURL: ok.URL, Secret: "test-secret"},
-		{Slug: "kora", BaseURL: down.URL, Secret: "test-secret"},
-	}), ok.Client())
+		{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: ok.URL, Secret: "test-secret"}}},
+		{Slug: "kora", Services: []Service{{Name: "kora", BaseURL: down.URL, Secret: "test-secret"}}}}), ok.Client())
 
-	rows, failures := FanOut(context.Background(), c, []string{"kora", "mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+	rows, failures := FanOut(context.Background(), c, []string{"kora", "mark8ly"}, "/admin/audit-logs", operator(), Selector{}, decodeRows)
 
 	if len(rows) != 1 || rows[0].ID != "a" {
 		t.Fatalf("rows = %v, want one row from the source that answered", rows)
@@ -54,7 +53,7 @@ func TestFanOutMergesEverySourceThatAnswered(t *testing.T) {
 func TestFanOutNeverReturnsANilSlice(t *testing.T) {
 	c := NewClient(NewRegistry(nil), http.DefaultClient)
 
-	rows, failures := FanOut(context.Background(), c, nil, "/x", operator(), decodeRows)
+	rows, failures := FanOut(context.Background(), c, nil, "/x", operator(), Selector{}, decodeRows)
 
 	if rows == nil {
 		t.Error("rows must be an empty slice, never nil — a nil slice serialises as {} and defeats callers' ?? []")
@@ -70,9 +69,9 @@ func TestFanOutReportsADecodeFailureAsThatSourcesFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
-	rows, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), decodeRows)
+	rows, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), Selector{}, decodeRows)
 
 	if len(rows) != 0 {
 		t.Errorf("rows = %v, want none", rows)
@@ -89,11 +88,10 @@ func TestFanOutFailuresFollowTheOrderAsked(t *testing.T) {
 	defer down.Close()
 
 	c := NewClient(NewRegistry([]Product{
-		{Slug: "kora", BaseURL: down.URL, Secret: "test-secret"},
-		{Slug: "mark8ly", BaseURL: down.URL, Secret: "test-secret"},
-	}), down.Client())
+		{Slug: "kora", Services: []Service{{Name: "kora", BaseURL: down.URL, Secret: "test-secret"}}},
+		{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: down.URL, Secret: "test-secret"}}}}), down.Client())
 
-	_, failures := FanOut(context.Background(), c, []string{"kora", "mark8ly"}, "/x", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"kora", "mark8ly"}, "/x", operator(), Selector{}, decodeRows)
 
 	if len(failures) != 2 || failures[0].Product != "kora" || failures[1].Product != "mark8ly" {
 		t.Fatalf("failures = %v, want [kora mark8ly] in the order asked", failures)
@@ -111,10 +109,9 @@ func TestFanOutFailureDoesNotLeakTheInternalURL(t *testing.T) {
 	_ = ln.Close()
 
 	c := NewClient(NewRegistry([]Product{
-		{Slug: "mark8ly", BaseURL: "http://" + addr, Secret: "test-secret"},
-	}), &http.Client{Timeout: 2 * time.Second})
+		{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: "http://" + addr, Secret: "test-secret"}}}}), &http.Client{Timeout: 2 * time.Second})
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), Selector{}, decodeRows)
 
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
@@ -131,10 +128,9 @@ func TestFanOutFailureDoesNotLeakTheHostnameOnDNSFailure(t *testing.T) {
 	const host = "mark8ly-internal.invalid"
 
 	c := NewClient(NewRegistry([]Product{
-		{Slug: "mark8ly", BaseURL: "http://" + host + ":8080", Secret: "test-secret"},
-	}), &http.Client{Timeout: 5 * time.Second})
+		{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: "http://" + host + ":8080", Secret: "test-secret"}}}}), &http.Client{Timeout: 5 * time.Second})
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), Selector{}, decodeRows)
 
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
@@ -157,13 +153,13 @@ func TestFanOutDoesNotLeakTheCallersOwnDecodeErrorText(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
 	leaky := func(_ string, _ []byte) ([]row, error) {
 		return nil, errors.New("boom http://secret-internal.svc:9999/x")
 	}
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), leaky)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), Selector{}, leaky)
 
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
@@ -182,9 +178,9 @@ func TestFanOutFailureDoesNotLeakTheURLWhenTheRequestCannotBeBuilt(t *testing.T)
 	// net/url's parse error quotes the whole URL back at you.
 	const host = "mark8ly-internal.svc.cluster.local"
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: "http://" + host + ":8080", Secret: "test-secret"}}), http.DefaultClient)
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: "http://" + host + ":8080", Secret: "test-secret"}}}}), http.DefaultClient)
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x\x7f\x01", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x\x7f\x01", operator(), Selector{}, decodeRows)
 
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
@@ -203,9 +199,9 @@ func TestFanOutReportsANonSuccessAsItsStatusCodeAlone(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), Selector{}, decodeRows)
 
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
@@ -235,9 +231,9 @@ func TestFanOutFailureDoesNotLeakTheAddressWhenTheBodyReadFails(t *testing.T) {
 
 	host := strings.TrimPrefix(srv.URL, "http://")
 
-	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}), srv.Client())
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "test-secret"}}}}), srv.Client())
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), Selector{}, decodeRows)
 
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
@@ -254,10 +250,9 @@ func TestFailureKeepsTheUnredactedCauseForLoggingButNotForTheWire(t *testing.T) 
 	const host = "mark8ly-internal.invalid"
 
 	c := NewClient(NewRegistry([]Product{
-		{Slug: "mark8ly", BaseURL: "http://" + host + ":8080", Secret: "test-secret"},
-	}), &http.Client{Timeout: 5 * time.Second})
+		{Slug: "mark8ly", Services: []Service{{Name: "mark8ly", BaseURL: "http://" + host + ":8080", Secret: "test-secret"}}}}), &http.Client{Timeout: 5 * time.Second})
 
-	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), decodeRows)
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), Selector{}, decodeRows)
 	if len(failures) != 1 {
 		t.Fatalf("failures = %v, want one", failures)
 	}

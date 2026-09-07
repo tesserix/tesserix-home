@@ -221,7 +221,7 @@ func run(log *slog.Logger) error {
 		types := make(map[string][]string)
 		for _, slug := range cfg.Federation.Slugs() {
 			if product, ok := cfg.Federation.Get(slug); ok {
-				types[slug] = product.Entities
+				types[slug] = product.Entities()
 			}
 		}
 		entities.Register(m, entities.Config{
@@ -239,8 +239,8 @@ func run(log *slog.Logger) error {
 		entities := make(map[string][]string)
 		for _, slug := range cfg.Federation.Slugs() {
 			if product, ok := cfg.Federation.Get(slug); ok {
-				endpoints[slug] = product.Endpoints
-				entities[slug] = product.Entities
+				endpoints[slug] = product.Endpoints()
+				entities[slug] = product.Entities()
 			}
 		}
 		sources.Register(m, sources.Config{

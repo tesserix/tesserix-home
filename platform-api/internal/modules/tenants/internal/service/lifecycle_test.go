@@ -28,8 +28,7 @@ func lifecycleProduct(t *testing.T, status int, body string) (*httptest.Server, 
 func lifecycleService(t *testing.T, srv *httptest.Server) *Service {
 	t.Helper()
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"},
-	}), srv.Client())
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: srv.URL, Secret: "s", Entities: []string{"tenants"}}}}}), srv.Client())
 	return New(fed, []string{"mark8ly"}, testLogger())
 }
 

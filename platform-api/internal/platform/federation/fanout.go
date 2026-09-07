@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"sync"
 )
 
@@ -82,8 +83,16 @@ func sanitize(err error) string {
 		return "connection failed"
 	}
 
-	if errors.Is(err, ErrRequestInvalid) || errors.Is(err, ErrProductNotConfigured) {
+	if errors.Is(err, ErrRequestInvalid) || errors.Is(err, ErrProductNotConfigured) ||
+		errors.Is(err, ErrNoMatchingService) {
 		return "product misconfigured"
+	}
+	// Ambiguous, not misconfigured: the product IS configured and DOES serve
+	// this, on more than one service. A caller reaching this from FanOut
+	// asked a per-slug Get for something mark8ly's split email-template
+	// registry (#720) is the documented case of — see ErrAmbiguousService.
+	if errors.Is(err, ErrAmbiguousService) {
+		return "more than one service answers for this product"
 	}
 	// Kept apart from "product misconfigured" because it is not always
 	// config: an empty secret is, but a newline in the operator identity or a
@@ -113,12 +122,23 @@ func sanitize(err error) string {
 // Both return values are non-nil even when empty: a nil slice serialises as
 // `{}` rather than `[]`, which defeats every caller's `?? []` and has already
 // crashed a console page in this estate precisely when there was no data.
+//
+// sel is the same Selector Client.GetForEndpoint / GetForEntity take, and for
+// the same reason: `slugs` is a list of PRODUCTS, and a product configured
+// with more than one Service (tesserix/mark8ly#720) needs to know which one
+// each call is for. Pass the zero value only where the caller genuinely has
+// no such context (audit's /admin/audit-logs, which every service answers
+// identically and which nothing declares in Service.Endpoints) — everywhere
+// `slugs` itself came from SlugsImplementing(endpoint) or
+// SlugsServing(entity), pass ForEndpoint(endpoint) / ForEntity(entity) so a
+// product with more than one service resolves instead of failing.
 func FanOut[T any](
 	ctx context.Context,
 	c *Client,
 	slugs []string,
 	path string,
 	op Operator,
+	sel Selector,
 	decode func(slug string, body []byte) ([]T, error),
 ) ([]T, []Failure) {
 	type result struct {
@@ -132,7 +152,21 @@ func FanOut[T any](
 		wg.Add(1)
 		go func(i int, slug string) {
 			defer wg.Done()
-			body, err := c.Get(ctx, slug, path, op)
+			// sel resolves WITHIN each product exactly the way Client.do
+			// resolves for GetForEndpoint/GetForEntity — a zero-value sel
+			// resolves to every Service unfiltered, unchanged from before
+			// this parameter existed (and identical for a single-service
+			// product either way). It is the caller's job to pass the same
+			// endpoint or entity it used to build `slugs` in the first
+			// place (Registry.SlugsImplementing / SlugsServing), so a
+			// product declaring the endpoint on exactly one service —
+			// every case in production today — resolves the same single
+			// service it always did. A product declaring it on MORE than
+			// one (mark8ly's split email-template registry, #720) is a
+			// case this per-slug call cannot merge — see ErrAmbiguousService
+			// — and surfaces as this slug's Failure, naming FanOutServices
+			// as the way to actually read every match.
+			body, err := c.get(ctx, slug, path, op, sel)
 			if err != nil {
 				results[i] = result{err: err}
 				return
@@ -165,4 +199,83 @@ func FanOut[T any](
 		merged = append(merged, r.rows...)
 	}
 	return merged, failures
+}
+
+// ServiceResult is one service's raw answer, for FanOutServices.
+type ServiceResult struct {
+	// Service is the Service.Name that answered — NOT the product slug:
+	// FanOutServices operates within one already-named product, and a name
+	// like "platform-api" is the only thing that tells two results for the
+	// same slug apart.
+	Service string
+	Body    []byte
+	Err     error
+}
+
+// FanOutServices calls every one of slug's services matching sel, concurrently,
+// and returns one ServiceResult per match — in Service declaration order, so
+// two identical configurations produce identically ordered results.
+//
+// It is the primitive Get, Post, Put and FanOut's per-slug call all refuse to
+// be: ErrAmbiguousService is exactly those methods saying "I cannot honestly
+// answer this with one response", and this is where a caller that actually
+// wants every match, rather than a single answer, goes instead of guessing.
+// mark8ly's split email-template registry (tesserix/mark8ly#720) —
+// marketplace-api and platform-api BOTH declaring `email-templates` — is the
+// documented, legitimate case this exists for.
+//
+// The returned error is non-nil ONLY when slug itself could not be resolved
+// at all — unconfigured (ErrProductNotConfigured), or configured with no
+// service matching sel (ErrNoMatchingService). Once there is at least one
+// match, every match's own success or failure is carried on its
+// ServiceResult.Err instead, the same "degrade one source, do not fail the
+// whole read" contract FanOut keeps — a caller merging two services' rows
+// must be able to keep the one that answered even when its sibling did not.
+//
+// NOT YET WIRED INTO ANY MODULE. The emailtemplates module's List already
+// fans out with FanOut(ctx, fed, slugs, path, op, ForEndpoint("email-templates"), decode)
+// across PRODUCTS; the day mark8ly declares `email-templates` on two
+// services, that per-slug call becomes ambiguous and mark8ly's entry in
+// List's failure list reads "more than one service answers for this
+// product" until something calls FanOutServices for that slug instead and
+// merges its two ServiceResults into the page. That wiring — matching
+// domain.Row's Source/ID stamping to two SERVICES sharing one product slug —
+// is deliberately left to whoever does it (tesserix/mark8ly#720's follow-up):
+// this function's job stops at "call every match and hand back the raw
+// answers", not at deciding how a specific module's domain shape should
+// represent two services under one product slug.
+func FanOutServices(
+	ctx context.Context,
+	c *Client,
+	slug string,
+	sel Selector,
+	path string,
+	op Operator,
+) ([]ServiceResult, error) {
+	if op.ID == "" || op.Capability == "" {
+		return nil, fmt.Errorf("federation: refusing to call %s/%s without an operator", slug, path)
+	}
+	product, ok := c.reg.Get(slug)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrProductNotConfigured, slug)
+	}
+	services := product.resolve(sel)
+	if len(services) == 0 {
+		return nil, fmt.Errorf(
+			"%w: %s has no service for %s (path %s)",
+			ErrNoMatchingService, slug, sel.describe(), path)
+	}
+
+	results := make([]ServiceResult, len(services))
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		wg.Add(1)
+		go func(i int, svc Service) {
+			defer wg.Done()
+			body, err := c.callService(ctx, http.MethodGet, slug, svc, path, nil, op, nil)
+			results[i] = ServiceResult{Service: svc.Name, Body: body, Err: err}
+		}(i, svc)
+	}
+	wg.Wait()
+	return results, nil
 }

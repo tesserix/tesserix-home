@@ -18,6 +18,30 @@ import (
 // call. Tested with errors.Is so callers do not string-match.
 var ErrProductNotConfigured = errors.New("federation: product not configured")
 
+// ErrNoMatchingService is a product that IS configured, but none of whose
+// services declare the entity or endpoint the call named (see Selector).
+//
+// Distinct from ErrProductNotConfigured: that one means "we have never heard
+// of this product, or it has no services at all"; this one means "we know
+// this product, and it simply does not serve this". Collapsing them would
+// make a real over-declaration (a Selector naming something nothing declares)
+// indistinguishable from a typo'd product slug.
+var ErrNoMatchingService = errors.New("federation: no service matches")
+
+// ErrAmbiguousService is more than one of a product's services matching the
+// call's Selector.
+//
+// This is NOT always a misconfiguration — mark8ly's split email-template
+// registry (tesserix/mark8ly#720) is the documented case where two services
+// legitimately share one declaration — but Get, Post and Put are
+// single-response methods and cannot honestly answer "here are two services,
+// which one did you mean". Guessing (first match, last match, either) would
+// silently drop one owner's data, so this fails closed instead. The caller
+// wants FanOut (for a read that already merges) or FanOutServices (the
+// primitive for a caller that does not yet fan out at all) to call every
+// match and combine the answers.
+var ErrAmbiguousService = errors.New("federation: more than one service matches; call every match instead of guessing")
+
 // ErrTransport marks an error as having come from the network rather than
 // from this package's own logic.
 //
@@ -161,8 +185,34 @@ func randomNonce() (string, error) {
 }
 
 // Get performs one federated read and returns the raw body.
+//
+// Resolves with a zero-value Selector — Product.resolve's fallback, every
+// Service unfiltered — so it keeps working byte-identically for every
+// single-service product (kora, and mark8ly before it declares a second
+// service): one Service in, one Service out, same as before #720. A call
+// site that DOES know
+// what §3.2 endpoint or §3.4 entity it is reading should call GetForEndpoint
+// or GetForEntity instead, so a product configured with more than one
+// service can be resolved rather than refused.
 func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byte, error) {
-	return c.do(ctx, http.MethodGet, slug, path, nil, op, nil)
+	return c.get(ctx, slug, path, op, Selector{})
+}
+
+// GetForEndpoint is Get, resolving within the named §3.2 contract (or
+// product-own) endpoint — see Selector.ForEndpoint.
+func (c *Client) GetForEndpoint(ctx context.Context, slug, endpoint, path string, op Operator) ([]byte, error) {
+	return c.get(ctx, slug, path, op, ForEndpoint(endpoint))
+}
+
+// GetForEntity is Get, resolving within the named §3.4 entity type — see
+// Selector.ForEntity.
+func (c *Client) GetForEntity(ctx context.Context, slug, entity, path string, op Operator) ([]byte, error) {
+	return c.get(ctx, slug, path, op, ForEntity(entity))
+}
+
+// get is what Get, GetForEndpoint, GetForEntity and FanOut all share.
+func (c *Client) get(ctx context.Context, slug, path string, op Operator, sel Selector) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, slug, path, nil, op, nil, sel)
 }
 
 // ErrIdempotencyKeyRequired is returned when a write is attempted without one.
@@ -200,7 +250,32 @@ func (c *Client) Post(
 	op Operator,
 	opts PostOptions,
 ) ([]byte, error) {
-	return c.write(ctx, http.MethodPost, slug, path, body, op, opts)
+	return c.write(ctx, http.MethodPost, slug, path, body, op, opts, Selector{})
+}
+
+// PostForEndpoint is Post, resolving within the named endpoint — see
+// Selector.ForEndpoint and Get's doc comment for why a call site that knows
+// its endpoint should prefer this over Post.
+func (c *Client) PostForEndpoint(
+	ctx context.Context,
+	slug, endpoint, path string,
+	body []byte,
+	op Operator,
+	opts PostOptions,
+) ([]byte, error) {
+	return c.write(ctx, http.MethodPost, slug, path, body, op, opts, ForEndpoint(endpoint))
+}
+
+// PostForEntity is Post, resolving within the named §3.4 entity type — see
+// Selector.ForEntity.
+func (c *Client) PostForEntity(
+	ctx context.Context,
+	slug, entity, path string,
+	body []byte,
+	op Operator,
+	opts PostOptions,
+) ([]byte, error) {
+	return c.write(ctx, http.MethodPost, slug, path, body, op, opts, ForEntity(entity))
 }
 
 // Put performs one federated write to a named resource.
@@ -223,7 +298,24 @@ func (c *Client) Put(
 	op Operator,
 	opts PostOptions,
 ) ([]byte, error) {
-	return c.write(ctx, http.MethodPut, slug, path, body, op, opts)
+	return c.write(ctx, http.MethodPut, slug, path, body, op, opts, Selector{})
+}
+
+// PutForEndpoint is Put, resolving within the named endpoint — see
+// Selector.ForEndpoint. mark8ly's email-template registry (§4, PUT
+// /admin/email-templates/{key}) is exactly the endpoint two services may
+// legitimately share, which is why Put itself cannot be taught to resolve one
+// safely: a caller that reaches ErrAmbiguousService through this method is
+// the case Client.Get's docstring on that error describes, and must move to
+// a fan-out rather than pick a service here.
+func (c *Client) PutForEndpoint(
+	ctx context.Context,
+	slug, endpoint, path string,
+	body []byte,
+	op Operator,
+	opts PostOptions,
+) ([]byte, error) {
+	return c.write(ctx, http.MethodPut, slug, path, body, op, opts, ForEndpoint(endpoint))
 }
 
 // write is what Post and Put share, so the idempotency guard and the headers
@@ -234,6 +326,7 @@ func (c *Client) write(
 	body []byte,
 	op Operator,
 	opts PostOptions,
+	sel Selector,
 ) ([]byte, error) {
 	if opts.IdempotencyKey == "" {
 		return nil, fmt.Errorf("%w: %s/%s", ErrIdempotencyKeyRequired, slug, path)
@@ -242,7 +335,7 @@ func (c *Client) write(
 		"Idempotency-Key": opts.IdempotencyKey,
 		"Content-Type":    "application/json",
 	}
-	return c.do(ctx, method, slug, path, body, op, headers)
+	return c.do(ctx, method, slug, path, body, op, headers, sel)
 }
 
 // do is the one path every federated call takes.
@@ -256,6 +349,7 @@ func (c *Client) do(
 	body []byte,
 	op Operator,
 	headers map[string]string,
+	sel Selector,
 ) ([]byte, error) {
 	if op.ID == "" || op.Capability == "" {
 		return nil, fmt.Errorf("federation: refusing to call %s/%s without an operator", slug, path)
@@ -264,16 +358,58 @@ func (c *Client) do(
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrProductNotConfigured, slug)
 	}
+	// Product.resolve returns every Service for a zero-value sel — the
+	// fallback every call site not yet updated for tesserix/mark8ly#720
+	// takes. For a single-service product that is exactly one Service, and
+	// the switch below resolves it exactly as this package always has. A
+	// call site that named an endpoint or entity (GetForEndpoint,
+	// GetForEntity, …) gets filtered down to the service(s) that actually
+	// declare it instead.
+	//
+	// The 0/1/many split below is what decides whether a Selector was
+	// necessary, not resolve() — a zero-value sel on a multi-service product
+	// reaches the same "more than one, no context" fail-closed branch a
+	// mismatched endpoint/entity would.
+	services := product.resolve(sel)
+	switch len(services) {
+	case 0:
+		return nil, fmt.Errorf(
+			"%w: %s has no service for %s (path %s)",
+			ErrNoMatchingService, slug, sel.describe(), path)
+	case 1:
+		// svc set below.
+	default:
+		return nil, fmt.Errorf(
+			"%w: %s has %d services for %s (path %s)",
+			ErrAmbiguousService, slug, len(services), sel.describe(), path)
+	}
+	return c.callService(ctx, method, slug, services[0], path, body, op, headers)
+}
 
+// callService is the transport step every resolved call ends at, whether
+// resolution found exactly one service (do, above) or FanOutServices is
+// calling several matches one at a time. Split out of do so the two share the
+// exact same request-building, signing and response handling — the one thing
+// this package cannot afford to have drift between a single-service call and
+// a fanned-out one is what counts as success.
+func (c *Client) callService(
+	ctx context.Context,
+	method, slug string,
+	svc Service,
+	path string,
+	body []byte,
+	op Operator,
+	headers map[string]string,
+) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, product.BaseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, svc.BaseURL+path, reader)
 	if err != nil {
 		return nil, fmt.Errorf("federation: building request for %s: %w: %w", slug, ErrRequestInvalid, err)
 	}
-	if err := c.sign(req, product.Secret, op, body); err != nil {
+	if err := c.sign(req, svc.Secret, op, body); err != nil {
 		return nil, fmt.Errorf("federation: signing request for %s: %w: %w", slug, ErrSigning, err)
 	}
 	req.Header.Set("Accept", "application/json")

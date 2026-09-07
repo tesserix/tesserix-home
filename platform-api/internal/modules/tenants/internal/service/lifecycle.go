@@ -83,7 +83,10 @@ func (s *Service) lifecycle(
 		return LifecycleResult{}, fmt.Errorf("tenants: encoding %s request: %w", verb, err)
 	}
 
-	raw, err := s.fed.Post(ctx, slug,
+	// PostForEntity, not Post: s.slugs (checked above) came from
+	// SlugsServing("tenants"), so this write is scoped to the same entity
+	// type that filtered the product in the first place.
+	raw, err := s.fed.PostForEntity(ctx, slug, "tenants",
 		"/admin/tenants/"+productID+"/"+verb, body, op,
 		federation.PostOptions{IdempotencyKey: idempotencyKey})
 	if err != nil {

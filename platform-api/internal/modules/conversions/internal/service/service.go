@@ -118,7 +118,7 @@ func (s *Service) Read(
 	// about a DIFFERENT person and answer confidently about them.
 	path := productPath + "?" + url.Values{"email": {email}}.Encode()
 
-	body, err := s.fed.Get(ctx, source, path, op)
+	body, err := s.fed.GetForEndpoint(ctx, source, "conversions", path, op)
 	if err != nil {
 		// 404 and 501 are contract statements and stay distinguishable.
 		// Everything else — 5xx, 401, DNS, TLS, timeout — is the product

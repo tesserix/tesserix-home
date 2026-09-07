@@ -105,6 +105,9 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, q Query) (
 	totals := make(map[string]int, len(slugs))
 
 	items, failures := federation.FanOut(ctx, s.fed, slugs, q.path(), op,
+		// slugs came from SlugsImplementing("inbox") — see FanOut's doc
+		// comment on why this must be the same endpoint.
+		federation.ForEndpoint("inbox"),
 		func(slug string, body []byte) ([]domain.Item, error) {
 			// §3.2's envelope is `{items, total}` — NOT §4.1's
 			// `{data, pagination}`. The inbox is the one contract endpoint

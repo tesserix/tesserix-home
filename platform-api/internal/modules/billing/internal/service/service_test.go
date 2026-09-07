@@ -36,7 +36,7 @@ func svc(t *testing.T, bodies map[string]string) (*Service, map[string]*string) 
 			_, _ = w.Write([]byte(b))
 		}))
 		t.Cleanup(srv.Close)
-		products = append(products, federation.Product{Slug: slug, BaseURL: srv.URL, Secret: "s"})
+		products = append(products, federation.Product{Slug: slug, Services: []federation.Service{{Name: slug, BaseURL: srv.URL, Secret: "s", Endpoints: []string{"billing"}}}})
 		slugs = append(slugs, slug)
 	}
 	fed := federation.NewClient(federation.NewRegistry(products), nil)
@@ -188,9 +188,8 @@ func TestOneFailedProductDoesNotLoseTheOthers(t *testing.T) {
 	t.Cleanup(good.Close)
 
 	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
-		{Slug: "mark8ly", BaseURL: good.URL, Secret: "s"},
-		{Slug: "other", BaseURL: broken.URL, Secret: "s"},
-	}), nil)
+		{Slug: "mark8ly", Services: []federation.Service{{Name: "mark8ly", BaseURL: good.URL, Secret: "s", Endpoints: []string{"billing"}}}},
+		{Slug: "other", Services: []federation.Service{{Name: "other", BaseURL: broken.URL, Secret: "s", Endpoints: []string{"billing"}}}}}), nil)
 	page, err := New(fed, []string{"mark8ly", "other"}, testLogger()).
 		Subscriptions(context.Background(), op(), Query{Limit: 100})
 	if err != nil {
