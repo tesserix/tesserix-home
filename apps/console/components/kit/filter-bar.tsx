@@ -17,6 +17,23 @@ export interface FilterDescriptor {
   label: string;
   type: "select" | "search";
   options?: { value: string; label: string }[];
+  /**
+   * The option that is in effect when the param is absent — for a select whose
+   * "unset" state is a real, narrow scope rather than "no filter at all".
+   *
+   * Billing → Trials is the case this exists for: the product applies a 7-day
+   * expiry window whether or not anyone asked, so there IS no unfiltered
+   * state. A descriptor that names a default renders that option as selected
+   * and drops the "All …" item below, because choosing it could only clear the
+   * param and land back on the same default — an option the surface cannot
+   * honour, which is the invisible-scope bug that filter exists to fix.
+   *
+   * It changes DISPLAY only. The URL still carries nothing while the default
+   * is in effect, so the value stays out of `filtersToQuery`, out of
+   * `hasActiveFilter` (a default nobody chose is not something to clear), and
+   * the surface applies the same default server-side when it reads the query.
+   */
+  defaultValue?: string;
 }
 
 export type FilterValues = Record<string, string>;
@@ -300,14 +317,16 @@ export function FilterBar({ descriptors, values, onChange, onClear }: FilterBarP
         ) : (
           <Select
             key={descriptor.key}
-            value={values[descriptor.key] || ANY}
+            value={values[descriptor.key] || descriptor.defaultValue || ANY}
             onValueChange={(next) => onChange(descriptor.key, next === ANY ? "" : next)}
           >
             <SelectTrigger size="sm" className="w-44" aria-label={descriptor.label}>
               <SelectValue placeholder={descriptor.label} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ANY}>{`All ${descriptor.label.toLowerCase()}`}</SelectItem>
+              {descriptor.defaultValue === undefined ? (
+                <SelectItem value={ANY}>{`All ${descriptor.label.toLowerCase()}`}</SelectItem>
+              ) : null}
               {(descriptor.options ?? []).map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
