@@ -156,14 +156,27 @@ describe("DraftEditor", () => {
   });
 
   it("states that a change applies to new subscriptions only, and existing subscribers stay on their Price", () => {
-    // Spec §6's own closing statement (experiment-settled, `[V]`): "a price
-    // change applies to new subscriptions only. Existing subscribers stay
-    // on the Price object they were created against until something
-    // migrates them deliberately, which is not in scope."
+    // The mechanism is spec §6's own experiment-settled statement (`[V]`):
+    // "a price change applies to new subscriptions only. Existing
+    // subscribers stay on the Price object they were created against."
     renderEditor();
     expect(
       screen.getByText(/new subscriptions only.*stay on the price they were created against/i),
     ).toBeInTheDocument();
+  });
+
+  it("reads as a decided policy, not as a feature still to be built", () => {
+    // tesserix-home#582: §6's closing clause ("until something migrates them
+    // deliberately, which is not in scope") was quoted here verbatim and read
+    // as NOT BUILT YET. Grandfathering was decided on 2026-09-07, and the
+    // note must now say so — the test of the fix is that someone who has
+    // never read #582 can tell from this surface that publishing a price
+    // moves nobody onto it.
+    renderEditor();
+    const note = screen.getByText(/new subscriptions only/i);
+    expect(note).toHaveTextContent(/deliberate policy/i);
+    expect(note).toHaveTextContent(/publishing a price moves nobody onto it/i);
+    expect(note).not.toHaveTextContent(/out of scope/i);
   });
 
   it("never renders a 'reprices existing subscribers' or 'next renewal' warning — regression guard", () => {

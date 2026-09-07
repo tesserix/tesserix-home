@@ -147,25 +147,44 @@ function magnitudeWarning(published: number | null, draft: number): string | nul
 }
 
 /**
- * The one thing an operator needs told about who a publish affects — spec
- * §6's own closing statement, quoted rather than paraphrased so this stays
- * traceable to the experiment-settled source: "a price change applies to
- * new subscriptions only. Existing subscribers stay on the Price object
- * they were created against until something migrates them deliberately,
- * which is not in scope." A constant, not a per-cell function: §6 (`[V]`,
- * settled by sandbox experiment, not inference) establishes this holds for
- * EVERY amount change — there is no in-place path at all, so there is
- * nothing left to branch on per cell. See this file's header for why a
- * per-cell classification used to exist here, and why it was wrong.
+ * The one thing an operator needs told about who a publish affects.
+ *
+ * # It states a policy, and used to state a gap
+ *
+ * The mechanism comes from spec §6 (`[V]`, settled by sandbox experiment, not
+ * inference): "a price change applies to new subscriptions only. Existing
+ * subscribers stay on the Price object they were created against until
+ * something migrates them deliberately, which is not in scope." This note
+ * quoted that closing clause verbatim, and the quote read as NOT BUILT YET —
+ * which is what tesserix-home#582 was filed about. §6 left the question open;
+ * 2026-09-07 closed it: grandfathering is the decided policy, taken against a
+ * measured zero subscribers and a deliberately-test Stripe key, to be
+ * revisited when either of those changes (mark8ly#371, mark8ly#703).
+ *
+ * So the wording below states the decision rather than the absence, and no
+ * longer tracks §6 word for word. Nothing about the MECHANISM changed — §6 is
+ * still the source for "there is no in-place amount edit at all" — only the
+ * status of the clause §6 could not answer.
+ *
+ * A constant, not a per-cell function: §6 establishes this holds for EVERY
+ * amount change — there is no in-place path at all, so there is nothing left
+ * to branch on per cell. See this file's header for why a per-cell
+ * classification used to exist here, and why it was wrong.
  *
  * Rendered ONCE, at the {@link DraftEditor} surface level — not once per
  * cell. Review 2026-08-28: spec §6 asks the SURFACE to say this, not every
  * cell; a full catalog is 78 amount cells, and 78 repetitions of a safety
  * statement is how a safety statement stops being read. Undercutting the
  * very ruling this note exists to implement.
+ *
+ * It still does not claim to know WHICH or HOW MANY subscribers exist —
+ * §6's "Do not widen it" governs the read client, and this file reads no
+ * Subscription. The parity surface states the same boundary from its own
+ * side (`observation-strip.tsx`), because a green window is the other place
+ * this fact is silently assumed away.
  */
 const SUBSCRIBER_SAFETY_NOTE =
-  "This applies to new subscriptions only. Existing subscribers stay on the Price they were created against until something migrates them deliberately (out of scope here).";
+  "This applies to new subscriptions only. Existing subscribers stay on the Price they were created against and go on paying the amount it carries — that is the deliberate policy here, not a migration step still to be built. Publishing a price moves nobody onto it.";
 
 interface AmountCellProps {
   readonly revisionId: string;

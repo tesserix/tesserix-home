@@ -46,6 +46,27 @@ import { readCatalogRows, readLivePublication } from "@/lib/db/plan-catalog-repo
  * breaking change and belongs behind `/api/v2/plan-catalog`, not a silent
  * edit here — see the estate's other versioned surfaces for the same rule.
  *
+ * # `unit_amount_minor` governs NEW subscriptions
+ *
+ * It is what a subscription CREATED from this revision is charged. It is not
+ * what everyone on the plan pays, and reading it that way is the whole reason
+ * this section exists. A Stripe subscription is bound to the Price object it
+ * was created against, and an amount change mints a new Price — so publishing
+ * one leaves every existing subscriber on the old amount indefinitely.
+ *
+ * That is a DECISION, not a gap: grandfathering was chosen deliberately on
+ * 2026-09-07 (tesserix-home#582), and there is no migration this console can
+ * be waiting for a consumer to trigger. A consumer that needs to know what a
+ * given subscriber is being charged must ask Stripe about that subscription;
+ * this response cannot answer it and does not try to.
+ *
+ * NO FIELD SAYS THIS, on purpose — the paragraph above is the whole
+ * mechanism. Adding a field is the safe kind of change (see the rule above),
+ * which is exactly why the omission has to be deliberate: nothing in this
+ * response identifies a subscription, so no consumer could branch on such a
+ * flag, and a flag nobody can act on only invites a branch nobody can
+ * implement.
+ *
  * `published_by` is DELIBERATELY EXCLUDED. It names an operator, and this
  * response crosses a repository boundary into a product's runtime path — an
  * operator's identity has no business leaving this database. It remains

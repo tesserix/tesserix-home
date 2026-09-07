@@ -23,6 +23,27 @@
  * by a human, not an exception that aborts the run and leaves the window with
  * a hole in it.
  *
+ * # What a clean result does not mean
+ *
+ * The two sides of this comparison are the CATALOG and Stripe PRICE OBJECTS.
+ * No Subscription is read here or anywhere below it — `stripe-read.ts`
+ * declares one Price-listing method and no other, and #579 owns that scope;
+ * this module is not the place to widen it. So "clean" means the catalog and
+ * Stripe agree about what a price IS, and says nothing whatever about what an
+ * existing subscriber is being charged: a Stripe subscription stays bound to
+ * the Price object it was created against, and an amount change mints a new
+ * Price, so a published increase leaves every existing subscriber where they
+ * were.
+ *
+ * That divergence is the DECIDED policy — grandfathering, taken deliberately
+ * on 2026-09-07 (tesserix-home#582) — and not drift this comparator is
+ * failing to catch. Which is precisely why it must not start reporting one:
+ * a difference emitted for a subscriber who is correctly grandfathered would
+ * make every run non-clean forever, and the observation window is the
+ * evidence #327 revokes a Stripe write key on. The fix for the ambiguity is
+ * that the surfaces reading this now STATE the boundary
+ * (`observation-strip.tsx`), not that the comparator starts guessing at it.
+ *
  * # The shape asymmetry, which is the whole difficulty
  *
  * The catalog holds 78 amounts across only 42 `lookup_key`s. A `developed`

@@ -50,6 +50,18 @@ import {
  * key on the strength of it. Removing exactly this class of duplication is why
  * #326 exists.
  *
+ * # What the recorded outcome is evidence of
+ *
+ * `clean` here means the two things this function reads — the catalog and
+ * Stripe's Prices — agreed. It is not a statement about subscribers: nothing
+ * on this path reads a Subscription (see `parity.ts`'s "What a clean result
+ * does not mean", and #579 for why the read client's surface stays that
+ * narrow). A price change that no existing subscriber was moved onto is
+ * grandfathering working as decided (tesserix-home#582), and it records
+ * `clean` — correctly. The console surface that renders these rows says so
+ * out loud; this runner does not need a new outcome for it, and must not
+ * acquire one.
+ *
  * # Where the runners legitimately differ, and why that is not here
  *
  * At the WRITE, and only at the write. `recordParityRun` is the one failure
