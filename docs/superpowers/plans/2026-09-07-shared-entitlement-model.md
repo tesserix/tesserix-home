@@ -155,7 +155,9 @@ git commit -m "feat(billing): a versioned entitlement per plan and feature (#146
 **Files:**
 - Create: `services/marketplace-api/internal/handlers/platformadmin/billing_entitlements.go`
 - Create: `services/marketplace-api/internal/handlers/platformadmin/billing_entitlements_test.go`
-- Modify: `services/marketplace-api/cmd/marketplace-api/main.go` (register the handler beside the other platformadmin handlers)
+- Modify: `services/marketplace-api/internal/handlers/platformadmin/routes.go` (mount the handler; add `Deps.CatalogMode`)
+- Modify: `services/marketplace-api/cmd/marketplace-api/main.go` — **TWO `Deps{}` sites**, around lines 2455 and 2607. Wiring one and not the other leaves a binary path serving the wrong mode.
+- Modify: `services/marketplace-api/internal/plangate/matrix.go` (+ its test) — **an exported `AllPlans()` is unavoidable.** `featureMatrix` is unexported and there is no other honest way to get its key set; a hard-coded four-name slice would break the derive rule at exactly the level this task is about. Membership must come from `featureMatrix`; a public plan enum may supply ORDER only.
 
 **Interfaces:**
 - Produces: `GET /admin/billing/entitlements` returning
