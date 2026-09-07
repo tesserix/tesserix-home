@@ -74,3 +74,118 @@ describe("0040_operator_capabilities.sql", () => {
     }
   });
 });
+
+/**
+ * The same claim for 0051_promo_codes_scoping.sql, and a slightly harder one.
+ *
+ * 0040 is two `ADD COLUMN IF NOT EXISTS`es and nothing else. 0051 also adds
+ * four named CHECKs, and Postgres has no `ADD CONSTRAINT IF NOT EXISTS` — so
+ * its re-runnability rests on the `DROP CONSTRAINT IF EXISTS` / `ADD
+ * CONSTRAINT` pair, which is a different mechanism from the one 0040 proves and
+ * therefore needs its own test rather than a note saying it follows the same
+ * pattern. Written without it, the second application fails with
+ * `constraint "promo_codes_allowed_plans_are_known_plans" ... already exists`
+ * and wedges every migration after 0051.
+ *
+ * 0046 is loaded first because it creates `promo_codes`, the table 0051 alters.
+ */
+describe("0051_promo_codes_scoping.sql", () => {
+  it("applies cleanly onto a database that already has its effect", async () => {
+    const db = new PGlite();
+
+    try {
+      await db.exec(readMigration("0046_promo_codes.sql"));
+
+      const migration = readMigration("0051_promo_codes_scoping.sql");
+      await db.exec(migration);
+      await expect(db.exec(migration)).resolves.toBeDefined();
+
+      // Types asserted, not just presence: `ADD COLUMN IF NOT EXISTS` skips on
+      // the column NAME alone, so it would no-op over a pre-existing
+      // `allowed_plans` of the wrong type. 0051's header says the file claims
+      // re-runnability and NOT convergence; this is where that distinction is
+      // visible.
+      const columns = await db.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(
+        `SELECT column_name, data_type, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_name = 'promo_codes'
+            AND column_name IN ('allowed_plans', 'annual_only')
+          ORDER BY column_name`,
+      );
+
+      expect(columns.rows).toEqual([
+        {
+          column_name: "allowed_plans",
+          data_type: "ARRAY",
+          is_nullable: "YES",
+          column_default: null,
+        },
+        {
+          column_name: "annual_only",
+          data_type: "boolean",
+          is_nullable: "NO",
+          column_default: "false",
+        },
+      ]);
+
+      // Each CHECK survives the drop-and-add exactly once. A count would pass
+      // on a re-run that dropped a constraint and failed to re-add it, so the
+      // NAMES are asserted — and 0046's own are listed alongside, which is the
+      // assertion that 0051's `DROP CONSTRAINT IF EXISTS` did not reach past
+      // its own four.
+      const checks = await db.query<{ conname: string }>(
+        `SELECT conname FROM pg_constraint
+          WHERE conrelid = 'promo_codes'::regclass AND contype = 'c'
+          ORDER BY conname`,
+      );
+      expect(checks.rows.map((r) => r.conname)).toEqual([
+        "promo_codes_allowed_plans_are_known_plans",
+        "promo_codes_allowed_plans_has_no_duplicates",
+        "promo_codes_allowed_plans_has_no_null_elements",
+        "promo_codes_allowed_plans_is_not_empty",
+        "promo_codes_code_has_no_whitespace",
+        "promo_codes_code_is_upper_case",
+        "promo_codes_discount_amount_off_is_positive",
+        "promo_codes_discount_currency_accompanies_amount_off",
+        "promo_codes_discount_currency_is_lowercase_iso_4217",
+        "promo_codes_discount_duration_is_a_stripe_duration",
+        "promo_codes_discount_is_percent_off_xor_amount_off",
+        "promo_codes_discount_months_iff_repeating",
+        "promo_codes_discount_months_is_positive",
+        "promo_codes_discount_percent_off_is_in_range",
+        "promo_codes_discount_terms_are_all_or_nothing",
+        "promo_codes_has_at_least_one_effect",
+        "promo_codes_max_redemptions_is_positive",
+        "promo_codes_source_is_a_known_source",
+        "promo_codes_trial_extension_is_positive",
+        "promo_codes_validity_window_is_ordered",
+      ]);
+
+      // A row already present when 0051 lands keeps the unscoped meaning, and
+      // the constraints still bite after the SECOND application — the case a
+      // drop-without-re-add would pass silently.
+      await db.query(
+        `INSERT INTO promo_codes (source, code, trial_extension_days, created_by)
+         VALUES ('mark8ly', 'PREEXISTING', 30, 'operator@tesserix.app')`,
+      );
+      const existing = await db.query<{ allowed_plans: unknown; annual_only: boolean }>(
+        "SELECT allowed_plans, annual_only FROM promo_codes WHERE code = 'PREEXISTING'",
+      );
+      expect(existing.rows[0]).toEqual({ allowed_plans: null, annual_only: false });
+
+      await expect(
+        db.query("UPDATE promo_codes SET allowed_plans = '{}' WHERE code = 'PREEXISTING'"),
+      ).rejects.toThrow(/promo_codes_allowed_plans_is_not_empty/);
+      await expect(
+        db.query("UPDATE promo_codes SET allowed_plans = '{prro}' WHERE code = 'PREEXISTING'"),
+      ).rejects.toThrow(/promo_codes_allowed_plans_are_known_plans/);
+    } finally {
+      await db.close();
+    }
+  });
+});

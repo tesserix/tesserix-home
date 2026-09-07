@@ -57,6 +57,7 @@ const {
   recordStripeCoupon,
   readStripeCoupons,
   DEFAULT_PROMO_CODE_SOURCE,
+  PROMO_CODE_PLANS,
 } = await import("./promo-codes-repo");
 
 type Discount = import("./promo-codes-repo").PromoCodeDiscount;
@@ -70,6 +71,20 @@ const MIGRATION_PATH = path.resolve(
   "../../../web/db/migrations/0046_promo_codes.sql",
 );
 
+/**
+ * 0051 adds the CAMPAIGN SCOPE columns (`allowed_plans`, `annual_only`) to the
+ * table 0046 created, so this file loads BOTH. It is not optional context: the
+ * repo's single `PROMO_CODE_COLUMNS` list now names them, so every statement in
+ * this suite — including the ones that have nothing to do with scoping — fails
+ * with `column "allowed_plans" does not exist` against 0046 alone. That
+ * coupling is the point of a shared column list and is worth meeting here
+ * rather than in production.
+ */
+const SCOPING_MIGRATION_PATH = path.resolve(
+  __dirname,
+  "../../../web/db/migrations/0051_promo_codes_scoping.sql",
+);
+
 const ACTOR = "operator@tesserix.app";
 
 let db: PGlite;
@@ -81,6 +96,7 @@ beforeAll(async () => {
   // is itself worth knowing — the definitions are a standalone table, not
   // something wired into the plan catalog's revision graph.
   await db.exec(readFileSync(MIGRATION_PATH, "utf-8"));
+  await db.exec(readFileSync(SCOPING_MIGRATION_PATH, "utf-8"));
 });
 
 afterAll(async () => {
@@ -194,6 +210,11 @@ describe("round trip", () => {
     expect(created.maxRedemptions).toBeNull();
     // Terms absent is a trial-extension-only code, not an incomplete one.
     expect(created.discount).toBeNull();
+    // Unscoped is the default, and NULL — not `[]` — is how it is spelled.
+    // Asserted here rather than only in the scoping block below because this is
+    // the test a later `NOT NULL DEFAULT '{}'` would have to get past.
+    expect(created.allowedPlans).toBeNull();
+    expect(created.annualOnly).toBe(false);
     expect(created.isActive).toBe(true);
     expect(Date.parse(created.validFrom)).toBeGreaterThanOrEqual(before - 1000);
   });
@@ -645,6 +666,209 @@ describe("constraints", () => {
         created_by: ACTOR,
       }),
     ).rejects.toThrow(/promo_codes_source_is_a_known_source/);
+  });
+});
+
+describe("campaign scope (0051)", () => {
+  it("stores a scoped code and reads the scope back as the closed vocabulary", async () => {
+    // Round-tripped THROUGH POSTGRES rather than compared against a second
+    // hand-written expectation, per this file's opening argument: the claim is
+    // that a `readonly PromoCodePlan[]` survives being written to a `text[]`
+    // and parsed back by the driver, and only the engine plus the driver can
+    // say that. 0046's `btrim` bug was found exactly this way.
+    const created = await createPromoCode({
+      code: "PROANNUAL",
+      discount: PERCENT_OFF,
+      allowedPlans: ["pro"],
+      annualOnly: true,
+      createdBy: ACTOR,
+    });
+
+    expect(created.allowedPlans).toEqual(["pro"]);
+    expect(created.annualOnly).toBe(true);
+    expect(await readPromoCodeByCode("proannual")).toEqual(created);
+
+    // …and the raw column really is an array, not a string the driver happened
+    // to hand back unparsed. `PROMO_CODE_PLANS` is spelled out because the
+    // whole vocabulary must be storable in one row.
+    const wide = await createPromoCode({
+      code: "ALLTHREE",
+      trialExtensionDays: 7,
+      allowedPlans: [...PROMO_CODE_PLANS],
+      createdBy: ACTOR,
+    });
+    expect(wide.allowedPlans).toEqual(["starter", "studio", "pro"]);
+    const { rows } = await db.query<{ n: number }>(
+      "SELECT cardinality(allowed_plans)::int AS n FROM promo_codes WHERE code = 'ALLTHREE'",
+    );
+    expect(rows[0].n).toBe(3);
+  });
+
+  it("keeps an existing unscoped code unscoped — 0051 backfills nothing", async () => {
+    // `SAVEOFFER20OFF6MONTHS` is live and correctly unscoped, and NULL is its
+    // right value rather than a placeholder awaiting one. The migration is
+    // applied to a table that already holds rows, so this is the shape of the
+    // production event.
+    await createPromoCode({ code: "PREEXISTING", trialExtensionDays: 30, createdBy: ACTOR });
+    await db.exec(readFileSync(SCOPING_MIGRATION_PATH, "utf-8"));
+
+    const found = await readPromoCodeByCode("PREEXISTING");
+    expect(found?.allowedPlans).toBeNull();
+    expect(found?.annualOnly).toBe(false);
+  });
+
+  it("refuses the empty array rather than quietly writing NULL", async () => {
+    // THE DECISION THIS TEST PINS. `{}` and NULL are the same fact to
+    // mark8ly's redeemer — its plan check is guarded by
+    // `len(AllowedPlans) > 0` — so normalising `[]` to NULL here would be
+    // harmless AT REDEMPTION and is still wrong: an empty array reaching the
+    // repo is a caller bug, and the author of the form that produced it far
+    // more likely meant "no plans" than "all plans". Writing NULL would ship
+    // the WIDEST possible scope for a code somebody believed they had
+    // narrowed, silently. So it goes to the database and is refused by name.
+    await expect(
+      createPromoCode({
+        code: "EMPTYSCOPE",
+        trialExtensionDays: 7,
+        allowedPlans: [],
+        createdBy: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_allowed_plans_is_not_empty/);
+
+    expect(await readPromoCodeByCode("EMPTYSCOPE")).toBeNull();
+  });
+
+  it("refuses an unknown plan, a NULL element and a duplicate", async () => {
+    // Through the REPO for the unknown plan, since TypeScript is the only thing
+    // stopping a caller that came from JSON: `promo-actions.ts` will validate,
+    // and this is what makes the database the backstop rather than the only
+    // stated rule.
+    await expect(
+      createPromoCode({
+        code: "TYPO",
+        trialExtensionDays: 7,
+        // @ts-expect-error `prro` is exactly the typo the closed set exists to
+        // catch — accepted by free text, rendering as scoped, redeeming as
+        // nothing.
+        allowedPlans: ["prro"],
+        createdBy: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_allowed_plans_are_known_plans/);
+
+    // A NULL element trips BOTH the containment rule and the no-nulls rule —
+    // array containment does not treat NULL as equal to anything — and
+    // Postgres reports whichever it reaches first. Asserted as the union, so
+    // this does not become a test about constraint evaluation order.
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "NULLELEM",
+        trial_extension_days: 7,
+        allowed_plans: ["pro", null],
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(
+      /promo_codes_allowed_plans_(has_no_null_elements|are_known_plans)/,
+    );
+
+    // `{pro,pro}` scopes to what `{pro}` scopes to, and makes any surface
+    // rendering "2 plans" wrong.
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "DUPEPLAN",
+        trial_extension_days: 7,
+        allowed_plans: ["pro", "pro"],
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_allowed_plans_has_no_duplicates/);
+  });
+
+  it("refuses a NULL annual_only — the column is NOT NULL and false is a meaning", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "NULLANNUAL",
+        trial_extension_days: 7,
+        annual_only: null,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/annual_only/);
+  });
+
+  it("re-scopes and un-scopes through updatePromoCode", async () => {
+    // The scope IS updatable, unlike the discount terms, because Stripe holds
+    // no copy of it to diverge from: the Coupon knows about money and nothing
+    // about plans.
+    const created = await createPromoCode({
+      code: "RESCOPE",
+      discount: PERCENT_OFF,
+      allowedPlans: ["starter"],
+      createdBy: ACTOR,
+    });
+
+    const narrowed = await updatePromoCode(created.id, {
+      allowedPlans: ["studio", "pro"],
+      annualOnly: true,
+    });
+    expect(narrowed?.allowedPlans).toEqual(["studio", "pro"]);
+    expect(narrowed?.annualOnly).toBe(true);
+
+    // `undefined` leaves the scope alone — the same distinction
+    // `maxRedemptions` relies on, and the one a form that posts every field
+    // every time would collapse.
+    const untouched = await updatePromoCode(created.id, { trialExtensionDays: 3 });
+    expect(untouched?.allowedPlans).toEqual(["studio", "pro"]);
+    expect(untouched?.annualOnly).toBe(true);
+
+    // `null` CLEARS it, which widens the code back to every plan.
+    const widened = await updatePromoCode(created.id, { allowedPlans: null, annualOnly: false });
+    expect(widened?.allowedPlans).toBeNull();
+    expect(widened?.annualOnly).toBe(false);
+  });
+
+  it("cannot update the scope to an empty array either", async () => {
+    // The write path is a dynamic SET rather than the INSERT's fixed VALUES
+    // list, so it is a genuinely different statement and the constraint has to
+    // be met on both.
+    const created = await createPromoCode({
+      code: "NOEMPTYUPDATE",
+      trialExtensionDays: 7,
+      allowedPlans: ["pro"],
+      createdBy: ACTOR,
+    });
+    await expect(updatePromoCode(created.id, { allowedPlans: [] })).rejects.toThrow(
+      /promo_codes_allowed_plans_is_not_empty/,
+    );
+    expect((await readPromoCodeByCode("NOEMPTYUPDATE"))!.allowedPlans).toEqual(["pro"]);
+  });
+
+  it("surfaces a row the constraints should have made impossible, rather than rendering it", async () => {
+    // `toAllowedPlans` throws on `[]` and on an unknown element instead of
+    // repairing either, and the repair is the tempting bug: coercing `[]` to
+    // null would read a constraint-violating row back as an ordinary unscoped
+    // code, and dropping an unrecognised element would WIDEN the scope of a
+    // code nobody widened. Reachable only with the constraints gone, which is
+    // exactly the state worth being loud about.
+    await createPromoCode({ code: "TAMPERED", trialExtensionDays: 7, createdBy: ACTOR });
+    await db.exec(
+      "ALTER TABLE promo_codes DROP CONSTRAINT promo_codes_allowed_plans_is_not_empty",
+    );
+    await db.query("UPDATE promo_codes SET allowed_plans = '{}' WHERE code = 'TAMPERED'");
+
+    await expect(readPromoCodeByCode("TAMPERED")).rejects.toThrow(/empty allowed_plans/);
+
+    // Restore, so this test does not leak a missing constraint into the rest of
+    // the file — `beforeEach` truncates ROWS, and the schema damage this test
+    // does deliberately outlives it. The offending row goes first: `ADD
+    // CONSTRAINT` validates what is already stored, so re-adding the rule over
+    // the row that violates it fails here rather than in whichever later test
+    // happened to run next.
+    await db.query("DELETE FROM promo_codes WHERE code = 'TAMPERED'");
+    await db.exec(
+      `ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_allowed_plans_is_not_empty
+         CHECK (allowed_plans IS NULL OR cardinality(allowed_plans) > 0)`,
+    );
   });
 });
 

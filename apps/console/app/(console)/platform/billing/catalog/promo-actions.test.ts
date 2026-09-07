@@ -110,6 +110,8 @@ const DEFINITION: PromoCodeRow = {
   validFrom: "2026-09-01T00:00:00.000Z",
   validUntil: null,
   maxRedemptions: 100,
+  allowedPlans: null,
+  annualOnly: false,
   isActive: true,
   createdBy: "operator-1",
   createdAt: "2026-09-01T00:00:00.000Z",
