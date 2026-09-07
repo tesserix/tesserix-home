@@ -653,7 +653,37 @@ describe("mintCouponAction and the missing test-mode write key (#540)", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
-    expect(result.message).toMatch(/Check the Stripe dashboard/);
+    expect(result.message).toMatch(/Stripe dashboard/);
     expect(result.message).not.toMatch(/nothing (was )?(saved|minted)/i);
+  });
+
+  it("names the mode, because the Stripe dashboard is per-mode", async () => {
+    // THE ROW THIS EXISTS FOR. The old wording said "check the Stripe
+    // dashboard for this code" without saying which dashboard. A live mint
+    // failed on 2026-09-06 and the operator twice checked TEST, found the
+    // coupon minted the day before, and reasonably read it as a half-success.
+    // It was a live key missing `coupon_write`, which creates nothing.
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(recordStripeCoupon).mockRejectedValue(new Error("ECONNRESET"));
+
+    const live = await mintCouponAction("LAUNCH50", "live");
+    expect(live.ok).toBe(false);
+    if (live.ok) throw new Error("unreachable");
+    expect(live.message).toContain("live");
+    expect(live.message).not.toContain("test");
+  });
+
+  it("does not assert a coupon exists, because most refusals create nothing", async () => {
+    // The old message claimed one "may already exist there" for every
+    // unrecognised cause. True of a write that failed part-way; false of a
+    // permission or validation refusal, which is what actually happened —
+    // and it sends an operator hunting an orphan that is not there.
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(recordStripeCoupon).mockRejectedValue(new Error("ECONNRESET"));
+
+    const result = await mintCouponAction("LAUNCH50", "test");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.message).not.toMatch(/may already exist/i);
   });
 });

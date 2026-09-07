@@ -78,8 +78,30 @@ const NOT_SAVED_MESSAGE = "That change was not saved.";
  * database does not name. So this message never claims nothing happened — it
  * says where to look, the way `PUBLISH_INCOMPLETE_MESSAGE` does.
  */
-const MINT_INCOMPLETE_MESSAGE =
-  "The coupon could not be minted. Check the Stripe dashboard for this code before retrying — a coupon may already exist there.";
+/**
+ * The message for a mint whose outcome we cannot describe.
+ *
+ * It names the MODE, because the previous wording — "check the Stripe
+ * dashboard for this code" — does not, and Stripe's dashboard is per-mode. A
+ * live mint failed on 2026-09-06 and the operator twice checked TEST, found
+ * the coupon minted the day before, and reasonably concluded the mint had
+ * half-succeeded. It had not: the live key was missing `coupon_write`.
+ *
+ * It also no longer asserts that a coupon may already exist. That was true of
+ * the case this message was written for — a write that may have reached Stripe
+ * before failing — but it is false for a permission or validation refusal,
+ * which creates nothing. Saying "may exist" for every unrecognised cause sends
+ * an operator looking for an orphan that is usually not there.
+ *
+ * So it states what is actually known: which mode, that we could not tell what
+ * happened, and where the answer is. The cause is logged server-side
+ * (tesserix-home#607), which is what makes "the logs will say" a real
+ * instruction rather than a deflection.
+ */
+const mintIncompleteMessage = (mode: StripeMode): string =>
+  `The coupon could not be minted in ${mode} mode, and the reason was not one this screen recognises. ` +
+  `The failure is in the console logs. Check the ${mode} Stripe dashboard before retrying: most refusals ` +
+  `(a key without Coupons Write, for instance) create nothing, but a write that failed part-way can leave a coupon there.`
 
 /**
  * The message a second mint in the same mode produces, and the reason
@@ -323,10 +345,16 @@ function mintKey(promoCodeId: string, mode: StripeMode): string {
  * variable and the mode. That message is internal (it is written for a run
  * log), so this is the operator-facing form of the same fact, and it names
  * the mode and the variable rather than collapsing into "something went
- * wrong": as of tesserix-home#540 `STRIPE_WRITE_KEY_TEST` is not set at all,
- * so a test-mode mint fails here every time and an operator who is not told
- * WHICH mode they cannot write to has no way to learn that live would have
- * worked.
+ * wrong". An operator not told WHICH mode they cannot write to has no way to
+ * learn that the other one would have worked.
+ *
+ * This used to add that `STRIPE_WRITE_KEY_TEST` was unset "as of
+ * tesserix-home#540", so every test mint failed here. That is no longer true —
+ * all four read/write keys are present and both modes have minted
+ * (`SAVEOFFER20OFF6MONTHS`: test 2026-09-05, live 2026-09-07). Which keys exist
+ * is state that moves, so this comment no longer claims to know it; the message
+ * below names the variable, which lets a reader check the current answer
+ * instead of trusting a remembered one.
  */
 function unavailableMessage(mode: StripeMode): string {
   return (
@@ -433,11 +461,11 @@ export async function mintCouponAction(
       // cause can still be read, and it was being discarded.
       //
       // The cost was measured rather than assumed: a live mint failed on
-      // 2026-09-06, the operator got MINT_INCOMPLETE_MESSAGE, and the console
+      // 2026-09-06, the operator got the unrecognised-cause message, and the console
       // pods carried ZERO error lines for the six hours around it. Neither the
       // operator nor anyone reading the logs afterwards could say whether
       // Stripe refused the key's scope, rejected the terms, or timed out
-      // mid-write — and MINT_INCOMPLETE_MESSAGE deliberately claims the mint
+      // mid-write — and that message deliberately allows the mint
       // MAY have half-succeeded, so "retry and see" is not a safe diagnosis.
       //
       // Server-side only: this is a server action, so it lands in the app's
@@ -451,7 +479,7 @@ export async function mintCouponAction(
         cause,
       );
     }
-    return { ok: false, message: refusal ?? MINT_INCOMPLETE_MESSAGE };
+    return { ok: false, message: refusal ?? mintIncompleteMessage(mode) };
   }
   revalidatePath(CATALOG_SURFACE_PATH);
   return { ok: true };
