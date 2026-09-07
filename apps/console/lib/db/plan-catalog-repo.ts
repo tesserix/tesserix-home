@@ -4,6 +4,7 @@
 // somewhere inside the driver.
 import "server-only";
 
+import type { EntitlementDifference } from "@/lib/billing/entitlement-parity";
 import type { Difference, CatalogAmount, TaxBehavior } from "@/lib/billing/parity";
 // A VALUE import, not type-only: `CATALOG_SOURCES` is what makes
 // `readWindowStatus` and `readLatestRuns` report every (mode, source) pair
@@ -319,11 +320,19 @@ export interface ParityRun {
  * `failed` row, but a write that fails has nowhere to store anything; the
  * route turns that into a 500 and the script into a distinct exit code, so the
  * CronJob's own alerting covers the gap.
+ *
+ * `check_kind` is written as the literal `'price'` and is NOT left to 0053's
+ * column default, for the reason 0044/0045 give about `source`: a default is
+ * what a writer that forgot falls into, and the whole value of the column is
+ * that the two kinds of evidence in this table cannot be mistaken for each
+ * other. This function is the PRICE writer and says so; the entitlement one is
+ * {@link recordEntitlementParityRun}. The literal is not a parameter because
+ * there is no caller who gets to choose.
  */
 export async function recordParityRun(run: ParityRun): Promise<void> {
   await tesserixQuery(
-    `INSERT INTO plan_catalog_parity_runs (mode, source, outcome, difference_count, differences, error, publication_id)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+    `INSERT INTO plan_catalog_parity_runs (check_kind, mode, source, outcome, difference_count, differences, error, publication_id)
+     VALUES ('price', $1, $2, $3, $4, $5::jsonb, $6, $7)`,
     [
       run.mode,
       // Stated, never left to the column default — 0045 removes that default
@@ -491,14 +500,16 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
             (
               EXISTS (
                 SELECT 1 FROM plan_catalog_parity_runs r
-                 WHERE r.mode = m.mode
+                 WHERE r.check_kind = 'price'
+                   AND r.mode = m.mode
                    AND r.source = s.source
                    AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
                    AND r.outcome = 'clean'
               )
               AND NOT EXISTS (
                 SELECT 1 FROM plan_catalog_parity_runs r
-                 WHERE r.mode = m.mode
+                 WHERE r.check_kind = 'price'
+                   AND r.mode = m.mode
                    AND r.source = s.source
                    AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
                    AND r.outcome <> 'clean'
@@ -511,7 +522,8 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
             -- a second query.
             EXISTS (
               SELECT 1 FROM plan_catalog_parity_runs r
-               WHERE r.mode = m.mode
+               WHERE r.check_kind = 'price'
+                 AND r.mode = m.mode
                  AND r.source = s.source
                  AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
             ) AS ran
@@ -641,6 +653,7 @@ export async function readLatestRuns(): Promise<PairLatestRun[]> {
   const rows = await tesserixQuery<LatestRunRow>(
     `SELECT DISTINCT ON (mode, source) mode, source, outcome, ran_at, difference_count, differences, error
        FROM plan_catalog_parity_runs
+      WHERE check_kind = 'price'
       ORDER BY mode, source, ran_at DESC`,
   );
 
@@ -701,7 +714,7 @@ export async function readLastCleanRuns(): Promise<PairLastCleanRun[]> {
   const rows = await tesserixQuery<LastCleanRow>(
     `SELECT DISTINCT ON (mode, source) mode, source, ran_at
        FROM plan_catalog_parity_runs
-      WHERE outcome = 'clean'
+      WHERE check_kind = 'price' AND outcome = 'clean'
       ORDER BY mode, source, ran_at DESC`,
   );
 
@@ -1007,4 +1020,174 @@ export async function readModeDivergence(source: CatalogSource): Promise<ModeDiv
   return differences.length === 0
     ? { outcome: "identical", rows }
     : { outcome: "diverged", rows, differences };
+}
+
+/**
+ * One cell of a plan-feature matrix, as 0052 stores it.
+ *
+ * `value` is ONE integer read two ways, not an "enabled" flag beside a
+ * "limit": `0` is Disabled and is also the zero value, `-1` Unlimited, `-2`
+ * Negotiated, and a positive n a cap. That is exactly what mark8ly's
+ * `plangate` stores and how its `IsAllowed`/`Limit` read it, and splitting it
+ * here would invent a distinction the enforcement point does not make. 0052's
+ * header carries the full argument.
+ *
+ * `revision_id` and `source` are not on the row because both functions below
+ * take them as arguments: a caller holds a whole matrix for one product on one
+ * revision, and repeating those two on 104 rows would let a batch disagree
+ * with itself.
+ */
+export interface EntitlementRow {
+  readonly plan: string;
+  readonly feature: string;
+  readonly value: number;
+}
+
+/**
+ * Write a product's entitlements onto one revision.
+ *
+ * # One statement, so the batch is all-or-nothing
+ *
+ * `unnest` over three arrays rather than a loop or a generated VALUES list,
+ * for a reason that is about correctness and not about speed: a single
+ * statement is a single implicit transaction, so a row 0052 refuses takes the
+ * rows beside it down with it. A loop would leave the accepted prefix behind,
+ * and a HALF-SEEDED revision is worse than an empty one — it compares as
+ * agreement on the rows that exist and is silent about the rows that do not,
+ * which is the failure the entitlement parity check exists to catch.
+ *
+ * # Nothing here is repaired, skipped or normalised
+ *
+ * Every rule this data has is a NAMED constraint in 0052 — the four plans, the
+ * 26 features, the single source, the `value >= -2` floor — and this function
+ * lets each one reach its caller intact. `promo-codes-repo.ts` settles the
+ * argument at length: a TypeScript pre-check is one a future caller routes
+ * around, and a repo that quietly clamps a `-3` to `-2` would store a limit
+ * nobody wrote and report success for it. The action above translates the
+ * constraint name into a sentence; it does not pre-empt the rule.
+ *
+ * # No `ON CONFLICT`
+ *
+ * A second write over rows a revision already has is not an idempotent re-run,
+ * it is a caller that does not know what is there. The primary key says so,
+ * and this function lets it.
+ */
+export async function writeEntitlements(
+  revisionId: string,
+  source: CatalogSource,
+  rows: readonly EntitlementRow[],
+): Promise<void> {
+  await tesserixQuery(
+    `INSERT INTO plan_catalog_entitlements (revision_id, source, plan, feature, value)
+     SELECT $1, $2, cell.plan, cell.feature, cell.value
+       FROM unnest($3::text[], $4::text[], $5::integer[]) AS cell(plan, feature, value)`,
+    [
+      revisionId,
+      source,
+      rows.map((row) => row.plan),
+      rows.map((row) => row.feature),
+      rows.map((row) => row.value),
+    ],
+  );
+}
+
+/**
+ * One product's entitlements on one revision.
+ *
+ * Filtered on `source` as well as `revision_id`, because 0052's key is both:
+ * two products' rows can sit on one revision under the same (plan, feature)
+ * pair, and a read that dropped the source filter would hand a comparator
+ * their union as though it were one product's matrix. That is the same merge
+ * `EntitlementPage` refuses on the federation side, and for the same reason —
+ * `stores` is mark8ly's word about mark8ly's gate.
+ *
+ * An empty result means the revision was never seeded for this source. It does
+ * NOT mean the product entitles nothing, and no caller may read it that way:
+ * `0` is Disabled, and absence is absence. The comparator is where that
+ * distinction is enforced.
+ */
+export async function readEntitlements(
+  revisionId: string,
+  source: CatalogSource,
+): Promise<EntitlementRow[]> {
+  const rows = await tesserixQuery<{ plan: string; feature: string; value: number }>(
+    `SELECT plan, feature, value
+       FROM plan_catalog_entitlements
+      WHERE revision_id = $1 AND source = $2
+      ORDER BY plan, feature`,
+    [revisionId, source],
+  );
+  return rows.map((row) => ({ plan: row.plan, feature: row.feature, value: row.value }));
+}
+
+/**
+ * One entitlement parity run, decided and ready to be filed.
+ *
+ * The same six facts a price {@link ParityRun} carries, and deliberately the
+ * same four {@link ParityOutcome}s: "the console and the gate agree", "they do
+ * not", "the check could not be performed", "there is nothing here yet" are
+ * the states this comparison has too, and inventing a fifth vocabulary for a
+ * structurally identical piece of evidence would give an operator two things
+ * to learn about one table.
+ *
+ * It is a SEPARATE TYPE from `ParityRun` rather than a widening of it, and the
+ * reason is `differences`: a price finding carries a `kind`, a `lookupKey` and
+ * a currency, and an entitlement finding carries a plan and a feature. Widening
+ * `ParityRun.differences` to a union would make every existing price reader —
+ * `summarizeDifferences` in `catalog-views.tsx` above all — accept a shape it
+ * has no label for and render it blank. #579 owns what price parity reports,
+ * and this type is what keeps this change from touching it.
+ */
+export interface EntitlementParityRun {
+  /**
+   * The catalog mode the PRODUCT reported reading, never a console-side
+   * assumption. mark8ly compiles one matrix and reads the catalog at whatever
+   * its own `CONSOLE_CATALOG_MODE` says; the console cannot see that value,
+   * and it moves at the Stripe live-key swap. See `parity-run.ts`'s
+   * `performEntitlementParityCheck`, which is where the mode is taken off the
+   * response.
+   */
+  readonly mode: StripeMode;
+  readonly source: CatalogSource;
+  readonly outcome: ParityOutcome;
+  readonly differences: readonly EntitlementDifference[];
+  /** Non-null exactly when `outcome` is `failed`, per 0033's CHECK. */
+  readonly error: string | null;
+  /** The publication whose revision's entitlements were read — `null` only
+   *  when the mode has never been published, which is `not_bootstrapped`.
+   *  0036's CHECK refuses a `clean` row without one. */
+  readonly publicationId: string | null;
+}
+
+/**
+ * Write one entitlement parity run.
+ *
+ * A sibling of {@link recordParityRun} and not a parameter on it. The two
+ * differ in exactly one column value and in the TYPE of the report they store,
+ * and the type is the reason: a shared function would have to take a union and
+ * would then compile for a caller that passed price findings under
+ * `'entitlement'`. Two writers, each stating its own `check_kind` as a literal,
+ * cannot do that — which is the whole point of 0053's column.
+ *
+ * Throws for the same reason its sibling does: a write that fails has nowhere
+ * to store the fact that it failed.
+ */
+export async function recordEntitlementParityRun(run: EntitlementParityRun): Promise<void> {
+  await tesserixQuery(
+    `INSERT INTO plan_catalog_parity_runs (check_kind, mode, source, outcome, difference_count, differences, error, publication_id)
+     VALUES ('entitlement', $1, $2, $3, $4, $5::jsonb, $6, $7)`,
+    [
+      run.mode,
+      run.source,
+      run.outcome,
+      // Derived here rather than taken from the caller, exactly as
+      // `recordParityRun` derives it: 0033 refuses a row where the count and
+      // the report disagree, and deriving it at the one place that writes both
+      // means the CHECK never has to catch a caller.
+      run.differences.length,
+      JSON.stringify(run.differences),
+      run.error,
+      run.publicationId,
+    ],
+  );
 }

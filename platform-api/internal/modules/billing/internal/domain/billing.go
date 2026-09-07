@@ -248,3 +248,68 @@ type DiscountResult struct {
 	// summary above is a line about them, not a replacement for them.
 	Stores []DiscountStore `json:"stores"`
 }
+
+// --- the compiled plan-feature matrix (§8.2's entitlement read) -------------
+
+// EntitlementMatrix is ONE product's compiled plan-feature matrix: what each
+// plan entitles a tenant to, as that product's own gate enforces it.
+//
+// # One integer per (plan, feature), not an "enabled" flag beside a "limit"
+//
+// mark8ly's plangate stores a single int per cell and reads it two ways —
+// `IsAllowed` asks whether it is non-zero, `Limit` returns it. Splitting the
+// two here would invent a distinction the enforcement point does not make, and
+// give every writer two things to keep agreeing instead of one.
+//
+//	 0  Disabled — AND the zero value, so an unset cell fails closed
+//	-1  Unlimited
+//	-2  Negotiated ("contact sales")
+//	 n  a cap
+//
+// Carried verbatim: a sentinel rewritten on the way through is a limit nobody
+// wrote. Nothing in this package normalises, defaults or fills a cell.
+type EntitlementMatrix struct {
+	// Source is stamped from the slug the call was MADE to, never the body —
+	// the rule every read on this surface follows. A product cannot name
+	// itself into another product's entitlements.
+	Source string `json:"source"`
+	// CatalogMode is the plan catalog mode the PRODUCT reports reading, passed
+	// through exactly as it sent it, including empty.
+	//
+	// It is here because the console cannot see it any other way: the mode
+	// lives in the product's own CONSOLE_CATALOG_MODE, is not derivable from
+	// anything the console can observe, and moves at the Stripe live-key swap.
+	// A console that assumed `test` would go silently wrong at the swap, and
+	// would then compare a revision nobody enforces against a matrix nobody
+	// applies to it — permanent drift that reads as a defect and is not one.
+	CatalogMode string `json:"catalog_mode"`
+	// Features is the product's canonical ORDERED feature list. Order is part
+	// of the contract, not incidental: a consumer diffing it positionally must
+	// see churn only when the gate changes.
+	Features []string `json:"features"`
+	// Plans is plan name -> feature name -> value, for every plan the product's
+	// matrix keys on. A plan the matrix does not key on is ABSENT rather than
+	// published as all-Disabled: a row of zeroes would assert a policy nobody
+	// wrote. mark8ly keys on four — trial, starter, studio and pro — and a
+	// trial tenant is gated by its row like any other.
+	Plans map[string]map[string]int `json:"plans"`
+}
+
+// EntitlementPage is the entitlements surface's response.
+//
+// A LIST of per-product matrices rather than one merged map, and this is the
+// one place this module's fan-out does not blend. §8.5's test — can two
+// products' rows sit in one table without a column meaning something different
+// in each? — fails for a feature vocabulary: `stores` is mark8ly's word about
+// mark8ly's gate, and another product's identically named feature would be a
+// different thing. So the rows are federated but never merged; each keeps its
+// source.
+//
+// No `total`, unlike SubscriptionPage and TrialPage. There is nothing here a
+// product could hold more of than it returned — the matrix is compiled into
+// the binary and answered whole — so a count would be a number with no
+// question behind it.
+type EntitlementPage struct {
+	Data     []EntitlementMatrix `json:"data"`
+	Failures []Failure           `json:"failures"`
+}

@@ -189,3 +189,221 @@ describe("0051_promo_codes_scoping.sql", () => {
     }
   });
 });
+
+/**
+ * The same claim for 0052_plan_catalog_entitlements.sql, and a different
+ * mechanism again.
+ *
+ * 0040 is `ADD COLUMN IF NOT EXISTS`; 0051 is the `DROP CONSTRAINT IF EXISTS` /
+ * `ADD CONSTRAINT` pair. 0052 is neither — it is a `CREATE TABLE IF NOT EXISTS`
+ * with all four of its CHECKs declared inside the table, which is 0046's shape
+ * and re-runnable for a different reason: the constraints never exist as
+ * separate statements, so there is no second `ADD CONSTRAINT` to collide. That
+ * is cheap to assert and worth asserting, because the failure mode it rules out
+ * is the one an author reaches for by reflex — lifting a CHECK out of the
+ * CREATE TABLE into a trailing `ALTER TABLE ... ADD CONSTRAINT`, which is valid
+ * SQL, passes its first application, and wedges every migration after 0052 on
+ * its second.
+ *
+ * 0032–0035 are loaded first because `plan_catalog_entitlements` references
+ * `plan_catalog_revisions`, which 0035 creates — and 0035 in turn alters the
+ * tables 0032 and 0033/0034 create.
+ */
+describe("0052_plan_catalog_entitlements.sql", () => {
+  it("applies cleanly onto a database that already has its effect", async () => {
+    const db = new PGlite();
+
+    try {
+      for (const name of [
+        "0032_plan_catalog.sql",
+        "0033_plan_catalog_parity_runs.sql",
+        "0034_parity_runs_mode.sql",
+        "0035_plan_catalog_revisions.sql",
+      ]) {
+        await db.exec(readMigration(name));
+      }
+
+      const migration = readMigration("0052_plan_catalog_entitlements.sql");
+      await db.exec(migration);
+      await expect(db.exec(migration)).resolves.toBeDefined();
+
+      // Types and nullability asserted, not just presence: `CREATE TABLE IF NOT
+      // EXISTS` skips on the table NAME alone, so it would no-op over a
+      // pre-existing table of a different shape. 0052's header says the file
+      // claims re-runnability and NOT convergence; this is where that
+      // distinction is visible.
+      const columns = await db.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+      }>(
+        `SELECT column_name, data_type, is_nullable
+           FROM information_schema.columns
+          WHERE table_name = 'plan_catalog_entitlements'
+          ORDER BY column_name`,
+      );
+      expect(columns.rows).toEqual([
+        { column_name: "feature", data_type: "text", is_nullable: "NO" },
+        { column_name: "plan", data_type: "text", is_nullable: "NO" },
+        { column_name: "revision_id", data_type: "uuid", is_nullable: "NO" },
+        { column_name: "source", data_type: "text", is_nullable: "NO" },
+        { column_name: "value", data_type: "integer", is_nullable: "NO" },
+      ]);
+
+      // Each CHECK exists exactly once after the second application. A count
+      // would pass on a run that dropped one and failed to re-add it, so the
+      // NAMES are asserted.
+      const checks = await db.query<{ conname: string }>(
+        `SELECT conname FROM pg_constraint
+          WHERE conrelid = 'plan_catalog_entitlements'::regclass AND contype = 'c'
+          ORDER BY conname`,
+      );
+      expect(checks.rows.map((r) => r.conname)).toEqual([
+        "plan_catalog_entitlements_feature_is_a_known_feature",
+        "plan_catalog_entitlements_plan_is_a_known_plan",
+        "plan_catalog_entitlements_source_is_a_known_source",
+        "plan_catalog_entitlements_value_is_a_known_sentinel_or_cap",
+      ]);
+
+      // The constraints still bite after the SECOND application, and the
+      // cascade still points at the revision — the cases a table silently
+      // recreated in a different shape would pass.
+      const revision = await db.query<{ id: string }>(
+        `INSERT INTO plan_catalog_revisions (note, created_by)
+         VALUES ('idempotency', 'test') RETURNING id`,
+      );
+      const revisionId = revision.rows[0].id;
+
+      await db.query(
+        `INSERT INTO plan_catalog_entitlements (revision_id, source, plan, feature, value)
+         VALUES ($1, 'mark8ly', 'pro', 'stores', -1)`,
+        [revisionId],
+      );
+      await expect(
+        db.query(
+          `INSERT INTO plan_catalog_entitlements (revision_id, source, plan, feature, value)
+           VALUES ($1, 'mark8ly', 'pro', 'sores', 1)`,
+          [revisionId],
+        ),
+      ).rejects.toThrow(/plan_catalog_entitlements_feature_is_a_known_feature/);
+      await expect(
+        db.query(
+          `INSERT INTO plan_catalog_entitlements (revision_id, source, plan, feature, value)
+           VALUES ($1, 'mark8ly', 'pro', 'custom_css', -3)`,
+          [revisionId],
+        ),
+      ).rejects.toThrow(/plan_catalog_entitlements_value_is_a_known_sentinel_or_cap/);
+
+      await db.query(`DELETE FROM plan_catalog_revisions WHERE id = $1`, [revisionId]);
+      const survivors = await db.query(
+        `SELECT 1 FROM plan_catalog_entitlements WHERE revision_id = $1`,
+        [revisionId],
+      );
+      expect(survivors.rows).toHaveLength(0);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+/**
+ * The same claim for 0053_parity_runs_check_kind.sql, whose mechanism is
+ * 0040's and 0051's TOGETHER — the combination none of the cases above covers.
+ *
+ * It is an `ADD COLUMN IF NOT EXISTS` (0040's shape) plus a
+ * `DROP CONSTRAINT IF EXISTS` / `ADD CONSTRAINT` pair (0051's) plus a
+ * `CREATE INDEX IF NOT EXISTS`, in one file. Each of the three is individually
+ * re-runnable and the file is only re-runnable if all three are — an
+ * `ADD CONSTRAINT` without its matching drop passes its first application and
+ * wedges every migration after 0053 on its second, which is the failure #509
+ * paid for.
+ *
+ * The chain below is what the runs table needs before the column can be added:
+ * 0032 creates the prices table 0035 alters, 0033 creates the runs table, 0034
+ * adds `mode`, 0035 adds `publication_id`, 0044/0045 add `source` and drop its
+ * default.
+ */
+describe("0053_parity_runs_check_kind.sql", () => {
+  it("applies cleanly onto a database that already has its effect", async () => {
+    const db = new PGlite();
+
+    try {
+      for (const name of [
+        "0032_plan_catalog.sql",
+        "0033_plan_catalog_parity_runs.sql",
+        "0034_parity_runs_mode.sql",
+        "0035_plan_catalog_revisions.sql",
+        "0044_parity_runs_source.sql",
+        "0045_parity_runs_source_drop_default.sql",
+      ]) {
+        await db.exec(readMigration(name));
+      }
+
+      const migration = readMigration("0053_parity_runs_check_kind.sql");
+      await db.exec(migration);
+      await expect(db.exec(migration)).resolves.toBeDefined();
+
+      // Type and nullability, not just presence: `ADD COLUMN IF NOT EXISTS`
+      // skips on the column NAME alone, so it would no-op over a pre-existing
+      // column of the wrong type.
+      const columns = await db.query<{
+        column_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(
+        `SELECT column_name, data_type, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_name = 'plan_catalog_parity_runs' AND column_name = 'check_kind'`,
+      );
+      expect(columns.rows).toEqual([
+        {
+          column_name: "check_kind",
+          data_type: "text",
+          is_nullable: "NO",
+          // The default SURVIVES the second application. It is what keeps the
+          // previously-deployed image's `recordParityRun` — which names no
+          // check kind — writing rows during the rollout window, and a
+          // migration that dropped it on re-run would break the nightly
+          // CronJob rather than merely fail.
+          column_default: "'price'::text",
+        },
+      ]);
+
+      // The CHECK exists exactly once and still bites after the second
+      // application — the case a `DROP CONSTRAINT` that reached too far, or an
+      // `ADD` that never re-ran, would each pass a count.
+      const checks = await db.query<{ conname: string }>(
+        `SELECT conname FROM pg_constraint
+          WHERE conrelid = 'plan_catalog_parity_runs'::regclass
+            AND contype = 'c'
+            AND conname = 'plan_catalog_parity_runs_check_kind_is_a_known_kind'`,
+      );
+      expect(checks.rows).toHaveLength(1);
+
+      await expect(
+        db.query(
+          `INSERT INTO plan_catalog_parity_runs (check_kind, mode, source, outcome)
+           VALUES ('subscribers', 'test', 'mark8ly', 'failed')`,
+        ),
+      ).rejects.toThrow(/plan_catalog_parity_runs_check_kind_is_a_known_kind/);
+
+      // 0034's and 0044's CHECKs are untouched by this file, and a
+      // `DROP CONSTRAINT IF EXISTS` aimed at the wrong name would silently
+      // remove one of them instead of failing.
+      const survivors = await db.query<{ conname: string }>(
+        `SELECT conname FROM pg_constraint
+          WHERE conrelid = 'plan_catalog_parity_runs'::regclass AND contype = 'c'
+          ORDER BY conname`,
+      );
+      expect(survivors.rows.map((r) => r.conname)).toEqual(
+        expect.arrayContaining([
+          "plan_catalog_parity_runs_mode_is_a_known_mode",
+          "plan_catalog_parity_runs_source_is_a_known_source",
+        ]),
+      );
+    } finally {
+      await db.close();
+    }
+  });
+});

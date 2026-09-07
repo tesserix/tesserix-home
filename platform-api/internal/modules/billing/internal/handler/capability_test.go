@@ -27,6 +27,8 @@ func caseFor(t *testing.T, r handler.Route) routeCase {
 		return routeCase{want: http.StatusOK}
 	case "GET /v1/billing/trials":
 		return routeCase{want: http.StatusOK}
+	case "GET /v1/billing/entitlements":
+		return routeCase{want: http.StatusOK}
 	case "POST /v1/billing/tenants/{id}/discount":
 		return routeCase{body: validDiscount, want: http.StatusOK}
 	case "POST /v1/billing/tenants/{id}/discount/remove":
@@ -65,6 +67,10 @@ func TestEveryRouteNamesItsCapability(t *testing.T) {
 		// decorative on the one surface it was clearly drawn for.
 		"GET /v1/billing/subscriptions": {auth.CapBilling},
 		"GET /v1/billing/trials":        {auth.CapBilling},
+		// The compiled plan-feature matrix is a read of the estate's revenue
+		// terms, so it takes the surface capability and nothing more — the
+		// same gate its two siblings take, read off them rather than chosen.
+		"GET /v1/billing/entitlements": {auth.CapBilling},
 		// The two writes stack `publish-catalog` on top, the way the email
 		// templates module stacks `mass-send` for a test send: the surface
 		// says where an operator works, the verb says they may do the

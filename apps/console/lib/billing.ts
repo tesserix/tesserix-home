@@ -74,6 +74,60 @@ export interface TrialPage {
   readonly failures: readonly BillingSourceFailure[];
 }
 
+/**
+ * ONE product's compiled plan-feature matrix — what each of its plans entitles
+ * a tenant to, as that product's own gate enforces it.
+ *
+ * `value` is a single integer read two ways, never an "enabled" flag beside a
+ * "limit": `0` is Disabled and is also the zero value, `-1` Unlimited, `-2`
+ * Negotiated, and a positive n a cap. mark8ly's `plangate` stores exactly that
+ * and reads it with `IsAllowed`/`Limit`; splitting it here would invent a
+ * distinction the enforcement point does not make. Carried VERBATIM — nothing
+ * in this module normalises, defaults or fills a cell, because a sentinel
+ * rewritten on the way through is a limit nobody wrote.
+ */
+export interface EntitlementMatrix {
+  readonly source: string;
+  /**
+   * The plan catalog mode the PRODUCT reports reading, passed through exactly
+   * as it sent it, INCLUDING EMPTY.
+   *
+   * It is on the wire because the console cannot see it any other way: the
+   * mode lives in the product's own `CONSOLE_CATALOG_MODE`, is not derivable
+   * from anything the console observes, and moves at the Stripe live-key swap.
+   * A console that assumed `test` would go silently wrong at the swap.
+   */
+  readonly catalogMode: string;
+  /** The product's canonical ORDERED feature list. Order is part of the
+   *  contract, not incidental. */
+  readonly features: readonly string[];
+  /** Plan name -> feature name -> value, for every plan the product's matrix
+   *  keys on. A plan the matrix does not key on is ABSENT rather than
+   *  published as all-Disabled — a row of zeroes would assert a policy nobody
+   *  wrote. mark8ly keys on four: trial, starter, studio and pro. */
+  readonly plans: Readonly<Record<string, Readonly<Record<string, number>>>>;
+}
+
+/**
+ * The entitlements surface's response: a LIST of per-product matrices.
+ *
+ * The one federated read on this surface that does not blend. A feature
+ * vocabulary is per-product — `stores` is mark8ly's word about mark8ly's gate,
+ * and another product's identically named feature would be a different thing —
+ * so the rows are federated but never merged, and each keeps its source. A
+ * caller wanting one product's matrix SELECTS BY `source`; indexing `data[0]`
+ * positionally reads whichever product answered first.
+ *
+ * No `total`, unlike {@link SubscriptionPage} and {@link TrialPage}. There is
+ * nothing here a product could hold more of than it returned — the matrix is
+ * compiled into its binary and answered whole — so a count would be a number
+ * with no question behind it, and `parseEntitlements` must not demand one.
+ */
+export interface EntitlementPage {
+  readonly data: readonly EntitlementMatrix[];
+  readonly failures: readonly BillingSourceFailure[];
+}
+
 function fail(message: string): never {
   throw new PlatformApiError(`billing: ${message}`);
 }
@@ -185,6 +239,54 @@ export function parseTrials(json: unknown): TrialPage {
       };
     }),
     total: totalOf(body.total),
+    failures: failuresOf(body.failures),
+  };
+}
+
+/**
+ * Every federating product's compiled matrix.
+ *
+ * Strict in both directions, and deliberately so — this parser is the seam a
+ * seed is derived through, so a malformed cell must stop the seed rather than
+ * become a value nobody wrote. `whole` rejects a non-integer or a string, and
+ * a plan whose map is not an object throws rather than resolving to `{}`,
+ * which would seed as "this plan entitles nothing" and then compare clean
+ * against a matrix that says otherwise.
+ *
+ * `catalog_mode` is read with `str`, not `optionalStr`: the product may
+ * legitimately report an EMPTY mode, and that is a fact worth carrying rather
+ * than a field to drop. A missing one is still a malformed response.
+ */
+export function parseEntitlements(json: unknown): EntitlementPage {
+  const body = rowOf(json, "response");
+  if (!Array.isArray(body.data)) fail("data is not an array");
+  return {
+    data: body.data.map((entry, i) => {
+      const row = rowOf(entry, `data[${i}]`);
+      const features = row.features;
+      if (!Array.isArray(features)) fail(`data[${i}].features is not an array`);
+      const plans = rowOf(row.plans, `data[${i}].plans`);
+      return {
+        source: str(row.source, `data[${i}].source`),
+        catalogMode: str(row.catalog_mode, `data[${i}].catalog_mode`),
+        features: features.map((name, f) => str(name, `data[${i}].features[${f}]`)),
+        plans: Object.fromEntries(
+          Object.entries(plans).map(([plan, cells]) => [
+            plan,
+            Object.fromEntries(
+              Object.entries(rowOf(cells, `data[${i}].plans.${plan}`)).map(
+                ([feature, value]) => [
+                  feature,
+                  whole(value, `data[${i}].plans.${plan}.${feature}`),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      };
+    }),
+    // No `total`: see {@link EntitlementPage}. Reading one here would make
+    // every well-formed response fail.
     failures: failuresOf(body.failures),
   };
 }

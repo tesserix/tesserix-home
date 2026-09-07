@@ -798,6 +798,40 @@ export async function fetchEstateSubscriptions(): Promise<
 }
 
 /**
+ * Every federating product's compiled plan-feature matrix — contract §8.2.
+ *
+ * Gated on the `billing` capability at the platform API, exactly as
+ * {@link fetchEstateSubscriptions} is, so a `403` here means the operator
+ * holds `platform` but not `billing` — a real and intended outcome rather than
+ * a bug.
+ *
+ * NO `limit`, unlike its two siblings, and that is not an oversight: the
+ * endpoint's parameter allowlist is `source` alone, because the matrix is
+ * compiled into each product's binary and answered whole. There is nothing to
+ * bound, and an unexpected parameter is refused rather than ignored.
+ *
+ * `source` narrows the fan-out to one product. It is worth passing when a
+ * caller wants one product's matrix, but it does not remove the need to SELECT
+ * BY SOURCE from the result: the response is a page of per-product matrices,
+ * and `data[0]` is whichever product answered first, not the one that was
+ * asked for. A product that fails to answer appears in `failures` and
+ * contributes no `data` row at all — which is a read that did not happen, and
+ * never "this product entitles nothing".
+ */
+export async function fetchProductEntitlements(
+  source?: string,
+): Promise<import("./billing").EntitlementPage> {
+  const { parseEntitlements } = await import("./billing");
+  // Built only when there is something to send: an empty `?` is a URL the
+  // endpoint's allowlist has no reason to see, and omitting `source` is how a
+  // caller asks the whole estate.
+  const query = source ? `?${new URLSearchParams({ source }).toString()}` : "";
+  return parseEntitlements(
+    await platformRequest("entitlements", `/v1/billing/entitlements${query}`),
+  );
+}
+
+/**
  * The estate's expiring trials — contract §8.2.
  *
  * Every part of the scope is the caller's to name, and an omitted option sends

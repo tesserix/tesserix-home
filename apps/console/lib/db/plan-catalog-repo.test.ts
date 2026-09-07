@@ -17,6 +17,8 @@ import {
   readCatalogRows,
   readLastCleanRuns,
   readLatestRuns,
+  readWindowStatus,
+  recordEntitlementParityRun,
   recordParityRun,
 } from "./plan-catalog-repo";
 
@@ -395,5 +397,84 @@ describe("readLastCleanRuns", () => {
     const runs = await readLastCleanRuns();
 
     expect(runs.find((r) => r.mode === "test")?.ranAt).toBe("2026-09-06T02:15:00.000Z");
+  });
+});
+
+/**
+ * 0053's discriminator, asserted on the SQL of all five statements that touch
+ * `plan_catalog_parity_runs`.
+ *
+ * It has to be the SQL rather than a fixture: `CATALOG_SOURCES` holds one
+ * source and both kinds of run carry the same (mode, source), so no set of
+ * rows a mock returns can tell a filtered query from an unfiltered one. What
+ * makes the filter load-bearing is what it EXCLUDES, and the exclusion is
+ * exercised for real against pglite in `parity-window.integration.test.ts`.
+ */
+describe("check_kind — the two kinds of evidence in one table", () => {
+  const sqlOfFirstCall = () => String(vi.mocked(tesserixQuery).mock.calls[0][0]);
+
+  it("writes a price run as a price run, by literal and not by column default", async () => {
+    // 0053 keeps the column default so the previously-deployed image's insert
+    // still lands during a rollout. This writer must not rely on it: a default
+    // is what a writer that forgot falls into, and the value of the column is
+    // that the two kinds cannot be mistaken for each other.
+    await recordParityRun({
+      mode: "test",
+      source: "mark8ly",
+      outcome: "not_bootstrapped",
+      differences: [],
+      error: null,
+      publicationId: null,
+    });
+
+    expect(sqlOfFirstCall()).toContain("check_kind");
+    expect(sqlOfFirstCall()).toContain("'price'");
+  });
+
+  it("writes an entitlement run as an entitlement run, and derives its count", async () => {
+    await recordEntitlementParityRun({
+      mode: "live",
+      source: "mark8ly",
+      outcome: "differences",
+      differences: [
+        { plan: "pro", feature: "sso", consoleValue: null, productValue: 1 },
+        { plan: "pro", feature: "stores", consoleValue: 3, productValue: -1 },
+      ],
+      error: null,
+      publicationId: "44444444-4444-4444-4444-444444444444",
+    });
+
+    const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(String(sql)).toContain("'entitlement'");
+    // The count is derived here and never taken from a caller, so 0033's
+    // "count matches the report" CHECK cannot be reached by a caller that
+    // counted for itself.
+    expect(params?.[3]).toBe(2);
+  });
+
+  it("asks readLatestRuns for price runs only", async () => {
+    // `summarizeDifferences` (`catalog-views.tsx`) labels a finding by its
+    // `kind`; an entitlement finding has none, so this row would render on the
+    // price card as a report with no labels.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+    await readLatestRuns();
+    expect(sqlOfFirstCall()).toContain("check_kind = 'price'");
+  });
+
+  it("asks readLastCleanRuns for price runs only", async () => {
+    // This read backs `..._parity_last_clean_timestamp_seconds`, whose whole
+    // job is to alert when the PRICE check goes silent. A nightly entitlement
+    // run would keep the timestamp fresh with the price check dead.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+    await readLastCleanRuns();
+    expect(sqlOfFirstCall()).toContain("check_kind = 'price'");
+  });
+
+  it("asks readWindowStatus for price runs only, in every subquery", async () => {
+    // Three correlated subqueries — clean, not-clean, and ran. A filter added
+    // to two of the three would still let an entitlement run decide a day.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+    await readWindowStatus(7);
+    expect(sqlOfFirstCall().match(/check_kind = 'price'/g)).toHaveLength(3);
   });
 });

@@ -6,15 +6,20 @@
 // library into a browser bundle.
 import "server-only";
 
+import { compareEntitlements } from "@/lib/billing/entitlement-parity";
 import { compareCatalogToStripe } from "@/lib/billing/parity";
 import { CATALOG_SOURCES, policyFor, type CatalogSource } from "@/lib/billing/source-policy";
 import { STRIPE_MODES, stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
 import {
   readCatalogAmounts,
+  readEntitlements,
   readLivePublication,
+  recordEntitlementParityRun,
   recordParityRun,
+  type EntitlementParityRun,
   type ParityRun,
 } from "@/lib/db/plan-catalog-repo";
+import { fetchProductEntitlements } from "@/lib/platform-api";
 
 // PER (MODE, SOURCE). `performParityCheck` takes both axes and neither has a
 // default, because a run that does not name the catalog it read cannot be
@@ -352,4 +357,211 @@ export async function runAllParityPairs(): Promise<AllParityPairsResult> {
   }
 
   return { runs, unrecordable, checkFailed };
+}
+
+// ---------------------------------------------------------------------------
+// Entitlement parity (tesserix-home#146, T5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Is this string one of the two modes the console can file a run under?
+ *
+ * The mode arrives on the WIRE, from a product describing itself, so it is
+ * untrusted input at this boundary and is narrowed rather than cast.
+ * `plan_catalog_parity_runs.mode` is CHECKed to `test`/`live` (0034), so an
+ * unrecognised value cannot be stored at all — and must not be quietly mapped
+ * to one that can be.
+ */
+function isStripeMode(value: string): value is StripeMode {
+  return (STRIPE_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * What one entitlement parity attempt produced.
+ *
+ * Two shapes, because there are genuinely two outcomes and one of them cannot
+ * be written down. `plan_catalog_parity_runs.mode` is NOT NULL and CHECKed, so
+ * a run has to name a mode — and the mode is only known from the PRODUCT's own
+ * answer. When the product does not answer, or answers with a mode this console
+ * cannot file under, there is no honest row to write: the alternatives would be
+ * a hard-coded `test` (silently wrong from the day of the live-key swap) or a
+ * sentinel mode (a value no window query counts, i.e. evidence that looks like
+ * evidence and is not).
+ *
+ * `unattributable` is therefore NOT a quiet success and NOT "zero differences".
+ * It is the caller's to raise — the same split {@link performParityCheck} makes
+ * at the write, for the same reason: the runners raise alarms differently.
+ */
+export type EntitlementParityCheckResult =
+  | { readonly status: "checked"; readonly run: EntitlementParityRun }
+  | { readonly status: "unattributable"; readonly reason: string };
+
+function unattributable(reason: string): EntitlementParityCheckResult {
+  return { status: "unattributable", reason };
+}
+
+/**
+ * Compare one product's stored entitlements against the matrix it enforces —
+ * and never throw.
+ *
+ * # The mode is the PRODUCT's, and this is the whole subtlety of the task
+ *
+ * Entitlement values involve no Stripe account, so they look mode-independent.
+ * They are not: WHICH REVISION IS LIVE is per-mode, and mark8ly compiles one
+ * matrix while reading the catalog at whatever its own `CONSOLE_CATALOG_MODE`
+ * says. The console cannot see that variable, and it moves at the Stripe
+ * live-key swap (mark8ly#371). Comparing the OTHER mode's live revision against
+ * that matrix is permanent unactionable drift — a revision nobody enforces
+ * against a matrix nobody applies to it — and an always-red signal is one
+ * nobody reads. So the mode is taken off the response, the mode's own live
+ * publication supplies the revision, and neither is defaulted.
+ *
+ * # `data` is selected by SOURCE, never positionally
+ *
+ * The response is a page of per-product matrices that are federated and never
+ * merged, because a feature vocabulary is per-product. `data[0]` is whichever
+ * product answered first, not the one asked for.
+ *
+ * # A `failures` entry is a read that DID NOT HAPPEN
+ *
+ * Not an empty matrix, and not agreement. Treating it as either would record a
+ * clean day for a comparison that was never performed — the same false clean
+ * `performParityCheck`'s `not_bootstrapped` branch exists to prevent, and the
+ * same distinction `entitlement-actions.ts` draws before it seeds.
+ */
+export async function performEntitlementParityCheck(
+  source: CatalogSource,
+): Promise<EntitlementParityCheckResult> {
+  let mode: StripeMode;
+  let productPlans: Readonly<Record<string, Readonly<Record<string, number>>>>;
+
+  // Phase one: find out WHAT is being compared and for which mode. Every
+  // failure here is `unattributable`, because until the product has answered
+  // there is no mode to file a `failed` row under.
+  try {
+    const page = await fetchProductEntitlements(source);
+    const failure = page.failures.find((entry) => entry.source === source);
+    if (failure) {
+      return unattributable(
+        `${source} did not answer with its matrix, so no comparison happened: ${failure.message}`,
+      );
+    }
+    const matrix = page.data.find((entry) => entry.source === source);
+    if (!matrix) {
+      return unattributable(`no product called ${source} answered with a plan-feature matrix`);
+    }
+    if (!isStripeMode(matrix.catalogMode)) {
+      // Reported rather than coerced. A product reading a mode this console
+      // has no row space for is a real misconfiguration, and mapping it onto
+      // `test` would file the run against a catalog the product never read.
+      return unattributable(
+        `${source} reports reading catalog mode "${matrix.catalogMode}", which is not a mode runs can be recorded under`,
+      );
+    }
+    mode = matrix.catalogMode;
+    productPlans = matrix.plans;
+  } catch (cause) {
+    return unattributable(sanitizeReason(cause));
+  }
+
+  // Phase two: the mode is known, so every failure from here on IS recordable
+  // and becomes a `failed` row rather than a hole in the record.
+  try {
+    const publication = await readLivePublication(mode);
+    if (!publication) {
+      // Nothing published for the mode the product reads. "Nothing here yet",
+      // exactly as `performParityCheck` means it — not drift, and not clean.
+      return {
+        status: "checked",
+        run: { mode, source, outcome: "not_bootstrapped", differences: [], error: null, publicationId: null },
+      };
+    }
+
+    const consoleRows = await readEntitlements(publication.revisionId, source);
+    if (consoleRows.length === 0) {
+      // ONLY ZERO, and the reasoning is `performParityCheck`'s verbatim: a
+      // revision nobody has seeded is "nothing here yet", while a PARTIAL seed
+      // is genuinely `differences` and must stay that way — someone ran the
+      // seed and it half-worked, which is more dangerous than not having run
+      // it, and it must never hide behind "nothing here yet".
+      //
+      // The comparator's findings are discarded here rather than stored, as
+      // 0033 refuses a `not_bootstrapped` row with a non-zero count. The
+      // publication id still travels: this run names the catalog it looked at
+      // even when that catalog held no entitlements.
+      return {
+        status: "checked",
+        run: {
+          mode,
+          source,
+          outcome: "not_bootstrapped",
+          differences: [],
+          error: null,
+          publicationId: publication.id,
+        },
+      };
+    }
+
+    const differences = compareEntitlements(consoleRows, productPlans);
+    return {
+      status: "checked",
+      run: {
+        mode,
+        source,
+        outcome: differences.length === 0 ? "clean" : "differences",
+        differences,
+        error: null,
+        publicationId: publication.id,
+      },
+    };
+  } catch (cause) {
+    // `publicationId: null` for the reason `performParityCheck`'s catch gives:
+    // a run that failed during the read has no verified relationship to any
+    // published catalog, and naming one would claim it checked that catalog.
+    return {
+      status: "checked",
+      run: { mode, source, outcome: "failed", differences: [], error: sanitizeReason(cause), publicationId: null },
+    };
+  }
+}
+
+/** What {@link runEntitlementParityCheck} did, in the two facts a caller has
+ *  to be able to act on differently. */
+export interface EntitlementParityRunResult {
+  /** The run as it was decided, or `null` when none could be attributed to a
+   *  mode. Present whether or not the row was written. */
+  readonly run: EntitlementParityRun | null;
+  /** Why no run could be attributed, or why its row could not be written.
+   *  Non-null exactly when nothing was recorded. */
+  readonly notRecorded: string | null;
+}
+
+/**
+ * Compare and file one product's entitlement parity.
+ *
+ * The recording half, kept out of {@link performEntitlementParityCheck} so the
+ * decision stays testable without a database — the same split the price path
+ * keeps between `performParityCheck` and `recordParityRun`.
+ *
+ * A row that could not be WRITTEN and a run that could not be ATTRIBUTED are
+ * reported through the same field and are both `notRecorded`, because to every
+ * consumer of the table they are the same fact: no evidence exists for this
+ * attempt. Neither is allowed to look like agreement.
+ */
+export async function runEntitlementParityCheck(
+  source: CatalogSource,
+): Promise<EntitlementParityRunResult> {
+  const result = await performEntitlementParityCheck(source);
+  if (result.status === "unattributable") {
+    return { run: null, notRecorded: result.reason };
+  }
+  try {
+    await recordEntitlementParityRun(result.run);
+  } catch (cause) {
+    // The one failure this design cannot record, exactly as
+    // `runAllParityPairs` describes it: with the database unreachable there is
+    // nowhere to put the evidence.
+    return { run: result.run, notRecorded: sanitizeReason(cause) };
+  }
+  return { run: result.run, notRecorded: null };
 }

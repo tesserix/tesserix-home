@@ -86,6 +86,8 @@ func defaultProduct(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.Contains(r.URL.Path, "/discount"):
 		_, _ = w.Write([]byte(discountBody))
+	case strings.Contains(r.URL.Path, "entitlements"):
+		_, _ = w.Write([]byte(entitlementsBody))
 	case strings.Contains(r.URL.Path, "trials"):
 		_, _ = w.Write([]byte(trialsBody))
 	default:
@@ -409,5 +411,113 @@ func TestSubscriptionsRejectTheSignupOptIn(t *testing.T) {
 	a := serve(t)
 	if got := a.get("/v1/billing/subscriptions?include_signup=true"); got.status != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400: %s", got.status, got.raw)
+	}
+}
+
+// --- entitlements ----------------------------------------------------------
+
+// The matrix mark8ly actually serves, trimmed to two features and two plans:
+// the shape is what is under test here, not the values, and a fixture holding
+// all 26 × 4 would be a fourth copy of the matrix in this repo.
+//
+// `source` deliberately LIES, naming a product this call was not made to. The
+// response must still say `mark8ly`, which is the only way to assert the stamp
+// rather than a fixture that happens to agree with it.
+const entitlementsBody = `{"source":"someone-else","catalog_mode":"test","features":["stores","sso"],"plans":{"trial":{"stores":1,"sso":0},"starter":{"stores":1,"sso":0},"studio":{"stores":3,"sso":0},"pro":{"stores":-1,"sso":1}}}`
+
+func TestEntitlementsCarryTheProductsMatrixAndItsMode(t *testing.T) {
+	a := serve(t)
+	got := a.get("/v1/billing/entitlements")
+	if got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+	rows, _ := got.data(t)["data"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("data = %v, want one product's matrix", got.raw)
+	}
+	row, _ := rows[0].(map[string]any)
+
+	// Stamped from the slug the call was MADE to, like every other read on
+	// this surface: a product cannot name itself into another's entitlements.
+	if row["source"] != productSlug {
+		t.Errorf("source = %v, want %q — the slug called, not the one the body claimed",
+			row["source"], productSlug)
+	}
+	// The whole reason the product reports it: the console cannot see
+	// CONSOLE_CATALOG_MODE and the value moves at the live-key swap.
+	if row["catalog_mode"] != "test" {
+		t.Errorf("catalog_mode = %v, want the mode the product reported", row["catalog_mode"])
+	}
+	features, _ := row["features"].([]any)
+	if len(features) != 2 || features[0] != "stores" {
+		t.Errorf("features = %v, want the product's ordered list verbatim", row["features"])
+	}
+	plans, _ := row["plans"].(map[string]any)
+	if len(plans) != 4 {
+		t.Fatalf("plans = %v, want all four plans the matrix keys on", row["plans"])
+	}
+	pro, _ := plans["pro"].(map[string]any)
+	// -1 is Unlimited and 0 is Disabled; both must survive the hop as
+	// themselves. A sentinel rewritten on the way through is a limit nobody
+	// wrote.
+	if pro["stores"] != float64(-1) || pro["sso"] != float64(1) {
+		t.Errorf("pro = %v, want the sentinels carried verbatim", pro)
+	}
+	if starter, _ := plans["starter"].(map[string]any); starter["sso"] != float64(0) {
+		t.Errorf("starter.sso = %v, want 0 (Disabled) carried rather than dropped", starter["sso"])
+	}
+}
+
+// 501, never an empty 200 — the same rule the two list reads follow. An
+// unconfigured estate must not be able to render as one whose products
+// entitle nothing.
+func TestEntitlementsAreNotImplementedWhenNoProductDeclaresBilling(t *testing.T) {
+	if got := serveNoProducts(t).get("/v1/billing/entitlements"); got.status != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501: %s", got.status, got.raw)
+	}
+}
+
+// A product answering 200 with no plans is DEVIATING, and must not be
+// rendered as a product that entitles nothing. An empty matrix is
+// indistinguishable from every feature being Disabled for every plan, which is
+// a real and different answer — the same distinction ErrNotInstrumented
+// protects one level up.
+func TestAnEmptyMatrixIsAFailureRatherThanAnEmptyAnswer(t *testing.T) {
+	a := serveProduct(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"source":"mark8ly","catalog_mode":"test","features":[],"plans":{}}`))
+	}), []string{productSlug}, "billing", "publish-catalog")
+	got := a.get("/v1/billing/entitlements")
+	if got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with the deviation reported as a failure: %s", got.status, got.raw)
+	}
+	data := got.data(t)
+	if rows, _ := data["data"].([]any); len(rows) != 0 {
+		t.Errorf("data = %v, want no matrix at all rather than an empty one", data["data"])
+	}
+	if failures, _ := data["failures"].([]any); len(failures) != 1 {
+		t.Errorf("failures = %v, want the deviating product named", data["failures"])
+	}
+}
+
+// The narrowing every read on this surface takes, and the same refusal: a
+// typo must not read as "that product entitles nothing".
+func TestEntitlementsRejectAnUnknownSourceAndUnknownParameters(t *testing.T) {
+	a := serve(t)
+	if got := a.get("/v1/billing/entitlements?source=nosuch"); got.status != http.StatusBadRequest {
+		t.Errorf("unknown source: status = %d, want 400: %s", got.status, got.raw)
+	}
+	// `limit` paginates a list. This read is one document per product, so on
+	// it `limit` is an unknown parameter — and a rejected typo is cheaper than
+	// a bound that silently did nothing.
+	if got := a.get("/v1/billing/entitlements?limit=10"); got.status != http.StatusBadRequest {
+		t.Errorf("limit: status = %d, want 400: %s", got.status, got.raw)
+	}
+}
+
+// `billing` and not `platform`, like the two reads beside it.
+func TestAPlatformOperatorCannotReadEntitlements(t *testing.T) {
+	a := serveAs(t, []string{productSlug}, "platform")
+	if got := a.get("/v1/billing/entitlements"); got.status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403: %s", got.status, got.raw)
 	}
 }
