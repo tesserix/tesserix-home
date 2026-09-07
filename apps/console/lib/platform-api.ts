@@ -822,6 +822,11 @@ export async function fetchEstateTrials(
   // Only `true` is sent, and only when asked: the platform API reads any other
   // value as absent, so sending `false` would be a parameter that says nothing.
   if (query.includeStripeManaged) params.set("include_stripe_managed", "true");
+  // The same widening shape, and the console's default scope sets it — see
+  // `trialQueryFor`. This function's own default stays bare: a caller passing
+  // no query asks for the product's default population, and only the scope
+  // the console lands on opts signup rows in.
+  if (query.includeSignup) params.set("include_signup", "true");
   return parseTrials(
     await platformRequest("trials", `/v1/billing/trials?${params.toString()}`),
   );

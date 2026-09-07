@@ -3,7 +3,11 @@ import {
   BILLING_PRODUCT_SOURCES,
   DEFAULT_TRIAL_WINDOW_DAYS,
   MAX_TRIAL_WINDOW_DAYS,
+  TRIAL_STATUSES,
+  TRIAL_STATUS_BOTH,
+  TRIAL_STATUS_TRIALING,
   TRIAL_WINDOWS,
+  isTrialStatusScope,
   isTrialWindow,
   trialQueryFor,
   trialsEmptyMessage,
@@ -38,15 +42,56 @@ describe("the offered windows", () => {
   });
 });
 
+describe("the offered statuses", () => {
+  // The two populations this list can hold, and neither is hidden by default.
+  it("offers both populations and the narrowing, in that order", () => {
+    expect(TRIAL_STATUSES.map((s) => s.value)).toEqual([
+      TRIAL_STATUS_BOTH,
+      TRIAL_STATUS_TRIALING,
+    ]);
+    expect(TRIAL_STATUSES[0]?.label).toBe("Trialing and signup");
+    expect(TRIAL_STATUSES[1]?.label).toBe("Trialing only");
+  });
+
+  it("accepts only the statuses it offers", () => {
+    expect(isTrialStatusScope("all")).toBe(true);
+    expect(isTrialStatusScope("trialing")).toBe(true);
+    expect(isTrialStatusScope("signup")).toBe(false);
+    expect(isTrialStatusScope("")).toBe(false);
+  });
+});
+
 describe("trialQueryFor", () => {
-  // Today's production request, byte for byte: no `days`, no opt-in. The
-  // product applies its own 7-day default, which stays the single definition.
-  it("sends nothing at all for the default window", () => {
-    expect(trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS })).toEqual({});
+  // THE assertion that pins the decision. The console opts into signup rows on
+  // first load, so the operator whose three tenants all sit at `signup` sees
+  // them instead of an empty page. A tidy-up that restored the old
+  // byte-identical default would restore that empty page with it.
+  //
+  // Still no `days`: the product's own 7-day window stays the single
+  // definition, shared with its trials_expiring KPI.
+  it("opts into signup rows by default, and still names no window", () => {
+    expect(trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS })).toEqual({
+      includeSignup: true,
+    });
+    expect(trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS }).days).toBeUndefined();
+  });
+
+  // The narrowing is the only thing that drops the opt-in — the API has no
+  // "exclude" to send, so `Trialing only` is the absence of the flag.
+  it("drops the opt-in when narrowed to Trialing only", () => {
+    expect(trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS, status: TRIAL_STATUS_TRIALING }))
+      .toEqual({});
+    expect(trialQueryFor({ days: 30, status: TRIAL_STATUS_TRIALING })).toEqual({ days: 30 });
+  });
+
+  it("keeps the opt-in when the wider status is named explicitly", () => {
+    expect(trialQueryFor({ days: DEFAULT_TRIAL_WINDOW_DAYS, status: TRIAL_STATUS_BOTH })).toEqual({
+      includeSignup: true,
+    });
   });
 
   it("names a widened window", () => {
-    expect(trialQueryFor({ days: 30 })).toEqual({ days: 30 });
+    expect(trialQueryFor({ days: 30 })).toEqual({ days: 30, includeSignup: true });
   });
 
   // THE coupling. A converting trial is still a trial: offering "Any" while
@@ -56,6 +101,7 @@ describe("trialQueryFor", () => {
     expect(trialQueryFor({ days: MAX_TRIAL_WINDOW_DAYS })).toEqual({
       days: MAX_TRIAL_WINDOW_DAYS,
       includeStripeManaged: true,
+      includeSignup: true,
     });
   });
 
@@ -65,7 +111,10 @@ describe("trialQueryFor", () => {
   });
 
   it("narrows to one product when one was chosen", () => {
-    expect(trialQueryFor({ days: 7, source: "mark8ly" })).toEqual({ source: "mark8ly" });
+    expect(trialQueryFor({ days: 7, source: "mark8ly" })).toEqual({
+      source: "mark8ly",
+      includeSignup: true,
+    });
   });
 });
 
@@ -99,6 +148,34 @@ describe("trialsEmptyMessage", () => {
 
   it("names the product when the view is narrowed to one", () => {
     expect(trialsEmptyMessage({ days: 7, sourceLabel: "Mark8ly" })).toContain("at Mark8ly");
+  });
+
+  // Two reasons for an empty list, and they call for different actions. With
+  // signup rows in by default, "nothing here" under `Trialing only` most
+  // often means the tenants are one filter away, not that the window is
+  // narrow.
+  it("blames the status narrowing rather than the window, when narrowed", () => {
+    const message = trialsEmptyMessage({ days: 7, status: TRIAL_STATUS_TRIALING });
+    expect(message).toContain("completed checkout");
+    expect(message).toContain("Trialing and signup");
+    expect(message).toContain("that answered");
+    expect(message).not.toMatch(/wider/i);
+  });
+
+  // The window is still applied under the narrowing, so it is still named —
+  // hiding it would rebuild the invisible scope one filter along.
+  it("still names the window it is empty of while narrowed", () => {
+    expect(trialsEmptyMessage({ days: 30, status: TRIAL_STATUS_TRIALING })).toContain(
+      "next 30 days",
+    );
+  });
+
+  // The default scope keeps the copy it had: both populations are in, so the
+  // window is the only thing narrowing the answer.
+  it("blames the window when both populations are in", () => {
+    const message = trialsEmptyMessage({ days: 7, status: TRIAL_STATUS_BOTH });
+    expect(message).toContain("No trials expiring in the next 7 days");
+    expect(message).toMatch(/wider/i);
   });
 });
 
