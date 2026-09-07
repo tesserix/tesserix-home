@@ -14,6 +14,7 @@ import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   listPromoCodes,
   readStripeCouponIdsForMode,
+  type PromoCodePlan,
   type PromoCodeRow,
 } from "@/lib/db/promo-codes-repo";
 
@@ -46,7 +47,9 @@ import {
  *         },
  *         "valid_from": "…",       // ISO 8601, UTC
  *         "valid_until": null,     // null means no expiry, not unknown
- *         "max_redemptions": 100   // null means uncapped
+ *         "max_redemptions": 100,  // null means uncapped
+ *         "allowed_plans": ["pro"],// null means EVERY plan — never []
+ *         "annual_only": false     // true restricts the code to annual billing
  *       }
  *     ]
  *   }
@@ -61,6 +64,11 @@ import {
  * Adding a field is fine; renaming, removing, or changing the type or meaning
  * of an existing field is a breaking change and belongs behind
  * `/api/v2/promo-catalog`, not a silent edit here.
+ *
+ * `allowed_plans` and `annual_only` are that rule exercised: two new keys,
+ * nothing existing touched, and every consumer that ignores them keeps reading
+ * exactly what it read before (tesserix-home#593). See "Campaign
+ * scope" below for what they mean and what they deliberately do not include.
  *
  * # Auth is two separate steps, and the status codes must not collapse them
  *
@@ -126,6 +134,56 @@ import {
  * something. That is what makes `revision_id` stable and conditional requests
  * worth anything at all.
  *
+ * # CAMPAIGN SCOPE: `allowed_plans` and `annual_only`
+ *
+ * Which plans a code applies to, and whether it applies only to annual
+ * billing (tesserix-home#593). Before these keys the console could author
+ * WHAT a code does and never WHO it applies to, so every definition reached
+ * mark8ly with mark8ly's defaults for scope — all plans, both periods —
+ * whether or not those suited the campaign. `SAVEOFFER20OFF6MONTHS` shipped
+ * that way: correctly unscoped, but nobody chose it; it was the only shape
+ * this contract could express.
+ *
+ *   - `allowed_plans` — the plans this code applies to, from the closed set
+ *     `starter` | `studio` | `pro`, lower-case, the same spelling as mark8ly's
+ *     `pricing.Plan` constants and as every `mark8ly_<plan>_<period>_…_v1`
+ *     lookup key. `null` MEANS EVERY PLAN, and is the default and the common
+ *     case.
+ *   - `annual_only` — `true` restricts the code to annual billing. Always
+ *     present and never null: `false` is what "not annual-only" means, not the
+ *     absence of an answer.
+ *
+ * `null`, AND NEVER `[]`. The two are the same fact to the only redeemer there
+ * is — mark8ly guards its plan check with `len(in.PromoCode.AllowedPlans) > 0`
+ * (`services/marketplace-api/internal/promo/validator.go:107`), so an empty
+ * array redeems exactly as an absent one does. That is the reason to publish a
+ * single spelling rather than a licence to publish either: `[]` has a scoping
+ * constraint's name on it and reads as "scoped" to anything that asks whether
+ * the field is set, so a consumer would eventually branch on a difference that
+ * does not exist. This route could not serve `[]` in any case —
+ * `promo_codes_allowed_plans_is_not_empty` (0051) makes it unstorable, and the
+ * repository throws rather than repairing one that turns up anyway — so the
+ * value here is `null` or a non-empty array, always.
+ *
+ * `annual_only` is a BOOLEAN and there is no `allowed_periods` beside it,
+ * because mark8ly can express exactly one period restriction: it has no
+ * monthly-only branch and no reject reason for one. A symmetric array would
+ * let an operator author `{monthly}`, have it render as a restriction on every
+ * surface that shows the code, and have every annual checkout redeem it
+ * anyway. Mirror what the redeemer can honour; 0051's header has the long
+ * version of both arguments.
+ *
+ * NO CONSUMER READS THESE KEYS YET, said plainly rather than left for a reader
+ * to assume the loop is closed. mark8ly's ingest DTO
+ * (`services/marketplace-api/internal/billing/consolepromo/catalog.go`)
+ * declares neither field, its mapper maps neither, and its `upsertColumns`
+ * (`.../consolepromo/store.go:32`) deliberately preserves both on an existing
+ * row. mark8ly#795 is the counterpart that changes that. Publishing first is
+ * still the right order — nothing can read a field the contract does not carry
+ * — but until #795 lands, a code authored `pro`-only is scoped ON THIS SURFACE
+ * AND NOWHERE ELSE, and this docstring must not be edited to claim otherwise
+ * before it is true.
+ *
  * # What is deliberately excluded, and why
  *
  * The same test plan-catalog applies to `published_by` — this response
@@ -147,6 +205,28 @@ import {
  *   - `is_active` — EXCLUDED as a FIELD because it is a FILTER: every row
  *     served is active by construction, so a field would be the constant
  *     `true` and an invitation to write a branch that never runs.
+ *   - `max_per_email` (mark8ly §7.3) and `min_effective_price_per_currency`
+ *     (§7.4) — EXCLUDED, AND NOT FOR THE REASON THE ENTRIES ABOVE ARE. Every
+ *     other exclusion on this list answers no redemption question. These two
+ *     answer one — mark8ly's validator checks both on every redemption — and
+ *     they are withheld anyway. That distinction is the point of the entry.
+ *
+ *     They are abuse controls, not campaign shape, and what a wrong value
+ *     costs is the difference. A code scoped to the wrong plan is a campaign
+ *     that underperforms and gets noticed; a `max_per_email` raised from 1 to
+ *     100 is a code that works BETTER, is noticed by nobody, and is a discount
+ *     farm. Publishing them here is one step from authoring them, and an
+ *     authoring UI that can raise `max_per_email` is an authoring UI that can
+ *     switch off an abuse control through the same form and the same
+ *     permission as an ordinary campaign edit.
+ *
+ *     So the boundary is: the console says what a campaign IS, and mark8ly
+ *     keeps what protects it from being farmed. Widening it is a mark8ly
+ *     change with its own review, not a key added here because the shape
+ *     happens to fit. Stated on this surface as well as in 0051's header
+ *     because this is the second place the gap is visible next to
+ *     `allowed_plans` and `annual_only`, and it is a settled decision (#593,
+ *     2026-09-06) rather than an oversight for someone to tidy up.
  *   - THE REDEMPTION COUNT SO FAR — EXCLUDED, and this is the important one.
  *     The console is not the writer of redemption state; that ledger is
  *     transactional and tenant-scoped and lives where redemptions happen.
@@ -194,6 +274,16 @@ import {
  * body would make two responses with the same ETag differ, which is precisely
  * what an entity tag promises does not happen. A consumer that wants to know
  * how old its copy is knows when it fetched it.
+ *
+ * A COROLLARY FOR ANYONE ADDING A FIELD: because the hash covers the served
+ * body, a new key moves `revision_id` once, for every mode, on the deploy that
+ * introduces it — as `allowed_plans` and `annual_only` do. Every consumer
+ * revalidates and re-ingests once and then settles. That is the mechanism
+ * working rather than a cost to design around; it is exactly how a cached
+ * consumer finds out the shape grew. The conditional path needs no special
+ * case for it either: a caller presenting the PRE-change revision no longer
+ * matches the current one, so it gets a 200 carrying the new body, never a 304
+ * that would leave it holding a shape it cannot re-derive.
  *
  * # Cache-Control: `no-cache`, and the ETag does the revalidation
  *
@@ -295,6 +385,13 @@ interface PromoCodeBody {
   readonly valid_from: string;
   readonly valid_until: string | null;
   readonly max_redemptions: number | null;
+  /**
+   * `null` means EVERY plan, and is the only spelling of unscoped this
+   * contract has. Never `[]` — see the module doc's "Campaign scope".
+   */
+  readonly allowed_plans: readonly PromoCodePlan[] | null;
+  /** Always present; `false` is what "not annual-only" means. */
+  readonly annual_only: boolean;
 }
 
 interface PromoCatalogBody {
@@ -319,6 +416,13 @@ function toBody(row: PromoCodeRow, couponId: string | undefined): PromoCodeBody 
     valid_from: row.validFrom,
     valid_until: row.validUntil,
     max_redemptions: row.maxRedemptions,
+    // Passed through as read, with no `?? null` and no empty-array repair: the
+    // repository already refuses `[]` on the read path, so a fallback here
+    // would be a branch that can only fire once the constraint behind it is
+    // gone — and it would publish the second spelling of unscoped that the
+    // module doc says this contract never carries.
+    allowed_plans: row.allowedPlans,
+    annual_only: row.annualOnly,
   };
 }
 

@@ -44,6 +44,9 @@ import { GET } from "./route";
  *    have since expired. Deactivated ones are not served at all.
  * 4. `mode` selects an ACCOUNT, not a set of definitions, and a definition
  *    with no coupon minted in that mode is normal — the key is simply absent.
+ * 5. `allowed_plans` and `annual_only` are served, `null` is the ONLY spelling
+ *    of "every plan", and a scope change moves the ETag — which is the whole
+ *    mechanism by which a cached consumer re-ingests (tesserix-home#593).
  */
 
 function request(url: string, headers: Record<string, string> = {}): Request {
@@ -264,6 +267,8 @@ describe("the response shape", () => {
           valid_from: "2026-01-01T00:00:00.000Z",
           valid_until: null,
           max_redemptions: null,
+          allowed_plans: null,
+          annual_only: false,
         },
         {
           code: "FIVER",
@@ -278,6 +283,8 @@ describe("the response shape", () => {
           valid_from: "2026-03-01T00:00:00.000Z",
           valid_until: null,
           max_redemptions: null,
+          allowed_plans: null,
+          annual_only: false,
         },
         {
           code: "LAUNCH50",
@@ -292,6 +299,8 @@ describe("the response shape", () => {
           valid_from: "2026-02-01T00:00:00.000Z",
           valid_until: "2026-12-31T00:00:00.000Z",
           max_redemptions: 100,
+          allowed_plans: null,
+          annual_only: false,
         },
       ],
     });
@@ -344,6 +353,159 @@ describe("the response shape", () => {
       { includeInactive?: boolean },
     ];
     expect(options.includeInactive).toBeUndefined();
+  });
+});
+
+describe("campaign scope: allowed_plans and annual_only (#593)", () => {
+  /** Scoped to one plan and to annual billing — both fields non-default. */
+  const scoped: PromoCodeRow = {
+    ...percentOff,
+    code: "PROYEAR",
+    allowedPlans: ["pro"],
+    annualOnly: true,
+  };
+
+  it("serves both fields for a scoped code", async () => {
+    vi.mocked(listPromoCodes).mockResolvedValue([scoped]);
+
+    const res = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const body = (await res.json()) as { codes: Array<Record<string, unknown>> };
+
+    expect(body.codes[0].allowed_plans).toEqual(["pro"]);
+    expect(body.codes[0].annual_only).toBe(true);
+  });
+
+  it("serves the plan vocabulary lower-cased, as mark8ly spells it", async () => {
+    // `starter` | `studio` | `pro`, the same tokens as mark8ly's `pricing.Plan`
+    // constants. A code published as `Pro` would still redeem — mark8ly
+    // compares with EqualFold — but it would be a second spelling on a
+    // published contract, which is what 0051's CHECK exists to prevent.
+    vi.mocked(listPromoCodes).mockResolvedValue([
+      { ...scoped, allowedPlans: ["starter", "studio", "pro"] },
+    ]);
+
+    const res = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const body = (await res.json()) as { codes: Array<{ allowed_plans: string[] }> };
+
+    expect(body.codes[0].allowed_plans).toEqual(["starter", "studio", "pro"]);
+  });
+
+  it("serves allowed_plans: null — not [] — for an unscoped code", async () => {
+    // The one spelling of "every plan" that crosses this boundary. `[]` and
+    // null redeem identically (mark8ly guards on `len(AllowedPlans) > 0`), but
+    // `[]` READS as scoped to anything that asks whether the field is set, so
+    // only one of them may ever be published.
+    const res = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const body = (await res.json()) as { codes: Array<Record<string, unknown>> };
+
+    for (const code of body.codes) {
+      expect(code.allowed_plans).toBeNull();
+      expect(code.allowed_plans).not.toEqual([]);
+      expect(code.annual_only).toBe(false);
+    }
+    // Not merely absent: the key is present and explicitly null, so a consumer
+    // can tell "every plan" from "this contract predates scoping".
+    expect(body.codes.every((c) => "allowed_plans" in c)).toBe(true);
+    expect(JSON.stringify(body)).not.toContain('"allowed_plans":[]');
+  });
+
+  it("annual_only is always present, and false rather than absent or null", async () => {
+    const res = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const body = (await res.json()) as { codes: Array<Record<string, unknown>> };
+
+    for (const code of body.codes) {
+      expect(code).toHaveProperty("annual_only");
+      expect(code.annual_only).not.toBeNull();
+      expect(typeof code.annual_only).toBe("boolean");
+    }
+  });
+
+  it("leaves every pre-existing key untouched when a code is scoped", async () => {
+    // Additive means additive: scoping a code changes the two new keys and
+    // nothing else. This is the property that lets a consumer which ignores
+    // them keep reading exactly what it read before.
+    const unscopedRes = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const unscoped = (await unscopedRes.json()) as { codes: Array<Record<string, unknown>> };
+    const before = unscoped.codes.find((c) => c.code === "LAUNCH50") as Record<string, unknown>;
+
+    vi.mocked(listPromoCodes).mockResolvedValue([
+      { ...percentOff, allowedPlans: ["pro"], annualOnly: true },
+    ]);
+    const scopedRes = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const after = ((await scopedRes.json()) as { codes: Array<Record<string, unknown>> }).codes[0];
+
+    const withoutScope = (row: Record<string, unknown>) => {
+      const { allowed_plans: _plans, annual_only: _annual, ...rest } = row;
+      return rest;
+    };
+    expect(withoutScope(after)).toEqual(withoutScope(before));
+    expect(after.allowed_plans).toEqual(["pro"]);
+    expect(after.annual_only).toBe(true);
+  });
+
+  it("publishes no abuse control alongside the scope fields", async () => {
+    // `max_per_email` (§7.3) and `min_effective_price_per_currency` (§7.4) are
+    // mark8ly policy, deliberately neither published nor authorable — see the
+    // module doc. They sit next to these two in mark8ly's table, which is
+    // exactly why the absence is asserted rather than assumed.
+    vi.mocked(listPromoCodes).mockResolvedValue([scoped]);
+
+    const raw = JSON.stringify(await (await GET(request(URL_TEST, AUTHED_HEADERS))).json());
+
+    expect(raw).not.toContain("max_per_email");
+    expect(raw).not.toContain("min_effective_price");
+  });
+
+  it("moves the ETag when a code's scope changes, so a cached consumer re-ingests", async () => {
+    const before = (await GET(request(URL_TEST, AUTHED_HEADERS))).headers.get("etag");
+
+    vi.mocked(listPromoCodes).mockResolvedValue([
+      trialOnly,
+      { ...percentOff, allowedPlans: ["pro"] },
+      amountOff,
+    ]);
+    const after = (await GET(request(URL_TEST, AUTHED_HEADERS))).headers.get("etag");
+
+    // Without this the scope would change and every cached copy would keep the
+    // old one, which is the failure `revision_id` being a content hash exists
+    // to make impossible.
+    expect(after).not.toBe(before);
+  });
+
+  it("moves the ETag when only annual_only flips", async () => {
+    const before = (await GET(request(URL_TEST, AUTHED_HEADERS))).headers.get("etag");
+
+    vi.mocked(listPromoCodes).mockResolvedValue([
+      trialOnly,
+      { ...percentOff, annualOnly: true },
+      amountOff,
+    ]);
+    const after = (await GET(request(URL_TEST, AUTHED_HEADERS))).headers.get("etag");
+
+    expect(after).not.toBe(before);
+  });
+
+  it("answers 200 with the new body, never 304, to a caller holding the pre-scope revision", async () => {
+    // The consumer-facing half of the rule above, and the reason adding fields
+    // is safe: the revision a caller pinned before the change no longer
+    // matches, so the conditional request falls through to a full response
+    // carrying the keys that caller has never seen.
+    const stale = (await GET(request(URL_TEST, AUTHED_HEADERS))).headers.get("etag") as string;
+
+    vi.mocked(listPromoCodes).mockResolvedValue([
+      trialOnly,
+      { ...percentOff, allowedPlans: ["pro"], annualOnly: true },
+      amountOff,
+    ]);
+    const res = await GET(request(URL_TEST, { ...AUTHED_HEADERS, "if-none-match": stale }));
+
+    expect(res.status).toBe(200);
+    expect(res.status).not.toBe(304);
+    const body = (await res.json()) as { codes: Array<Record<string, unknown>> };
+    const launch = body.codes.find((c) => c.code === "LAUNCH50");
+    expect(launch?.allowed_plans).toEqual(["pro"]);
+    expect(launch?.annual_only).toBe(true);
+    expect(res.headers.get("etag")).not.toBe(stale);
   });
 });
 
