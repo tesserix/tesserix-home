@@ -18,6 +18,11 @@
 -- DELIBERATELY NOT PUBLISHED AND NOT AUTHORABLE, and that is a decision rather
 -- than an omission to be tidied up later (#593, settled 2026-09-06).
 --
+-- (§ references throughout are to mark8ly's
+-- `docs/superpowers/specs/2026-04-17-subscription-model-design.md`, whose §7
+-- covers promo rules and abuse prevention. Named once because the convention is
+-- mark8ly's and nothing in THIS repo would tell a reader where to look.)
+--
 -- They are abuse controls, not campaign shape. The difference is what a wrong
 -- value costs: a code scoped to the wrong plan is a campaign that underperforms
 -- and is noticed, while a `max_per_email` raised from 1 to 100 is a code that
