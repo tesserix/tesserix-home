@@ -90,8 +90,26 @@ export function endsIsNotional(status: string): boolean {
 }
 
 /** Days remaining, phrased so 0 and 1 do not read as bugs. */
+/**
+ * The trial end as a date.
+ *
+ * Falls back to a dash rather than rendering "Invalid Date": the value comes
+ * from another product over federation, and a row with a malformed date is a
+ * row to notice, not a cell to panic in.
+ */
+export function trialEndDate(iso: string): string {
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString();
+}
+
 export function daysLabel(days: number): string {
-  if (days < 0) return "ended";
+  // Negatives say HOW LONG ago. The widest scope returns trials that have
+  // already ended, and "ended" alone gives an operator nothing to judge with:
+  // one that ended yesterday and one that ended six weeks ago mean very
+  // different things, and the second means the product's expiry sweep has
+  // stopped (mark8ly#827).
+  if (days < -1) return `ended ${Math.abs(days)} days ago`;
+  if (days === -1) return "ended yesterday";
   if (days === 0) return "today";
   if (days === 1) return "1 day";
   return `${days} days`;
@@ -215,6 +233,11 @@ export function BillingViews({
                     <TableHeader>
                       <TableRow>
                         <TableHead>Ends</TableHead>
+                        {/* The date itself, beside the relative label. The
+                            label answers "how urgent"; only the date answers
+                            "when", and an operator comparing a trial against
+                            a support thread or an invoice needs the second. */}
+                        <TableHead>Date</TableHead>
                         {/* Beside Ends, not at the end of the row: it is what
                             tells the operator whether that date means
                             anything, and which of the two chases this row
@@ -246,6 +269,9 @@ export function BillingViews({
                             ) : (
                               <time dateTime={row.trialEndsAt}>{daysLabel(row.daysRemaining)}</time>
                             )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                            {trialEndDate(row.trialEndsAt)}
                           </TableCell>
                           <TableCell>
                             {/* The product's own word, rendered verbatim — the

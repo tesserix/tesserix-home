@@ -46,12 +46,17 @@ export const MAX_TRIAL_WINDOW_DAYS = 365;
  * The two populations a trials list can hold, and the vocabulary for choosing
  * between them.
  *
- * `signup` is where mark8ly's `Bootstrap` leaves EVERY subscription: plan
- * `trial`, status `signup`. Exactly one writer moves a row on to `trialing` —
- * the `checkout.session.completed` webhook — so a tenant that abandons
- * checkout stays at `signup` indefinitely, and `expiry_cron` (which only
- * touches `trialing`) never ages it out either. An operator with three such
- * tenants saw an empty trials list at every window.
+ * `signup` WAS where mark8ly's `Bootstrap` left every subscription: plan
+ * `trial`, status `signup`, moved on only by the `checkout.session.completed`
+ * webhook — so a tenant that abandoned checkout stayed there indefinitely, and
+ * `expiry_cron` (which only touches `trialing`) never aged it out either. An
+ * operator with three such tenants saw an empty trials list at every window.
+ *
+ * CORRECTED (mark8ly#847): `Bootstrap` now creates `trialing`, precisely
+ * because a `signup` row's trial end was notional and nothing acted on it.
+ * This scope therefore reaches rows written before that change, and any a
+ * future writer puts there — which is why it stays on offer rather than being
+ * removed.
  *
  * `all` is the widest scope this list has, not "every status in the product":
  * these are the only two the trials endpoint can return, one of them by
@@ -91,7 +96,7 @@ export interface TrialWindowOption {
 export const TRIAL_WINDOWS: readonly TrialWindowOption[] = [
   { value: String(DEFAULT_TRIAL_WINDOW_DAYS), label: "Next 7 days" },
   { value: "30", label: "Next 30 days" },
-  { value: String(MAX_TRIAL_WINDOW_DAYS), label: "Any (up to a year)" },
+  { value: String(MAX_TRIAL_WINDOW_DAYS), label: "Any (up to a year, and ended)" },
 ];
 
 /** Whether a raw URL value is one of the windows this surface offers. A query
@@ -136,6 +141,7 @@ export interface TrialQuery {
   days?: number;
   includeStripeManaged?: boolean;
   includeSignup?: boolean;
+  includeEnded?: boolean;
 }
 
 /**
@@ -153,6 +159,18 @@ export interface TrialQuery {
  *     Stripe-managed rows would rebuild the same invisible-scope bug one level
  *     down. Narrower windows keep the work-queue exclusion — those rows
  *     convert rather than expire, so they are not what somebody acts on today.
+ *
+ *  4. The widest window ALSO carries `include_ended`, for decision 2's exact
+ *     reason. Every window is FORWARD-looking, so a trial whose end has
+ *     already passed is absent from all three — including the one labelled
+ *     "Any". Offering the widest scope while silently excluding rows that
+ *     ended yesterday is the same invisible-scope bug one level down, and the
+ *     rows it hides are the ones that matter most: a trial still `trialing`
+ *     days after its end means the product's expiry sweep has stopped.
+ *
+ *     Narrower windows keep the exclusion, for the same reason they keep the
+ *     Stripe-managed one — a work queue is about what to do today, and an
+ *     already-ended trial is not that.
  *
  *  3. Every scope but `Trialing only` carries `include_signup`. This CHANGES
  *     THE DEFAULT REQUEST, which decision 1 above deliberately kept
@@ -179,6 +197,7 @@ export function trialQueryFor(scope: TrialScope): TrialQuery {
   if (scope.source) query.source = scope.source;
   if (scope.days !== DEFAULT_TRIAL_WINDOW_DAYS) query.days = scope.days;
   if (scope.days === MAX_TRIAL_WINDOW_DAYS) query.includeStripeManaged = true;
+  if (scope.days === MAX_TRIAL_WINDOW_DAYS) query.includeEnded = true;
   if (scope.status !== TRIAL_STATUS_TRIALING) query.includeSignup = true;
   return query;
 }

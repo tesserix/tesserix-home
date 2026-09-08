@@ -939,6 +939,10 @@ export async function fetchEstateTrials(
   // no query asks for the product's default population, and only the scope
   // the console lands on opts signup rows in.
   if (query.includeSignup) params.set("include_signup", "true");
+  // The one widening no window can express: every `days` value looks FORWARD,
+  // so a trial that has already ended is absent from all of them. Sent only by
+  // the widest scope — see `trialQueryFor` decision 4.
+  if (query.includeEnded) params.set("include_ended", "true");
   return parseTrials(
     await platformRequest("trials", `/v1/billing/trials?${params.toString()}`),
   );

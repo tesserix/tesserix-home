@@ -29,7 +29,11 @@ describe("the offered windows", () => {
   it("labels the widest window without promising every trial", () => {
     const widest = TRIAL_WINDOWS.find((w) => w.value === String(MAX_TRIAL_WINDOW_DAYS));
     expect(widest).toBeDefined();
-    expect(widest?.label).toBe("Any (up to a year)");
+    // Relabelled when the widest scope began returning ended trials too: an
+    // option saying "Any" while excluding them was the same invisible scope
+    // this filter exists to remove. The "not every/all" guard below still
+    // holds — the year bound is still a bound.
+    expect(widest?.label).toBe("Any (up to a year, and ended)");
     for (const window of TRIAL_WINDOWS) {
       expect(window.label).not.toMatch(/\b(all|every)\b/i);
     }
@@ -102,7 +106,22 @@ describe("trialQueryFor", () => {
       days: MAX_TRIAL_WINDOW_DAYS,
       includeStripeManaged: true,
       includeSignup: true,
+      includeEnded: true,
     });
+  });
+
+  // The same coupling, for the widening no window can express. Every `days`
+  // value looks FORWARD, so a trial that ended yesterday is absent from all
+  // three — including the one labelled "Any". The rows it hid are the ones
+  // that matter most: a trial still trialing days after its end means the
+  // product's expiry sweep has stopped.
+  it("opts ended trials in with the widest window, always", () => {
+    expect(trialQueryFor({ days: MAX_TRIAL_WINDOW_DAYS }).includeEnded).toBe(true);
+  });
+
+  it("does not opt ended trials in at a narrower window", () => {
+    expect(trialQueryFor({ days: 30 }).includeEnded).toBeUndefined();
+    expect(trialQueryFor({ days: 7 }).includeEnded).toBeUndefined();
   });
 
   it("does not opt them in at a narrower window", () => {
