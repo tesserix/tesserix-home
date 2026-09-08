@@ -23,10 +23,13 @@ import {
 import { sourceLabel } from "@/lib/audit";
 import {
   NO_REASON_CODES,
+  NO_REASON_CODE_GAPS,
   hasReasonCodes,
   reasonCodesFor,
   type LifecycleVerb,
   type ReasonCodeCatalog,
+  type ReasonCodeGap,
+  type ReasonCodeGaps,
 } from "@/lib/tenant-lifecycle";
 import { splitTenantId, type EstateTenant } from "@/lib/tenants";
 import { setTenantLifecycleAction } from "./actions";
@@ -156,11 +159,42 @@ export function lifecycleOutcomeMessage(
  * be the worse failure. Both can write a reason nobody meant onto an audit row
  * that outlives the operator's memory of the change.
  */
-export function unknownProductNotice(product: string): string {
-  return (
-    `${sourceLabel(product)} did not supply its reason codes, and a lifecycle ` +
-    "change must carry one. Reload to try again, or change it from that product's own admin."
-  );
+export function unknownProductNotice(
+  product: string,
+  gap: ReasonCodeGap = "unknown",
+): string {
+  const owner = sourceLabel(product);
+  switch (gap) {
+    // 503. The product was never reached, so it has not "declined" to publish
+    // anything and saying so would send an operator to look for a setting that
+    // is not missing. Reloading really is the remedy: the commonest cause is
+    // `mark8ly-marketplace-api-admin` being mid-deploy — one replica,
+    // `maxSurge: 0`, so its platform-admin surface is down for the length of
+    // an image pull on every roll.
+    case "unreachable":
+      return (
+        `${owner} could not be reached, and a lifecycle change must carry one ` +
+        `of its reason codes. This is usually brief — ${owner} is most likely ` +
+        "mid-deploy. Reload in a moment to try again."
+      );
+    // 501. The product answered; it has no vocabulary to give. Reloading is
+    // pointless and saying "try again" would waste the operator's time, so
+    // this is the one case that genuinely points at the product's own admin.
+    case "unpublished":
+      return (
+        `${owner} publishes no reason codes for this change, and a lifecycle ` +
+        "change must carry one. Reloading will not help — this needs fixing in " +
+        `${owner}, or the change made from its own admin.`
+      );
+    // Anything else, including a throw that carried no status. Deliberately
+    // the original sentence: it names both remedies without claiming which
+    // applies, which is the honest thing to say when we do not know.
+    default:
+      return (
+        `${owner} did not supply its reason codes, and a lifecycle ` +
+        "change must carry one. Reload to try again, or change it from that product's own admin."
+      );
+  }
 }
 
 /** The dialog's plain statement of what confirming does. Consequential enough
@@ -187,6 +221,18 @@ export interface TenantLifecycleActionProps {
    */
   reasonCodes?: ReasonCodeCatalog;
   /**
+   * Why each product has no vocabulary, for the products that failed.
+   *
+   * Separate from `reasonCodes` rather than folded into it: the catalog is
+   * "what a product said", and this is "why it said nothing". A single map
+   * holding both would make every reader of the codes handle a failure shape
+   * it does not care about.
+   *
+   * Defaulted to empty so a caller that has none degrades to the cautious
+   * `unknown` copy — the sentence this component shipped before the split.
+   */
+  reasonCodeGaps?: ReasonCodeGaps;
+  /**
    * Injected so the render tests can drive every result shape the seam
    * produces. Defaults to the real server action, which is what the directory
    * uses — the same shape `ToolsManager` passes its forms.
@@ -197,6 +243,7 @@ export interface TenantLifecycleActionProps {
 export function TenantLifecycleAction({
   tenant,
   reasonCodes = NO_REASON_CODES,
+  reasonCodeGaps = NO_REASON_CODE_GAPS,
   onSubmit = setTenantLifecycleAction,
 }: TenantLifecycleActionProps) {
   const router = useRouter();
@@ -248,7 +295,7 @@ export function TenantLifecycleAction({
           id={`${fieldId}-unavailable`}
           className="max-w-xs text-pretty text-xs text-muted-foreground"
         >
-          {unknownProductNotice(source)}
+          {unknownProductNotice(source, reasonCodeGaps[source])}
         </span>
       </div>
     );

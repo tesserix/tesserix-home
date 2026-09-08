@@ -291,4 +291,54 @@ describe("a product that did not supply its reason codes", () => {
     expect(unknownProductNotice("kora")).toMatch(/reason codes/);
     expect(unknownProductNotice("kora")).not.toMatch(/undefined/);
   });
+
+  // The bug this pair pins: BOTH causes used to render the sentence below,
+  // which tells an operator to go and change it in the product's own admin.
+  // For a product that was merely mid-deploy that is a wild goose chase, and
+  // the commonest cause of this state is exactly that —
+  // `mark8ly-marketplace-api-admin` is one replica at `maxSurge: 0`, so its
+  // platform-admin surface is down for the length of every image pull.
+  it("tells an operator to reload when the product was unreachable, and does not send them to its admin", () => {
+    const notice = unknownProductNotice("mark8ly", "unreachable");
+    expect(notice).toMatch(/could not be reached/i);
+    expect(notice).toMatch(/reload/i);
+    // The remedy that does NOT apply: nothing in that product's admin fixes a
+    // service that was not running.
+    expect(notice).not.toMatch(/own admin/i);
+  });
+
+  it("does not offer a reload when the product answered and published nothing", () => {
+    const notice = unknownProductNotice("mark8ly", "unpublished");
+    expect(notice).toMatch(/publishes no reason codes/i);
+    // Reloading cannot fix a contract gap, and saying "try again" would spend
+    // the operator's time on a retry that can never succeed.
+    expect(notice).toMatch(/will not help/i);
+    expect(notice).toMatch(/own admin/i);
+  });
+
+  it("keeps the cautious both-remedies sentence when the cause is unknown", () => {
+    // Unchanged from before the split, and reached by an omitted prop as well
+    // as an explicit "unknown" — a caller that has no gap map must not start
+    // asserting a cause it does not have.
+    expect(unknownProductNotice("kora", "unknown")).toBe(unknownProductNotice("kora"));
+    expect(unknownProductNotice("kora")).toMatch(/Reload to try again/);
+    expect(unknownProductNotice("kora")).toMatch(/own admin/);
+  });
+
+  it("renders the unreachable sentence on the row when the page carried that cause", () => {
+    render(
+      <TenantLifecycleAction
+        tenant={UNKNOWN_PRODUCT}
+        reasonCodes={CATALOG}
+        reasonCodeGaps={{ kora: "unreachable" }}
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: "Suspend" });
+    expect(button).toBeDisabled();
+    const notice = screen.getByText(unknownProductNotice("kora", "unreachable"));
+    expect(notice).toBeInTheDocument();
+    // Still associated, exactly as the cause-less version is.
+    expect(button.getAttribute("aria-describedby")).toBe(notice.id);
+  });
 });

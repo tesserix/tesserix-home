@@ -29,7 +29,12 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 // before the console's build knows its id must appear under its raw id, not as
 // "Unknown".
 import { sourceLabel } from "@/lib/audit";
-import { NO_REASON_CODES, type ReasonCodeCatalog } from "@/lib/tenant-lifecycle";
+import {
+  NO_REASON_CODES,
+  NO_REASON_CODE_GAPS,
+  type ReasonCodeCatalog,
+  type ReasonCodeGaps,
+} from "@/lib/tenant-lifecycle";
 import { splitTenantId, type EstateTenant, type TenantSourceFailure } from "@/lib/tenants";
 import { TenantLifecycleAction } from "./tenant-lifecycle-controls";
 import { TenantPricingOverrideAction } from "./tenant-pricing-override-controls";
@@ -187,6 +192,9 @@ export interface TenantDirectoryProps {
    * its rows' action as the visible gap — never with another product's codes.
    */
   reasonCodes?: ReasonCodeCatalog;
+  /** Why each product that failed has no vocabulary — see
+   *  `TenantLifecycleActionProps.reasonCodeGaps`. Passed straight through. */
+  reasonCodeGaps?: ReasonCodeGaps;
   state: SurfaceState;
   emptyMessage: string;
   /** What the directory does and does not cover. */
@@ -202,6 +210,7 @@ export function TenantDirectory({
   tenants,
   failures,
   reasonCodes = NO_REASON_CODES,
+  reasonCodeGaps = NO_REASON_CODE_GAPS,
   state,
   emptyMessage,
   scopeNote,
@@ -285,7 +294,11 @@ export function TenantDirectory({
                       and it decides for itself whether this console mints for
                       the product that owns the row. */}
                   <div className="flex flex-col items-start gap-2">
-                    <TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />
+                    <TenantLifecycleAction
+                      tenant={tenant}
+                      reasonCodes={reasonCodes}
+                      reasonCodeGaps={reasonCodeGaps}
+                    />
                     <TenantPricingOverrideAction tenant={tenant} />
                   </div>
                 </TableCell>
