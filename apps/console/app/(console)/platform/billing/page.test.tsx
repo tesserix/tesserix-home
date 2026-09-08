@@ -30,7 +30,7 @@ import {
   toTrialFilterValues,
   viewState,
 } from "./page";
-import { BillingViews, daysLabel, endsIsNotional, trialTone } from "./billing-views";
+import { BillingViews, daysLabel, trialEndDate, endsIsNotional, trialTone } from "./billing-views";
 
 const subscription = {
   source: "mark8ly",
@@ -140,7 +140,35 @@ describe("daysLabel", () => {
     expect(daysLabel(0)).toBe("today");
     expect(daysLabel(1)).toBe("1 day");
     expect(daysLabel(9)).toBe("9 days");
-    expect(daysLabel(-3)).toBe("ended");
+  });
+
+  // Was `expect(daysLabel(-3)).toBe("ended")`. The widest scope now returns
+  // trials that have already ended, so this is a row an operator judges rather
+  // than an edge case — and "ended" alone gives them nothing to judge with.
+  // One that ended yesterday and one that ended six weeks ago mean very
+  // different things; the second means the product's expiry sweep stopped.
+  it("says how long ago a trial ended", () => {
+    expect(daysLabel(-1)).toBe("ended yesterday");
+    expect(daysLabel(-3)).toBe("ended 3 days ago");
+    expect(daysLabel(-42)).toBe("ended 42 days ago");
+  });
+
+  it("never renders a bare negative", () => {
+    for (const days of [-1, -3, -42, -365]) {
+      expect(daysLabel(days)).not.toContain("-");
+    }
+  });
+});
+
+describe("trialEndDate", () => {
+  it("states the date, so the relative label is never the only answer", () => {
+    expect(trialEndDate("2026-07-28T00:00:00Z")).toMatch(/2026/);
+  });
+
+  // The value crosses federation from another product; a malformed one is a
+  // row to notice, not a cell rendering "Invalid Date".
+  it("degrades to a dash rather than Invalid Date", () => {
+    expect(trialEndDate("not-a-date")).toBe("—");
   });
 });
 
@@ -348,7 +376,12 @@ describe("the trials scope on screen", () => {
   it("does not offer a window that claims every trial", () => {
     renderViews();
     fireEvent.click(screen.getByLabelText("Expiring"));
-    expect(screen.getByRole("option", { name: "Any (up to a year)" })).toBeInTheDocument();
+    // Relabelled: the widest scope now also returns ended trials, and an
+    // option claiming "Any" while excluding them was the same invisible
+    // scope this filter exists to fix.
+    expect(
+      screen.getByRole("option", { name: "Any (up to a year, and ended)" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /^All /i })).toBeNull();
   });
 });
