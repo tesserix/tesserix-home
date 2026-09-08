@@ -141,6 +141,12 @@ describe("the capability set is a contract with Zitadel", () => {
       "product-support",
       // #152. A machine capability, so adding it locks no operator out.
       "read-announcements",
+      // #618. A machine capability, so adding it locks no operator out
+      // either — and the operator path to `/v1/billing/entitlements` keeps
+      // gating on `billing`, unchanged. What it buys is an identity that can
+      // read the entitlement matrix WITHOUT a console session, which is what
+      // an unattended parity run has and an operator's Zitadel token is not.
+      "read-entitlements",
     ]);
   });
 
@@ -341,5 +347,52 @@ describe("read-announcements capability", () => {
     expect(SURFACE_CAPABILITIES).not.toContain("read-announcements");
     expect(RISK_CAPABILITIES).not.toContain("read-announcements");
     expect(MACHINE_CAPABILITIES).toContain("read-announcements");
+  });
+});
+
+describe("read-entitlements capability", () => {
+  it("maps the role to its capability", () => {
+    expect(toCapabilities(["read-entitlements"])).toContain("read-entitlements");
+  });
+
+  it("does not grant the billing surface to an entitlement reader", () => {
+    // The whole reason this exists rather than adding `billing` to the
+    // machine bucket. `billing` is estate-wide and covers wallets, refunds,
+    // payouts and subscription state; an unattended matrix reader must hold
+    // none of that.
+    expect(hasCapability(["read-entitlements"], "billing")).toBe(false);
+    expect(toCapabilities(["read-entitlements"])).not.toContain("billing");
+  });
+
+  it("is not granted BY the billing surface either", () => {
+    // The reverse direction, and the one that keeps the operator path honest:
+    // an operator holding `billing` reads entitlements as an operator. If
+    // `billing` implied this, the two principals would stop being
+    // distinguishable at the gate.
+    expect(hasCapability(["billing"], "read-entitlements")).toBe(false);
+  });
+
+  it("is not implied by the other machine capabilities, in either direction", () => {
+    // A price reader has no business enumerating every product's feature
+    // grants, and an entitlement reader none reading promo codes or tickets.
+    for (const other of [
+      "read-plan-catalog",
+      "read-promo-catalog",
+      "product-support",
+      "read-announcements",
+    ] as const) {
+      expect(hasCapability([other], "read-entitlements")).toBe(false);
+      expect(hasCapability(["read-entitlements"], other)).toBe(false);
+    }
+  });
+
+  it("does not let the console-entry capability imply it", () => {
+    expect(toCapabilities(["read"])).not.toContain("read-entitlements");
+  });
+
+  it("is classified as a machine capability, neither surface nor risk verb", () => {
+    expect(SURFACE_CAPABILITIES).not.toContain("read-entitlements");
+    expect(RISK_CAPABILITIES).not.toContain("read-entitlements");
+    expect(MACHINE_CAPABILITIES).toContain("read-entitlements");
   });
 });

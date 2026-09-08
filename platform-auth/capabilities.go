@@ -97,6 +97,24 @@ const (
 	// separate from read-plan-catalog: different contracts, granted to
 	// different readers. See capabilities.ts, the authority this mirrors.
 	CapReadAnnouncements Capability = "read-announcements"
+
+	// CapReadEntitlements reads the compiled plan-feature entitlement matrix
+	// products declare under §8.2 (#618). Held by a Zitadel service user,
+	// never an operator.
+	//
+	// NOT CapBilling. That is an operator SURFACE covering wallets, refunds,
+	// payouts and subscription state, and capabilities are estate-wide — so
+	// granting it to an unattended machine would hand over every product's
+	// revenue in order to let it read a feature matrix.
+	//
+	// The direction is the mirror of the machine capabilities above: those let
+	// a product read a console contract; this lets a console-side machine read
+	// what a product declares. Separate from CapReadPlanCatalog for the reason
+	// read-promo-catalog is separate from read-plan-catalog: a published price
+	// list and an entitlement matrix are different contracts granted to
+	// different readers. See capabilities.ts, which is the authority this
+	// mirrors.
+	CapReadEntitlements Capability = "read-entitlements"
 )
 
 // Capabilities is every known role key, in the order capabilities.ts declares
@@ -108,7 +126,7 @@ var Capabilities = []Capability{
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
 	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
 	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport,
-	CapReadAnnouncements,
+	CapReadAnnouncements, CapReadEntitlements,
 }
 
 // Surfaces say where a principal works.
@@ -129,6 +147,7 @@ var Verbs = []Capability{
 // capabilities.ts.
 var Machines = []Capability{
 	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport, CapReadAnnouncements,
+	CapReadEntitlements,
 }
 
 func known(c Capability) bool {

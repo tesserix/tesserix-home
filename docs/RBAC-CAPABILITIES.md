@@ -106,6 +106,32 @@ author. A merchant's reply to a `resolved` ticket reopens it — decided by the
 server from the ticket's state, never asserted by the caller — and a merchant
 may not reply to a `closed` one. All three match apps/web.
 
+`read-entitlements` (tesserix-home#618) is the fifth machine capability, and
+the first whose holder is a CONSOLE-side machine rather than a product's. It
+does not guard a route of its own: it is an ALTERNATIVE way into
+`GET /v1/billing/entitlements`, which an operator still reaches through
+`billing`. **NOT YET CREATED OR GRANTED IN ZITADEL**; until it is, that
+capability admits nobody and the route answers 403 to every machine caller,
+which is the correct answer rather than a bug. The operator path is unaffected.
+
+It exists because entitlement parity cannot run unattended. Everything reaching
+platform-api resolves the OPERATOR's token from their session, and the nightly
+CronJob has none — so parity only runs when someone presses a button, unlike
+price parity, which reads Stripe and Postgres and has machine identities for
+both.
+
+Deliberately NOT `billing` widened to machines. `billing` is an operator
+surface covering subscriptions, trials and coupon writes, and capabilities are
+estate-wide (§7) — so granting it to an unattended identity would hand over
+every product's revenue in order to read a feature matrix. The two sibling
+reads on that surface keep the `billing`-only gate for the same reason: they
+have no machine caller, and offering one would widen a grant nobody asked for.
+
+Whoever provisions it should note the grant is still real: a holder can read
+every product's entitlement matrix, because the capability answers WHETHER and
+nothing here answers WHICH. It must be a service user of its own and not the
+identity the operator path uses.
+
 ### Minting a machine token to test either endpoint
 
 The scope matters more than it looks, and getting it wrong costs an hour. Three
@@ -187,9 +213,24 @@ of the surfaces they do hold. The shell is not a surface.
 
 `publish-catalog`, `adjust-balance`, `execute-refund` are **verbs**, asserted by
 actions rather than by routes — #261 took every action off `read` and gave it
-its own. `read-plan-catalog` and `read-promo-catalog` are the machine
-capabilities above; each guards a versioned API route rather than a console
-surface.
+its own.
+
+The **machine** capabilities described above guard no console surface either,
+and they do not all guard the same kind of thing:
+
+- `read-plan-catalog`, `read-promo-catalog`, `read-announcements` and
+  `product-support` each guard a versioned API route — a product reading a
+  contract the console publishes.
+- `read-entitlements` guards **no route of its own**. It is an alternative on
+  `GET /v1/billing/entitlements`, which an operator reaches with `billing`;
+  the machine capability exists so an unattended caller can reach that one
+  route without being handed an operator's estate-wide billing surface.
+
+This list previously named only the first two and was already stale before
+`read-entitlements` was added (#618) — `product-support` and
+`read-announcements` had been missing. Nothing tests this file, which is why
+it drifted; it is the fourth place this vocabulary is written down, after
+`capabilities.go`, `capabilities.ts` and platform-api's alias layer.
 
 ## What the review shows
 

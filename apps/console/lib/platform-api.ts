@@ -207,7 +207,72 @@ function unwrapEnvelope(label: string, status: number, body: unknown): Envelope 
 }
 
 /**
- * Call the platform API as the current operator.
+ * WHICH PRINCIPAL a call authenticates as. There is no default anywhere in this
+ * module: every path names one (#618).
+ *
+ * `"operator"` is the human whose session is being served — the only principal
+ * that existed before #618, and still the right one for every surface an
+ * operator is looking at. `"machine"` is the console ITSELF, holding a Zitadel
+ * `client_credentials` grant, for work that has no operator: a CronJob, a
+ * scheduled parity run.
+ *
+ * The choice is a required argument rather than a fallback, and the two
+ * resolvers live in separate modules that do not import each other. See the
+ * header of `lib/auth/machine-token.ts` for what a fallback would cost: every
+ * operator-facing read would keep succeeding as the machine once a session
+ * expired, auditing the wrong principal and widening what a request with no
+ * live session can see.
+ */
+export type PlatformPrincipal = "operator" | "machine";
+
+/**
+ * The bearer token for `principal`, or a `PlatformApiError` saying why there is
+ * none.
+ *
+ * Each branch resolves ONE principal and fails within it. Neither reaches for
+ * the other's resolver, and neither may be given a fallback to it.
+ */
+async function bearerFor(principal: PlatformPrincipal, label: string): Promise<string> {
+  if (principal === "machine") {
+    const { resolveMachineToken } = await import("./auth/machine-token");
+    const { token, unavailable } = await resolveMachineToken();
+    if (token) return token;
+    // `noOperatorToken` is deliberately NOT set for any of these: it means
+    // "sign in again", and there is no one to sign in. A machine credential
+    // that is absent or broken is fixed by whoever provisions it — see
+    // `docs/RUNBOOK-MACHINE-CAPABILITY.md` — and telling an operator to
+    // re-authenticate would send the wrong person after the wrong thing.
+    throw new PlatformApiError(
+      unavailable === "not-configured"
+        ? `${label}: no machine credential is configured for the platform API (#618)`
+        : unavailable === "incomplete-configuration"
+          ? `${label}: the platform API machine credential is incompletely configured`
+          : `${label}: could not mint a platform API token for the console's machine identity`,
+    );
+  }
+
+  const { resolvePlatformApiToken } = await import("./auth/platform-token");
+  const { token, reauthRequired } = await resolvePlatformApiToken();
+  if (token) return token;
+  // The marker is set ONLY for the absence a fresh sign-in mints a token for.
+  // Marking every tokenless case would tell an operator to sign in again when
+  // the encryption key is unset — where the callback's write fails the same
+  // check the read did, so the new session lands on the identical prompt,
+  // forever — or when tesserix-postgres is down, where it answers an outage
+  // with a callout asserting nothing is broken. Both are this branch's own
+  // failure mode in better clothes: the unactionable message replaced by a
+  // confidently wrong one.
+  throw new PlatformApiError(
+    reauthRequired
+      ? `${label}: this session carries no platform API access token (ADR-003 D8)`
+      : `${label}: could not obtain a platform API access token for this session`,
+    undefined,
+    { noOperatorToken: reauthRequired },
+  );
+}
+
+/**
+ * Call the platform API as `principal`.
  *
  * Throws when there is no token rather than sending the request unauthenticated:
  * a 401 with no body a human wrote is a worse answer than saying plainly that
@@ -217,6 +282,7 @@ function unwrapEnvelope(label: string, status: number, body: unknown): Envelope 
  * operator acting on a queue must not be shown a cached one.
  */
 async function platformCall(
+  principal: PlatformPrincipal,
   label: string,
   path: string,
   init: RequestInit = {},
@@ -225,25 +291,7 @@ async function platformCall(
   if (!origin) {
     throw new PlatformApiError(`${label}: the platform API origin is not configured`);
   }
-  const { resolvePlatformApiToken } = await import("./auth/platform-token");
-  const { token, reauthRequired } = await resolvePlatformApiToken();
-  if (!token) {
-    // The marker is set ONLY for the absence a fresh sign-in mints a token for.
-    // Marking every tokenless case would tell an operator to sign in again when
-    // the encryption key is unset — where the callback's write fails the same
-    // check the read did, so the new session lands on the identical prompt,
-    // forever — or when tesserix-postgres is down, where it answers an outage
-    // with a callout asserting nothing is broken. Both are this branch's own
-    // failure mode in better clothes: the unactionable message replaced by a
-    // confidently wrong one.
-    throw new PlatformApiError(
-      reauthRequired
-        ? `${label}: this session carries no platform API access token (ADR-003 D8)`
-        : `${label}: could not obtain a platform API access token for this session`,
-      undefined,
-      { noOperatorToken: reauthRequired },
-    );
-  }
+  const token = await bearerFor(principal, label);
 
   let response: Response;
   try {
@@ -302,7 +350,24 @@ async function platformRequest(
   path: string,
   init: RequestInit = {},
 ): Promise<unknown> {
-  return (await platformCall(label, path, init)).data;
+  return (await platformCall("operator", label, path, init)).data;
+}
+
+/**
+ * As `platformRequest`, but AS THE CONSOLE ITSELF rather than as an operator.
+ *
+ * A separate function, not a parameter on `platformRequest`, so that reading a
+ * call site tells you which principal it acts as without following a default.
+ * Only reads whose route accepts a machine capability may use it — today that
+ * is `/v1/billing/entitlements` and nothing else (#618 T2 deliberately did not
+ * widen the sibling billing routes).
+ */
+async function machineRequest(
+  label: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<unknown> {
+  return (await platformCall("machine", label, path, init)).data;
 }
 
 /** As `platformRequest`, but keeps `meta` — see the table on `platformRequest`
@@ -312,7 +377,7 @@ export async function platformRequestWithMeta(
   path: string,
   init: RequestInit = {},
 ): Promise<{ data: unknown; meta: unknown }> {
-  return platformCall(label, path, init);
+  return platformCall("operator", label, path, init);
 }
 
 /**
@@ -800,10 +865,13 @@ export async function fetchEstateSubscriptions(): Promise<
 /**
  * Every federating product's compiled plan-feature matrix — contract §8.2.
  *
- * Gated on the `billing` capability at the platform API, exactly as
- * {@link fetchEstateSubscriptions} is, so a `403` here means the operator
- * holds `platform` but not `billing` — a real and intended outcome rather than
- * a bug.
+ * Gated at the platform API on EITHER the operator capability `billing` — as
+ * {@link fetchEstateSubscriptions} is — or the machine capability
+ * `read-entitlements` (#618). So a `403` here means this principal holds
+ * neither: for an operator, `platform` but not `billing`; for the console's
+ * machine identity, a grant that was never made. Both are real and intended
+ * outcomes rather than bugs. Its sibling billing routes were deliberately NOT
+ * widened, so they remain operator-only.
  *
  * NO `limit`, unlike its two siblings, and that is not an oversight: the
  * endpoint's parameter allowlist is `source` alone, because the matrix is
@@ -820,14 +888,24 @@ export async function fetchEstateSubscriptions(): Promise<
  */
 export async function fetchProductEntitlements(
   source?: string,
+  options: { as?: PlatformPrincipal } = {},
 ): Promise<import("./billing").EntitlementPage> {
   const { parseEntitlements } = await import("./billing");
   // Built only when there is something to send: an empty `?` is a URL the
   // endpoint's allowlist has no reason to see, and omitting `source` is how a
   // caller asks the whole estate.
   const query = source ? `?${new URLSearchParams({ source }).toString()}` : "";
+  const path = `/v1/billing/entitlements${query}`;
+  // DEFAULTS TO THE OPERATOR, and that is load-bearing: every caller today is a
+  // console surface or a server action an operator triggered, and all of them
+  // must keep auditing as that operator. `as: "machine"` is an opt-in for a
+  // caller that has no operator at all — a CronJob — and it is not wired to one
+  // yet, on purpose: without the Zitadel grant it would fail every night, which
+  // is noisier and less honest than not running (#618).
   return parseEntitlements(
-    await platformRequest("entitlements", `/v1/billing/entitlements${query}`),
+    options.as === "machine"
+      ? await machineRequest("entitlements", path)
+      : await platformRequest("entitlements", path),
   );
 }
 

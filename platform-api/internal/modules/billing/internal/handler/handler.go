@@ -38,6 +38,23 @@
 // this on, and it is smaller than leaving a required contract endpoint
 // unreadable — but it is not nothing.
 //
+// # The entitlements read also admits a machine (#618)
+//
+// Entitlement parity cannot run unattended, because everything reaching this
+// API resolves the OPERATOR's Zitadel token from their session and a CronJob
+// has none. So `GET /v1/billing/entitlements` — and only that route — accepts
+// EITHER `billing` or `read-entitlements`, the machine capability #618 added
+// for exactly this.
+//
+// `billing` was NOT made a machine capability instead, which would have been
+// the shorter change. Capabilities are estate-wide, so an unattended identity
+// holding it could read every product's subscriptions, trials and coupon
+// history in order to read a feature matrix.
+//
+// The Zitadel role does not exist yet, so today `read-entitlements` admits
+// nobody and this alternative is inert. That is the correct answer rather than
+// a bug: the code is in place and the grant is a separate, deliberate act.
+//
 // # The two writes gate on `publish-catalog` as well
 //
 // Reading what the estate bills is one thing; putting a coupon on a live
@@ -85,8 +102,18 @@ type Route struct {
 	// is what mounts the `publish-catalog` gate as well. The two coincide
 	// because both of this module's writes are that kind of write;
 	// capability_test asserts the correspondence rather than assuming it.
-	Write   bool
-	handler func(*Handler) http.HandlerFunc
+	Write bool
+	// MachineCapability names the capability that ALSO admits this route, held
+	// by a service identity instead of the `billing` surface. Empty on a route
+	// no machine calls, which is every route but one.
+	//
+	// It is an ALTERNATIVE, not an addition. Write stacks a second gate (AND);
+	// this offers a second way in (OR), for a route two different KINDS of
+	// principal reach for the same reason. The two must not both be set on one
+	// route — an unattended identity that may change live billing is a grant
+	// nobody has made — and capability_test refuses that combination.
+	MachineCapability auth.Capability
+	handler           func(*Handler) http.HandlerFunc
 }
 
 // RouteTable is every route this module serves, and the ONLY place they are
@@ -97,7 +124,8 @@ var RouteTable = []Route{
 	{Method: http.MethodGet, Pattern: "/v1/billing/trials",
 		handler: func(h *Handler) http.HandlerFunc { return h.trials }},
 	{Method: http.MethodGet, Pattern: "/v1/billing/entitlements",
-		handler: func(h *Handler) http.HandlerFunc { return h.entitlements }},
+		MachineCapability: auth.CapReadEntitlements,
+		handler:           func(h *Handler) http.HandlerFunc { return h.entitlements }},
 	{Method: http.MethodPost, Pattern: "/v1/billing/tenants/{id}/discount", Write: true,
 		handler: func(h *Handler) http.HandlerFunc { return h.applyDiscount }},
 	{Method: http.MethodPost, Pattern: "/v1/billing/tenants/{id}/discount/remove", Write: true,
@@ -163,10 +191,32 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 			auth.RequireCapability(auth.CapBilling, h.log,
 				auth.RequireCapability(auth.CapPublishCatalog, h.log, handler)))
 	}
+	// EITHER the operator surface or one machine capability — the shape
+	// RequireAnyCapability exists for, and the one #152's tickets reads
+	// already use. An operator reaches the entitlement matrix through
+	// `billing` because it is part of the estate's revenue terms; the
+	// console's own unattended machine reaches it through
+	// `read-entitlements` because parity has to run without a session.
+	// Neither implies the other, so this is "either", not "both".
+	//
+	// Only the route that NAMES a machine capability gets this gate. The two
+	// sibling reads keep the `billing`-only surface: widening them would hand
+	// an unattended identity every product's subscriptions and trials, which
+	// is a decision nobody has made.
+	alsoMachine := func(machine auth.Capability) func(http.HandlerFunc) http.Handler {
+		return func(handler http.HandlerFunc) http.Handler {
+			return auth.Authenticate(verifier, h.log,
+				auth.RequireAnyCapability(
+					[]auth.Capability{auth.CapBilling, machine}, h.log, handler))
+		}
+	}
 	for _, r := range RouteTable {
 		gate := surface
-		if r.Write {
+		switch {
+		case r.Write:
 			gate = change
+		case r.MachineCapability != "":
+			gate = alsoMachine(r.MachineCapability)
 		}
 		mux.Handle(r.Method+" "+r.Pattern, gate(r.handler(h)))
 	}

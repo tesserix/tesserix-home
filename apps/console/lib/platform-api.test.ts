@@ -118,7 +118,7 @@ beforeEach((ctx) => {
 function installFetchStub<T extends (...args: never[]) => unknown>(impl: T): T {
   const owner = scope;
   if (!owner) {
-    // Unreachable today — all 43 call sites are inside `it()` bodies or helpers
+    // Unreachable today — all 45 call sites are inside `it()` bodies or helpers
     // called from them, so `beforeEach` has always run. Guarded anyway because
     // it is the one path that would fail silently: with no scope to record a
     // leak against, every call would be withheld and the test would hang to a
@@ -1724,5 +1724,80 @@ describe("fetchProductEntitlements", () => {
 
     expect([...sent(fetchMock).searchParams.keys()]).toEqual(["source"]);
     expect(sent(fetchMock).searchParams.get("source")).toBe("mark8ly");
+  });
+});
+
+/**
+ * The same read, as the CONSOLE rather than as an operator — #618.
+ *
+ * `/v1/billing/entitlements` is the one route T2 widened: it accepts either the
+ * operator capability `billing` or the machine capability `read-entitlements`.
+ * Nothing selects the machine path in production yet, and that is deliberate —
+ * the Zitadel grant does not exist, so a CronJob wired to it would fail every
+ * night. What these pin is that the path is correct when something does select
+ * it, and that selecting it does NOT quietly become the default.
+ */
+describe("fetchProductEntitlements as the console's machine identity", () => {
+  const MATRIX = {
+    source: "mark8ly",
+    catalog_mode: "test",
+    features: ["stores"],
+    plans: { trial: { stores: 1 }, starter: { stores: 1 }, studio: { stores: 3 }, pro: { stores: -1 } },
+  };
+
+  function json(body: unknown) {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  function withMachineCredential() {
+    vi.stubEnv("ZITADEL_MACHINE_CLIENT_ID", "machine-client");
+    vi.stubEnv("ZITADEL_MACHINE_CLIENT_SECRET", "machine-secret");
+    vi.stubEnv("ZITADEL_ISSUER", "https://auth.tesserix.test");
+    vi.stubEnv("ZITADEL_PROJECT_ID", "386377618200461939");
+  }
+
+  it("presents the machine's own token, never the operator's", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withMachineCredential();
+    // An operator token IS available. The machine path must not reach for it —
+    // acting as the wrong principal is the failure, not the absence of one.
+    withToken("access-token-1");
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      String(url).includes("/oauth/v2/token")
+        ? json({ access_token: "machine-token-1", expires_in: 3600 })
+        : json(envelope({ data: [MATRIX], failures: [] })),
+    );
+    installFetchStub(fetchMock);
+
+    await fetchProductEntitlements(undefined, { as: "machine" });
+
+    const call = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/v1/billing/entitlements"),
+    );
+    expect(call).toBeDefined();
+    const headers = new Headers(call?.[1]?.headers);
+    expect(headers.get("authorization")).toBe("Bearer machine-token-1");
+  });
+
+  it("refuses without a credential, and does NOT tell an operator to sign in again", async () => {
+    // The deployed state today. `noOperatorToken` would send a human after a
+    // remedy that cannot work: nothing an operator does provisions a Zitadel
+    // service user.
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    vi.stubEnv("ZITADEL_MACHINE_CLIENT_ID", "");
+    vi.stubEnv("ZITADEL_MACHINE_CLIENT_SECRET", "");
+    withToken("access-token-1");
+    const fetchMock = vi.fn();
+    installFetchStub(fetchMock);
+
+    const err = await fetchProductEntitlements(undefined, { as: "machine" }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(PlatformApiError);
+    expect(err.noOperatorToken).toBe(false);
+    expect(err.message).toContain("no machine credential");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
