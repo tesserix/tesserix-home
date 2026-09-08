@@ -54,6 +54,19 @@ type Query struct {
 	// IncludeStripeManaged opts trials managed by Stripe back in. Products
 	// exclude them by default; forwarded rather than decided here.
 	IncludeStripeManaged bool
+
+	// IncludeEnded asks each product for trials whose end has already passed,
+	// turning §8.2's work queue into a census.
+	//
+	// Forwarded, not decided here, for the same reason as the flag above: a
+	// product's default is its own business. A product that does not
+	// understand the parameter answers its default, which is the pre-existing
+	// behaviour and not an error.
+	//
+	// Why it exists: a forward window cannot show an overdue trial at any
+	// width, and "ended days ago and still trialing" is the state that means a
+	// product's expiry sweep has stopped. It was invisible estate-wide.
+	IncludeEnded bool
 	// IncludeSignup opts in tenants that signed up and never completed
 	// checkout. mark8ly's Bootstrap creates every subscription as a trial in
 	// `signup`, and only a completed Stripe checkout moves it to `trialing`,
@@ -90,6 +103,9 @@ func (q Query) trialsPath() string {
 	params.Set("limit", strconv.Itoa(q.Limit))
 	if q.IncludeStripeManaged {
 		params.Set("include_stripe_managed", "true")
+	}
+	if q.IncludeEnded {
+		params.Set("include_ended", "true")
 	}
 	if q.IncludeSignup {
 		params.Set("include_signup", "true")
@@ -236,8 +252,13 @@ func (s *Service) Trials(
 
 	s.logFailures("trials", failures)
 
-	// Fewest days remaining first. This is a work queue, not a report: the
-	// trial ending soonest is the one somebody acts on today.
+	// Fewest days remaining first — and days_remaining is SIGNED, so an
+	// overdue trial (negative) sorts above one ending today.
+	//
+	// Right for both questions this endpoint answers. As a work queue, the
+	// trial ending soonest is the one somebody acts on today. As a census
+	// (IncludeEnded), the ones already past their end are the most urgent
+	// thing on the page: they mean a product's expiry sweep is not running.
 	sort.SliceStable(rows, func(i, j int) bool {
 		return rows[i].DaysRemaining < rows[j].DaysRemaining
 	})
