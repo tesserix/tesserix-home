@@ -52,16 +52,27 @@ func TestCapabilitiesMatchTheTypeScriptVocabulary(t *testing.T) {
 // worth knowing: a vocabulary assembled at runtime could not be checked against
 // Zitadel's static role list either.
 func parseTSCapabilities(t *testing.T, source string) []string {
+	return parseTSArray(t, source, "CAPABILITIES")
+}
+
+// parseTSArray pulls the quoted entries out of one named `as const` array.
+//
+// Named rather than fixed to CAPABILITIES because the Go/TS mirror is claimed
+// for MACHINE_CAPABILITIES too, and a claim only a comment makes is one nothing
+// keeps. #521 is the precedent one layer over: a capability was added to
+// platform-auth and never reached platform-api's alias layer, because the check
+// that existed compared a different list than the one that had drifted.
+func parseTSArray(t *testing.T, source, name string) []string {
 	t.Helper()
 
-	start := regexp.MustCompile(`export const CAPABILITIES\s*=\s*\[`).FindStringIndex(source)
+	start := regexp.MustCompile(`export const ` + name + `\s*=\s*\[`).FindStringIndex(source)
 	if start == nil {
-		t.Fatal("could not find `export const CAPABILITIES = [` — has capabilities.ts been restructured?")
+		t.Fatalf("could not find `export const %s = [` — has capabilities.ts been restructured?", name)
 	}
 	rest := source[start[1]:]
 	end := regexp.MustCompile(`\n\]\s*as const`).FindStringIndex(rest)
 	if end == nil {
-		t.Fatal("could not find the end of the CAPABILITIES array")
+		t.Fatalf("could not find the end of the %s array", name)
 	}
 	body := rest[:end[0]]
 
@@ -76,7 +87,7 @@ func parseTSCapabilities(t *testing.T, source string) []string {
 		out = append(out, m[1])
 	}
 	if len(out) == 0 {
-		t.Fatal("parsed no capabilities from capabilities.ts — the parser is broken, not the vocabulary")
+		t.Fatalf("parsed no entries from %s in capabilities.ts — the parser is broken, not the vocabulary", name)
 	}
 	return out
 }
@@ -129,6 +140,35 @@ func TestEveryCapabilityIsEntryOrSurfaceOrVerb(t *testing.T) {
 		case 1: // exactly one bucket, as it should be
 		default:
 			t.Errorf("%q appears in more than one bucket — entry, surfaces, verbs and machines must be disjoint", c)
+		}
+	}
+}
+
+// The machine bucket is mirrored across languages too, and until now only a
+// comment said so. `capabilities.go` claims "Mirrors MACHINE_CAPABILITIES in
+// capabilities.ts" and `capabilities.ts` claims the reverse; nothing compared
+// them. Each side separately asserts its own partition is total and disjoint,
+// so a capability placed in Go's `Verbs` and TS's `MACHINE_CAPABILITIES` was
+// green on both sides while disagreeing about the one thing that decides
+// whether an unattended service may hold it.
+//
+// Order is asserted as well as membership, for the reason the CAPABILITIES
+// contract gives: these lists are read side by side by humans, and a reordering
+// that no test notices is a diff nobody can review.
+func TestMachineCapabilitiesMatchTheTypeScriptVocabulary(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "packages", "platform-auth", "src", "capabilities.ts"))
+	if err != nil {
+		t.Fatalf("read capabilities.ts: %v", err)
+	}
+	got := parseTSArray(t, string(source), "MACHINE_CAPABILITIES")
+
+	if len(got) != len(Machines) {
+		t.Fatalf("machine capability count differs — ts has %d %v, go has %d %v",
+			len(got), got, len(Machines), Machines)
+	}
+	for i, want := range got {
+		if string(Machines[i]) != want {
+			t.Errorf("position %d: ts has %q, go has %q", i, want, Machines[i])
 		}
 	}
 }
