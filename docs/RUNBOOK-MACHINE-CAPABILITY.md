@@ -37,6 +37,26 @@ character for character. A contract test asserts those two agree with each
 other; **nothing can check either against Zitadel**, because that needs the
 Management API credential #211 is blocked on.
 
+## Where `read-entitlements` actually stands (2026-09-08)
+
+This runbook was written during #618 and the first steps are already done. It is
+kept as the general procedure; this section says what is left for THIS
+capability, so nobody repeats step 1.
+
+| step | state |
+|---|---|
+| 1. project role `read-entitlements` | **done** — created 2026-09-08, group `machine`, on project `386377618200461939` |
+| 2. machine user `console-entitlements-reader` | **declared** in `tesserix-k8s` `zitadel-bootstrap` values (PR #1050, merged); the reconciler creates it on its next 30-minute run |
+| 3. grant the role to it | **remaining** — by hand; role assignments are not declared anywhere |
+| 4-6. credential, Secret Manager, ESO | **remaining** — by hand; the credential is readable only at issue time |
+| 7. console env | code is on the #618 branch; vars are `ZITADEL_MACHINE_CLIENT_ID` / `_SECRET`, optionally `_TOKEN_URL` and `_PROJECT_ID` |
+
+Note step 2 differs from the general procedure below: machine users in this
+estate are **declared in git**, not clicked. `reconcile_machine_users` creates a
+missing account and never updates an existing one, so creating one by hand does
+not error — it just leaves no declaration, and a rebuilt environment silently
+lacks it.
+
 ## Steps
 
 1. **Create the project role.** On project `386377618200461939`, add role key
