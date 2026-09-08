@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { OBSERVATION_WINDOW_DAYS } from "@/lib/billing/observation-window";
-import type { CatalogSource } from "@/lib/billing/source-policy";
+import { CATALOG_SOURCES, type CatalogSource } from "@/lib/billing/source-policy";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 import {
+  readLastCleanEntitlementRun,
   readLastCleanRuns,
+  readLatestEntitlementRun,
   readLatestRuns,
   readWindowStatus,
+  type LatestEntitlementRun,
   type LatestParityRun,
 } from "@/lib/db/plan-catalog-repo";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -75,6 +78,30 @@ const LAST_CLEAN = "tesserix_console_stripe_parity_last_clean_timestamp_seconds"
 const WINDOW = "tesserix_console_stripe_parity_window_satisfied";
 
 /**
+ * The entitlement pair — tesserix-home#618.
+ *
+ * # `entitlement`, and emphatically not `stripe`
+ *
+ * The prefix on these names says WHICH TWO THINGS a series compares; that is
+ * the whole reason the header above is worded around the pre-existing
+ * `mark8ly_catalog_parity_*` collision. This check compares the console's
+ * published plan-feature matrix against what the product's `plangate`
+ * actually enforces, and never opens a Stripe client. Borrowing `stripe`
+ * would put a third meaning on a name that already carries two.
+ *
+ * # Why they exist only now
+ *
+ * #618 recorded the gauge as deliberately absent, not forgotten: entitlement
+ * parity could only run when an operator pressed a button, and "adding one
+ * would be dishonest while nothing runs on a schedule" — a staleness gauge
+ * measures silence, and silence means nothing without an expectation of noise.
+ * #626 gave the check the nightly CronJob, using the machine credential #622
+ * built. These are the series that expectation now earns.
+ */
+const ENTITLEMENT_DIFFERENCES = "tesserix_console_entitlement_parity_differences";
+const ENTITLEMENT_LAST_CLEAN = "tesserix_console_entitlement_parity_last_clean_timestamp_seconds";
+
+/**
  * HELP text is read at 3am, in an alert annotation, by someone who has never
  * seen this file. Each line therefore says what the number IS, what a bad
  * value means, and what the reader should do about it — not what the code
@@ -93,6 +120,22 @@ const HELP: Record<string, string> = {
     "pair. 0 means no clean run has EVER been recorded for it. Alert on time() minus this " +
     "value: the differences gauge describes the last run, so it reads fine forever once " +
     "the nightly CronJob stops, and this is the half that makes its silence believable.",
+  [ENTITLEMENT_DIFFERENCES]:
+    "Plan/feature entitlements that differ between the console's published catalog and what " +
+    "the product's plangate enforces, as of the last entitlement parity run for this source. " +
+    "Expected 0. NaN means the last run produced no comparison at all (it failed, the mode it " +
+    "reads has never been published, or the source has never run) - not that it agreed. " +
+    "The offending plan/feature pairs are on the console at /platform/billing/catalog; they " +
+    "are deliberately not exported here. This compares the console against the PRODUCT, and " +
+    "never against Stripe - see tesserix_console_stripe_parity_differences for that.",
+  [ENTITLEMENT_LAST_CLEAN]:
+    "Unix time of the last entitlement parity run that found NO differences for this source. " +
+    "0 means no clean run has EVER been recorded for it. Alert on time() minus this value: " +
+    "the differences gauge describes the last run, so it reads fine forever once the nightly " +
+    "CronJob stops or the console's machine credential expires, and this is the half that " +
+    "makes its silence believable. There is deliberately no mode label - the mode a run is " +
+    "filed under is the one the PRODUCT reported reading, and it moves at mark8ly's live-key " +
+    "swap.",
   [WINDOW]:
     "1 when every (mode, source) pair has been clean on every day of the " +
     `${OBSERVATION_WINDOW_DAYS}-day observation window, 0 otherwise. This is tesserix-home #327's ` +
@@ -158,7 +201,15 @@ function formatValue(value: number): string {
  * `last_clean_timestamp` is not advancing, which is what the staleness alert
  * fires on.
  */
-function differenceValue(run: LatestParityRun | null): number {
+function differenceValue(
+  // The two run types are separate on purpose — their `differences` carry
+  // different shapes, and `plan-catalog-repo.ts` argues at length against
+  // widening one into the other. This reads NEITHER report: only the outcome
+  // and the count, which both carry identically. Taking the structural
+  // minimum keeps that separation intact where a union of the two named types
+  // would quietly invite a caller to pass the wrong one somewhere else.
+  run: Pick<LatestParityRun | LatestEntitlementRun, "outcome" | "differenceCount"> | null,
+): number {
   if (!run) return Number.NaN;
   return run.outcome === "clean" || run.outcome === "differences"
     ? run.differenceCount
@@ -184,6 +235,42 @@ function lastCleanValue(ranAt: string | null): number {
 
 function pairLabels(mode: StripeMode, source: CatalogSource): Record<string, string> {
   return { mode, source };
+}
+
+/** One source's two entitlement facts, read together so the emission below
+ *  cannot pair one source's count with another's timestamp. */
+interface EntitlementSample {
+  readonly source: CatalogSource;
+  readonly latest: LatestEntitlementRun | null;
+  readonly lastCleanAt: string | null;
+}
+
+/**
+ * Both entitlement facts, for EVERY source in `CATALOG_SOURCES`.
+ *
+ * Iterated off the constant rather than off whatever the table happens to
+ * hold — the same "every one, always" discipline `readLatestRuns` and
+ * `readLastCleanRuns` document one axis over, and for the identical reason: a
+ * source that has never been checked must SAY so with a present sample, not
+ * vanish. An omitted series is indistinguishable from a failed scrape, so
+ * deriving the list from the rows would make a brand-new product's silence
+ * look exactly like healthy coverage.
+ *
+ * The two reads are separate because they answer different questions: the
+ * latest run whatever its outcome, and the last run that AGREED. On a source
+ * failing nightly those diverge, and that divergence is the entire point of
+ * the staleness gauge — see `readLastCleanEntitlementRun`.
+ */
+async function readEntitlementSamples(): Promise<EntitlementSample[]> {
+  return Promise.all(
+    CATALOG_SOURCES.map(async (source) => {
+      const [latest, lastCleanAt] = await Promise.all([
+        readLatestEntitlementRun(source),
+        readLastCleanEntitlementRun(source),
+      ]);
+      return { source, latest, lastCleanAt };
+    }),
+  );
 }
 
 /**
@@ -222,11 +309,15 @@ export async function GET(): Promise<NextResponse> {
   let latest: Awaited<ReturnType<typeof readLatestRuns>>;
   let lastClean: Awaited<ReturnType<typeof readLastCleanRuns>>;
   let window: Awaited<ReturnType<typeof readWindowStatus>>;
+  let entitlements: EntitlementSample[];
   try {
-    // All three or none. A partial body would publish two of the three series
-    // and leave the third absent — i.e. quietly disarm one alert while the
-    // other two kept reporting, which reads as a healthy target.
-    [latest, lastClean, window] = await Promise.all([
+    // All of them or none. A partial body would publish some series and leave
+    // others absent — i.e. quietly disarm one alert while the rest kept
+    // reporting, which reads as a healthy target the whole time. The
+    // entitlement reads join the same barrier rather than getting their own
+    // `try`, so an entitlement outage cannot publish a price-only body that
+    // looks complete.
+    [latest, lastClean, window, entitlements] = await Promise.all([
       readLatestRuns(),
       readLastCleanRuns(),
       // The window belongs to the caller (see `readWindowStatus`), and this
@@ -234,6 +325,7 @@ export async function GET(): Promise<NextResponse> {
       // alert and the surface can disagree about #327's gate while both are
       // internally consistent.
       readWindowStatus(OBSERVATION_WINDOW_DAYS),
+      readEntitlementSamples(),
     ]);
   } catch {
     // Swallowed deliberately, and NOT logged into the response. Nothing about
@@ -266,6 +358,20 @@ export async function GET(): Promise<NextResponse> {
     // about any one of them. Labelling it by pair would invite an alert on a
     // per-pair value this series does not carry.
     metric(WINDOW, [{ value: window.satisfied ? 1 : 0 }]),
+    metric(
+      ENTITLEMENT_DIFFERENCES,
+      entitlements.map(({ source, latest: run }) => ({
+        labels: { source },
+        value: differenceValue(run),
+      })),
+    ),
+    metric(
+      ENTITLEMENT_LAST_CLEAN,
+      entitlements.map(({ source, lastCleanAt }) => ({
+        labels: { source },
+        value: lastCleanValue(lastCleanAt),
+      })),
+    ),
   ].join("\n");
 
   // Trailing newline: the exposition format terminates every line, including
