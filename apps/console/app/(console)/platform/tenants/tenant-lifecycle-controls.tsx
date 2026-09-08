@@ -13,6 +13,11 @@ import {
   DialogHeader,
   DialogTitle,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Textarea,
 } from "@tesserix/web";
 import { sourceLabel } from "@/lib/audit";
@@ -331,32 +336,50 @@ export function TenantLifecycleAction({
           >
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${fieldId}-reason-code`}>Reason</Label>
-              {/* A native select, matching the ticket surface's status
-                  controls (`tickets/[id]/respond-controls.tsx`) rather than
-                  the packaged Select the tools forms use. Two reasons: this
-                  one sits inside a confirmation an operator must be able to
-                  complete from the keyboard alone, and a native select is the
-                  one control whose behaviour is guaranteed there; and it is
-                  drivable in the jsdom tests that hold the properties above,
-                  which the packaged Select is not. */}
-              <select
-                id={`${fieldId}-reason-code`}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              {/* The design system's `Select`, not a native `<select>`: a
+                  native one renders an OS-drawn popup that ignores the
+                  console's theme, which is what #592 rejected on the
+                  promo-code form.
+                  
+                  Both reasons an earlier comment here gave for staying native
+                  were wrong, and are recorded so they are not reinstated:
+                  
+                  - "the keyboard behaviour is only guaranteed on a native
+                    select" — Radix's Select is a composite widget with full
+                    keyboard support, and this console already ships one inside
+                    a Dialog in `tool-form.tsx`.
+                  - "the packaged Select is not drivable in the jsdom tests" —
+                    it is. `vitest.setup.ts` stubs Pointer Capture,
+                    `scrollIntoView` and `ResizeObserver` globally for exactly
+                    this, and `promo-codes-panel.render.test.tsx` drives one by
+                    opening the trigger and clicking the option. This file's
+                    test does the same.
+                  
+                  The "Choose a reason…" prompt becomes the placeholder rather
+                  than an item — Radix forbids a `SelectItem` with `value=""`,
+                  and the prompt was never a choice, which is why the native
+                  version had to mark it `disabled`. */}
+              <Select
                 value={reasonCode}
                 disabled={pending}
-                aria-invalid={fieldError ? true : undefined}
-                aria-describedby={fieldError ? `${fieldId}-reason-code-error` : undefined}
-                onChange={(event) => setReasonCode(event.target.value)}
+                onValueChange={setReasonCode}
               >
-                <option value="" disabled>
-                  Choose a reason…
-                </option>
-                {codes.map((code) => (
-                  <option key={code.code} value={code.code}>
-                    {code.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  id={`${fieldId}-reason-code`}
+                  className="w-full"
+                  aria-invalid={fieldError ? true : undefined}
+                  aria-describedby={fieldError ? `${fieldId}-reason-code-error` : undefined}
+                >
+                  <SelectValue placeholder="Choose a reason…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {codes.map((code) => (
+                    <SelectItem key={code.code} value={code.code}>
+                      {code.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {fieldError ? (
                 <span
                   id={`${fieldId}-reason-code-error`}

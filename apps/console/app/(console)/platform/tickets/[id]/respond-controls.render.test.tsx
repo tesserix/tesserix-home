@@ -62,17 +62,29 @@ describe("ReplyForm", () => {
   it("sends the chosen transition with the reply", async () => {
     render(<ReplyForm ticketId={TICKET_ID} />);
     await userEvent.type(screen.getByLabelText("Reply"), "Refunded.");
-    await userEvent.selectOptions(screen.getByLabelText("Status on send"), "resolved");
+    // Drives the design system's `Select` — a Radix combobox, not a native
+    // `<select>`, so `selectOptions` has no `<option>` to select (#592). Open
+    // the trigger, then click the option by its VISIBLE label, exactly as an
+    // operator does; the wire value is `resolved`, asserted below.
+    await userEvent.click(screen.getByLabelText("Status on send"));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Mark resolved on send" }),
+    );
     await userEvent.click(screen.getByRole("button", { name: /send reply/i }));
 
     expect(replyToTicket).toHaveBeenCalledTimes(1);
     expect(replyToTicket).toHaveBeenCalledWith(TICKET_ID, "Refunded.", "resolved");
   });
 
-  it("does not offer closing a ticket straight from the composer", () => {
+  it("does not offer closing a ticket straight from the composer", async () => {
     render(<ReplyForm ticketId={TICKET_ID} />);
-    const select = screen.getByLabelText("Status on send");
-    const values = Array.from(select.querySelectorAll("option")).map((o) => o.value);
-    expect(values).toEqual(["none", "in_progress", "resolved"]);
+    // Radix renders its options only while the listbox is OPEN, and as
+    // `role="option"` rather than `<option>` — so the list has to be opened to
+    // be read at all. Asserted on the visible LABELS, which is what an
+    // operator actually chooses from; the property under test is that
+    // "closed" is not among them.
+    await userEvent.click(screen.getByLabelText("Status on send"));
+    const labels = (await screen.findAllByRole("option")).map((o) => o.textContent);
+    expect(labels).toEqual(["Just send", "Mark in progress on send", "Mark resolved on send"]);
   });
 });

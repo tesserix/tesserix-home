@@ -2,7 +2,18 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Callout, CalloutDescription, Input } from "@tesserix/web";
+import {
+  Badge,
+  Button,
+  Callout,
+  CalloutDescription,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tesserix/web";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
 import type { ConversionSignal, ConversionState } from "@/lib/crm-conversion";
 import { linkConversion } from "./[organisation]/actions";
@@ -237,26 +248,34 @@ function HandoffRowItem({
             >
               Product
             </label>
-            <select
-              id={`manual-product-${item.opportunityId}`}
-              className="mt-1 block h-9 rounded-md border border-border bg-background px-2 text-sm"
+            {/* The design system's `Select`, not a native `<select>`: a
+                native one renders an OS-drawn popup that ignores the console's
+                theme (#592).
+                
+                "Select a product…" is now the PLACEHOLDER rather than an
+                option, which strengthens the property the state comment above
+                describes rather than weakening it. Radix forbids a
+                `SelectItem` with `value=""`, and a placeholder is not
+                selectable at all — so where the native version merely relied
+                on the operator not re-picking the blank entry, this one makes
+                un-picking a product impossible. A row that HAS a product still
+                starts on it and never sees the placeholder. */}
+            <Select
               value={manualProduct}
               disabled={pending}
-              onChange={(event) => setManualProduct(event.target.value)}
+              onValueChange={setManualProduct}
             >
-              {/* Only rendered when there is no product to default to. A row
-                  that HAS one starts on it, and this placeholder never
-                  appears — so an operator can never be shown a blank
-                  selection for a deal whose product is already known. */}
-              {item.product ? null : (
-                <option value="">Select a product…</option>
-              )}
-              {products.map((p) => (
-                <option key={p.context} value={p.context}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id={`manual-product-${item.opportunityId}`} className="mt-1 w-48">
+                <SelectValue placeholder="Select a product…" />
+              </SelectTrigger>
+              <SelectContent>
+                {products.map((p) => (
+                  <SelectItem key={p.context} value={p.context}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <label

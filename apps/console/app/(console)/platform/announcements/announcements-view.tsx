@@ -2,6 +2,14 @@
 
 import { useState, useTransition } from "react";
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tesserix/web";
+
 import { SEVERITIES, state, targeting, type Announcement, type Audience, type Severity } from "@/lib/announcements";
 import {
   createAnnouncementAction,
@@ -87,14 +95,27 @@ function Composer() {
         placeholder="Body" rows={4} className="w-full rounded border px-2 py-1" />
 
       <div className="flex flex-wrap gap-3">
-        <label className="text-sm">
-          Severity{" "}
-          <select aria-label="Severity" value={severity}
-            onChange={(e) => setSeverity(e.target.value as Severity)}
-            className="rounded border px-2 py-1">
-            {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
+        {/* The design system's `Select`, not a native `<select>`: a native one
+            renders an OS-drawn popup that ignores the console's theme (#592).
+            
+            `aria-label` on the trigger rather than a wrapping `<label>`: the
+            trigger is a `<button>`, and the implicit association a `<label>`
+            wrapper gives a native control does not survive the swap. The
+            visible word is rendered as a sibling `<span>` so it still reads as
+            a labelled field. */}
+        <span className="flex items-center gap-1.5 text-sm">
+          Severity
+          <Select value={severity} onValueChange={(next) => setSeverity(next as Severity)}>
+            <SelectTrigger aria-label="Severity" size="sm" className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SEVERITIES.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </span>
         <label className="text-sm">
           Products{" "}
           <input aria-label="Products" value={products} onChange={(e) => setProducts(e.target.value)}
