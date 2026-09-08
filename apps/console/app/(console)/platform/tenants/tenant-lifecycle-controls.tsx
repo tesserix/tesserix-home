@@ -224,7 +224,14 @@ export function TenantLifecycleAction({
     // for some rows and not others reads as a rendering fault; one that is
     // present and explains itself reads as the deliberate gap it is.
     return (
-      <div className="flex flex-col gap-1">
+      // `items-start` for the same reason the enabled branch below has it, and
+      // it is load-bearing rather than cosmetic: a flex column defaults to
+      // `align-items: stretch`, so without it the disabled Button grows to the
+      // full width of the Actions cell. That rendered as a wide empty slab with
+      // the word "Suspend" centred in it — reading as a broken layout rather
+      // than as a small control that is unavailable, which is the one thing
+      // this branch exists to communicate.
+      <div className="flex flex-col items-start gap-1">
         <Button
           type="button"
           variant="outline"
@@ -234,7 +241,13 @@ export function TenantLifecycleAction({
         >
           {VERB_LABEL[verb]}
         </Button>
-        <span id={`${fieldId}-unavailable`} className="text-xs text-muted-foreground">
+        {/* Width-capped so the sentence wraps into a readable block instead of
+            one long line across the widest column in the table. `text-pretty`
+            keeps the last line from stranding a single word. */}
+        <span
+          id={`${fieldId}-unavailable`}
+          className="max-w-xs text-pretty text-xs text-muted-foreground"
+        >
           {unknownProductNotice(source)}
         </span>
       </div>
