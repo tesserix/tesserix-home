@@ -44,3 +44,62 @@ if (typeof Element !== "undefined") {
   unobserve() {}
   disconnect() {}
 };
+
+// Web Storage, which THIS environment supplies only on some Node versions.
+//
+// `window.localStorage` reads as `undefined` under Node 26 even though the
+// document has a real origin and jsdom 30 implements Storage. The cause is an
+// interaction, not a missing feature on either side:
+//
+//   - Node 26 itself defines `globalThis.localStorage` as an accessor, and
+//     that accessor returns `undefined` unless the process was started with
+//     `--localstorage-file` (it warns exactly that).
+//   - vitest's jsdom environment populates globals only for keys jsdom owns
+//     that are not already present. `localStorage` IS already present — as
+//     Node's own always-undefined accessor — so jsdom's real Storage never
+//     lands on it.
+//
+// Measured rather than assumed, because the boundary is narrower than it
+// looks — `hasOwnProperty("localStorage")` on a bare `node -e`:
+//
+//   v22.19.0  ABSENT      jsdom's Storage lands, suite passes
+//   v24.20.0  ABSENT      jsdom's Storage lands, suite passes
+//   v26.5.0   present, undefined  jsdom's Storage is shadowed, 25 tests fail
+//
+// So this is NOT "Node 24+". It is Node 26, and CI (`node-version: '22'` in
+// .github/workflows/ci.yml) has always been correctly green — the sidebar
+// suite runs there under `pnpm --filter console test:unit` and passes. This
+// is a LOCAL-ENVIRONMENT fix for developers on Node 26, not a product defect
+// and not a gap in CI coverage.
+//
+// Confirmed a no-op where it should be: with this block in place the same 25
+// tests still pass under v22.19.0, so nothing about CI's behaviour changes.
+//
+// A real Map-backed implementation rather than no-op stubs: the sidebar tests
+// SET a value and assert the component reads it back (#221's collapsed-group
+// persistence), so a stub that dropped writes would convert 25 hard failures
+// into 25 quiet false passes — strictly worse than the state it replaces.
+//
+// Guarded on the VALUE being absent, not on the key: `??=` and a plain
+// `"localStorage" in globalThis` check both see Node's accessor and skip.
+if (typeof globalThis !== "undefined" && !(globalThis as { localStorage?: unknown }).localStorage) {
+  const store = new Map<string, string>();
+  const storage: Storage = {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+    key: (index: number) => [...store.keys()][index] ?? null,
+    removeItem: (key: string) => void store.delete(key),
+    // Both arguments coerced to strings, as the spec requires — a test that
+    // stores a number and asserts on the string it reads back behaves here
+    // exactly as it does in a browser.
+    setItem: (key: string, value: string) => void store.set(String(key), String(value)),
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    writable: true,
+    value: storage,
+  });
+}
