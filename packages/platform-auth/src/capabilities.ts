@@ -216,6 +216,37 @@ export const CAPABILITIES = [
    * route ships, or it answers 403 to every caller.
    */
   "read-announcements",
+
+  /**
+   * Read the compiled plan-feature entitlement matrix that products declare
+   * under §8.2 (tesserix-home#618). Held by a Zitadel service user, never an
+   * operator.
+   *
+   * NOT `billing`. That is an operator SURFACE — wallets, refunds, payouts,
+   * subscription state — and §7 records that capabilities are estate-wide, so
+   * granting it to a machine would hand an unattended identity every product's
+   * revenue in order to let it read a feature matrix. The entitlement read is
+   * the narrow thing actually needed, so it gets its own string rather than
+   * widening one already granted to operators.
+   *
+   * The direction is the mirror of the machine capabilities above: those let a
+   * PRODUCT read a console contract; this lets a console-side machine read
+   * what a product declares. Same reasoning, opposite reader.
+   *
+   * SEPARATE from `read-plan-catalog`, and not implied by it. A published
+   * price list and a compiled entitlement matrix are different contracts: the
+   * catalog reader mark8ly runs today has no business enumerating every
+   * product's feature grants, and folding the two together would widen a grant
+   * already made.
+   *
+   * DEPLOY PRECONDITION, same shape as the other machine capabilities: the
+   * role must exist on the Platform Console project AND be granted to the
+   * service user before an unattended caller can use it. Until then
+   * `/v1/billing/entitlements` answers 403 to that caller — the correct
+   * answer, not a bug in the route. The operator path is unaffected: an
+   * operator holding `billing` keeps reading it exactly as before.
+   */
+  "read-entitlements",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -271,6 +302,7 @@ export const MACHINE_CAPABILITIES = [
   "read-promo-catalog",
   "product-support",
   "read-announcements",
+  "read-entitlements",
 ] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {
