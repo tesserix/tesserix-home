@@ -14,6 +14,11 @@ import {
   DialogTitle,
   Input,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Textarea,
 } from "@tesserix/web";
 import { sourceLabel } from "@/lib/audit";
@@ -922,23 +927,39 @@ export function TenantPricingOverrideAction({
           >
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${fieldId}-mode`}>Stripe account</Label>
-              {/* Native selects throughout, matching the lifecycle control:
-                  this sits inside a confirmation an operator must be able to
-                  complete from the keyboard alone, and a native select is the
-                  one control whose behaviour is guaranteed there. */}
-              <select
-                id={`${fieldId}-mode`}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              {/* The design system's `Select`, not a native `<select>`: a native
+                  one renders an OS-drawn popup that ignores the console's theme,
+                  which is what #592 rejected on the promo-code form for exactly
+                  the same three pickers.
+                  
+                  The keyboard is not the reason to prefer native here, which an
+                  earlier comment on this block claimed. Radix's Select is a
+                  composite widget with full keyboard support, and this console
+                  already ships one inside a Dialog in `tool-form.tsx` and in the
+                  CRM organisation detail view. An operator can complete this
+                  confirmation from the keyboard alone either way.
+                  
+                  `id` on the trigger and NO `aria-label`: the trigger is a
+                  `<button>`, so the `<Label htmlFor>` above is a real
+                  association an `aria-label` would override rather than add to.
+                  
+                  The "Choose an account…" prompt becomes the placeholder rather
+                  than an item — Radix forbids a `SelectItem` with `value=""`,
+                  and the prompt was never a choice, which is why the native
+                  version had to mark it `disabled`. */}
+              <Select
                 value={form.mode}
                 disabled={pending}
-                onChange={(event) => field("mode", event.target.value as StripeMode | "")}
+                onValueChange={(next) => field("mode", next as StripeMode | "")}
               >
-                <option value="" disabled>
-                  Choose an account…
-                </option>
-                <option value="test">test</option>
-                <option value="live">live</option>
-              </select>
+                <SelectTrigger id={`${fieldId}-mode`} className="w-full">
+                  <SelectValue placeholder="Choose an account…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="test">test</SelectItem>
+                  <SelectItem value="live">live</SelectItem>
+                </SelectContent>
+              </Select>
               <p className="text-xs text-muted-foreground">
                 A coupon minted in test mode does nothing for a tenant billed in live mode.
               </p>
@@ -946,23 +967,24 @@ export function TenantPricingOverrideAction({
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${fieldId}-kind`}>Discount</Label>
-              <select
-                id={`${fieldId}-kind`}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              <Select
                 value={form.kind}
                 disabled={pending}
-                aria-invalid={errorFor("discount") ? true : undefined}
-                aria-describedby={errorFor("discount") ? `${fieldId}-discount-error` : undefined}
-                onChange={(event) =>
-                  field("kind", event.target.value as PromoCodeDiscount["kind"] | "")
-                }
+                onValueChange={(next) => field("kind", next as PromoCodeDiscount["kind"] | "")}
               >
-                <option value="" disabled>
-                  Choose a discount…
-                </option>
-                <option value="percent_off">Percent off</option>
-                <option value="amount_off">Amount off</option>
-              </select>
+                <SelectTrigger
+                  id={`${fieldId}-kind`}
+                  className="w-full"
+                  aria-invalid={errorFor("discount") ? true : undefined}
+                  aria-describedby={errorFor("discount") ? `${fieldId}-discount-error` : undefined}
+                >
+                  <SelectValue placeholder="Choose a discount…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percent_off">Percent off</SelectItem>
+                  <SelectItem value="amount_off">Amount off</SelectItem>
+                </SelectContent>
+              </Select>
               {errorFor("discount") ? (
                 <span
                   id={`${fieldId}-discount-error`}
@@ -1014,24 +1036,27 @@ export function TenantPricingOverrideAction({
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${fieldId}-duration`}>How long it lasts</Label>
-              <select
-                id={`${fieldId}-duration`}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              <Select
                 value={form.duration}
                 disabled={pending}
-                aria-invalid={errorFor("duration") ? true : undefined}
-                aria-describedby={errorFor("duration") ? `${fieldId}-duration-error` : undefined}
-                onChange={(event) =>
-                  field("duration", event.target.value as PromoCodeDiscount["duration"] | "")
+                onValueChange={(next) =>
+                  field("duration", next as PromoCodeDiscount["duration"] | "")
                 }
               >
-                <option value="" disabled>
-                  Choose a duration…
-                </option>
-                <option value="once">once</option>
-                <option value="repeating">repeating</option>
-                <option value="forever">forever</option>
-              </select>
+                <SelectTrigger
+                  id={`${fieldId}-duration`}
+                  className="w-full"
+                  aria-invalid={errorFor("duration") ? true : undefined}
+                  aria-describedby={errorFor("duration") ? `${fieldId}-duration-error` : undefined}
+                >
+                  <SelectValue placeholder="Choose a duration…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="once">once</SelectItem>
+                  <SelectItem value="repeating">repeating</SelectItem>
+                  <SelectItem value="forever">forever</SelectItem>
+                </SelectContent>
+              </Select>
               {errorFor("duration") ? (
                 <span
                   id={`${fieldId}-duration-error`}
@@ -1182,29 +1207,30 @@ export function TenantPricingOverrideAction({
               <Label htmlFor={`${fieldId}-revoke-mode`}>
                 Stripe account the override was minted in
               </Label>
-              {/* Native, for the mint dialog's stated reasons. Labelled by the
-                  account the coupon is IN rather than "Stripe account": the two
-                  dialogs ask about different moments, and an operator who reads
-                  this as "where to retire it" has been told nothing wrong, but
-                  one who has a coupon in each mode needs the distinction. */}
-              <select
-                id={`${fieldId}-revoke-mode`}
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              {/* The design system's `Select`, for the mint dialog's stated
+                  reasons. Labelled by the account the coupon is IN rather than
+                  "Stripe account": the two dialogs ask about different moments,
+                  and an operator who reads this as "where to retire it" has been
+                  told nothing wrong, but one who has a coupon in each mode needs
+                  the distinction. */}
+              <Select
                 value={revokeForm.mode}
                 disabled={revokePending}
-                onChange={(event) =>
+                onValueChange={(next) =>
                   setRevokeForm((current) => ({
                     ...current,
-                    mode: event.target.value as StripeMode | "",
+                    mode: next as StripeMode | "",
                   }))
                 }
               >
-                <option value="" disabled>
-                  Choose an account…
-                </option>
-                <option value="test">test</option>
-                <option value="live">live</option>
-              </select>
+                <SelectTrigger id={`${fieldId}-revoke-mode`} className="w-full">
+                  <SelectValue placeholder="Choose an account…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="test">test</SelectItem>
+                  <SelectItem value="live">live</SelectItem>
+                </SelectContent>
+              </Select>
               <p className="text-xs text-muted-foreground">
                 Retiring the test override leaves a live one in place, and the other way round.
               </p>

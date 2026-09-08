@@ -403,12 +403,35 @@ async function openDialog(tenant: EstateTenant = TENANT) {
   return user;
 }
 
+/**
+ * Drives the design system's `Select` — a Radix combobox, not a native
+ * `<select>`, so `selectOptions` has no `<option>` to select (#592). Open the
+ * trigger, then click the option by its visible label, exactly as an operator
+ * does. The Pointer Capture and `scrollIntoView` stubs Radix needs are in
+ * `vitest.setup.ts`; `promo-codes-panel.render.test.tsx` drives its Select the
+ * same way.
+ *
+ * The visible label happens to equal the wire value for every option on these
+ * two dialogs ("test"/"live", "once"/"repeating"/"forever"), except the
+ * discount kind — which is why the caller passes what it wants CLICKED rather
+ * than the value, and the one divergence is spelled out at its call site.
+ */
+async function pick(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  option: string,
+) {
+  await user.click(screen.getByLabelText(label));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
 /** Fills every control the complete form describes, through the UI. */
 async function fillComplete(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(screen.getByLabelText("Stripe account"), "live");
-  await user.selectOptions(screen.getByLabelText("Discount"), "percent_off");
+  await pick(user, "Stripe account", "live");
+  // The one option whose visible label differs from its wire value.
+  await pick(user, "Discount", "Percent off");
   await user.type(screen.getByLabelText("Percent off"), "20");
-  await user.selectOptions(screen.getByLabelText("How long it lasts"), "once");
+  await pick(user, "How long it lasts", "once");
   await user.type(screen.getByLabelText("Name on the tenant's invoice"), COMPLETE.label);
   await user.type(screen.getByLabelText("Why (internal)"), COMPLETE.reason);
 }
@@ -440,9 +463,9 @@ describe("the dialog", () => {
 
   it("reveals the months input only for a repeating discount", async () => {
     const user = await openDialog();
-    await user.selectOptions(screen.getByLabelText("How long it lasts"), "forever");
+    await pick(user, "How long it lasts", "forever");
     expect(screen.queryByLabelText("Months")).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("How long it lasts"), "repeating");
+    await pick(user, "How long it lasts", "repeating");
     expect(screen.getByLabelText("Months")).toBeInTheDocument();
   });
 
@@ -729,7 +752,7 @@ async function openRetireDialog(tenant: EstateTenant = TENANT) {
 
 /** Fills the two controls the retire dialog has, through the UI. */
 async function fillRetire(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(screen.getByLabelText("Stripe account the override was minted in"), "live");
+  await pick(user, "Stripe account the override was minted in", "live");
   await user.type(screen.getByLabelText("Why (internal)"), RETIRE_REASON);
 }
 
@@ -738,10 +761,7 @@ describe("the retire dialog", () => {
     const user = await openRetireDialog();
     const confirm = screen.getByRole("button", { name: "Retire override" });
     expect(confirm).toBeDisabled();
-    await user.selectOptions(
-      screen.getByLabelText("Stripe account the override was minted in"),
-      "live",
-    );
+    await pick(user, "Stripe account the override was minted in", "live");
     // A mode alone is not enough — the reason is mandatory, and the seam
     // refuses without it, so an enabled button here would only ever produce a
     // round trip and a refusal.
@@ -936,7 +956,7 @@ describe("the dialogs describe the whole operation, including the federated half
   // have gone on describing a console that could not apply what it minted.
   it("says the mint dialog will apply the coupon in mark8ly, per store", async () => {
     const user = await openDialog();
-    await user.selectOptions(screen.getByLabelText("Stripe account"), "live");
+    await pick(user, "Stripe account", "live");
 
     const description = screen.getByText(/A coupon with these terms will be created/);
     expect(description).toHaveTextContent("the live Stripe account");
@@ -948,10 +968,7 @@ describe("the dialogs describe the whole operation, including the federated half
 
   it("says the retire dialog will ask mark8ly to take the discount off", async () => {
     const user = await openRetireDialog();
-    await user.selectOptions(
-      screen.getByLabelText("Stripe account the override was minted in"),
-      "test",
-    );
+    await pick(user, "Stripe account the override was minted in", "test");
 
     const description = screen.getByText(/will be retired/);
     expect(description).toHaveTextContent("the test Stripe account");

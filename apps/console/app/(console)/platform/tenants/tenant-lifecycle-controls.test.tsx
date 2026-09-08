@@ -66,6 +66,28 @@ const UNKNOWN_PRODUCT: EstateTenant = {
   status: "active",
 };
 
+/** The visible label of each reason code the CATALOG carries, so a pick reads
+ *  as the operator's click rather than as the wire value. */
+const REASON_LABEL: Record<string, string> = {
+  abuse: "Abuse — abusive content or behaviour",
+  fraud: "Fraud — suspected fraudulent transactions",
+  resolved: "Resolved — the issue is settled",
+  appeal_upheld: "Appeal upheld",
+};
+
+/**
+ * Drives the design system's `Select` — a Radix combobox, not a native
+ * `<select>`, so `selectOptions` has no `<option>` to select (#592). Open the
+ * trigger, then click the option by its visible label, exactly as an operator
+ * does. The Pointer Capture and `scrollIntoView` stubs Radix needs are in
+ * `vitest.setup.ts`; `promo-codes-panel.render.test.tsx` drives its Select the
+ * same way.
+ */
+async function pickReason(user: ReturnType<typeof userEvent.setup>, code: string) {
+  await user.click(screen.getByLabelText("Reason"));
+  await user.click(await screen.findByRole("option", { name: REASON_LABEL[code] ?? code }));
+}
+
 function open(tenant: EstateTenant, reasonCodes: ReasonCodeCatalog = CATALOG) {
   const user = userEvent.setup();
   render(<TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />);
@@ -185,7 +207,7 @@ describe("what the operator is told afterwards", () => {
     const user = open(SUSPENDED);
 
     await user.click(screen.getByRole("button", { name: "Unsuspend Acme Stores" }));
-    await user.selectOptions(screen.getByLabelText("Reason"), "resolved");
+    await pickReason(user, "resolved");
     await user.click(screen.getByRole("button", { name: "Unsuspend" }));
 
     expect(setTenantLifecycleAction).toHaveBeenCalledWith(
@@ -214,8 +236,8 @@ describe("when the write is refused", () => {
     const user = open(ACTIVE);
 
     await user.click(screen.getByRole("button", { name: "Suspend Acme Stores" }));
+    await pickReason(user, "abuse");
     const select = screen.getByLabelText("Reason");
-    await user.selectOptions(select, "abuse");
     await user.click(screen.getByRole("button", { name: "Suspend" }));
 
     const message = await screen.findByRole("alert");
@@ -237,7 +259,7 @@ describe("when the write is refused", () => {
     const user = open(ACTIVE);
 
     await user.click(screen.getByRole("button", { name: "Suspend Acme Stores" }));
-    await user.selectOptions(screen.getByLabelText("Reason"), "abuse");
+    await pickReason(user, "abuse");
     await user.click(screen.getByRole("button", { name: "Suspend" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/do not have permission/i);

@@ -774,19 +774,25 @@ function OpportunityCard({
           <label className="text-xs uppercase tracking-wide text-muted-foreground" htmlFor={`stage-${opportunity.id}`}>
             Stage
           </label>
-          <select
-            id={`stage-${opportunity.id}`}
-            className="mt-1 block h-9 rounded-md border border-border bg-background px-2 text-sm"
+          {/* The design system's `Select`, not a native `<select>`: a native
+              one renders an OS-drawn popup that ignores the console's theme
+              (#592). This file already uses the packaged one elsewhere. */}
+          <Select
             value={stage}
             disabled={pending}
-            onChange={(event) => setStage(event.target.value as CrmStage)}
+            onValueChange={(next) => setStage(next as CrmStage)}
           >
-            {CRM_STAGES.map((value) => (
-              <option key={value} value={value}>
-                {STAGE_LABELS[value]}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id={`stage-${opportunity.id}`} className="mt-1 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CRM_STAGES.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {STAGE_LABELS[value]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {targetNeedsProduct ? (
@@ -794,20 +800,23 @@ function OpportunityCard({
             <label className="text-xs uppercase tracking-wide text-muted-foreground" htmlFor={`product-${opportunity.id}`}>
               Product
             </label>
-            <select
-              id={`product-${opportunity.id}`}
-              className="mt-1 block h-9 rounded-md border border-border bg-background px-2 text-sm"
-              value={product}
-              disabled={pending}
-              onChange={(event) => setProduct(event.target.value)}
-            >
-              <option value="">Choose a product…</option>
-              {products.map((p) => (
-                <option key={p.context} value={p.context}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            {/* "Choose a product…" becomes the placeholder rather than an
+                option — Radix forbids a `SelectItem` with `value=""`. Unlike
+                the native version this also means it cannot be re-picked to
+                clear the field, which is correct here: `targetNeedsProduct`
+                only renders this control when a product IS required. */}
+            <Select value={product} disabled={pending} onValueChange={setProduct}>
+              <SelectTrigger id={`product-${opportunity.id}`} className="mt-1 w-48">
+                <SelectValue placeholder="Choose a product…" />
+              </SelectTrigger>
+              <SelectContent>
+                {products.map((p) => (
+                  <SelectItem key={p.context} value={p.context}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         ) : null}
 

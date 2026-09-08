@@ -2,7 +2,17 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Callout, CalloutDescription, Textarea } from "@tesserix/web";
+import {
+  Button,
+  Callout,
+  CalloutDescription,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from "@tesserix/web";
 import { TICKET_STATUSES, isTerminalStatus, type TicketStatus } from "@/lib/tickets";
 import {
   changeTicketStatus,
@@ -79,24 +89,31 @@ export function StatusControl({
       <label htmlFor="ticket-status" className="sr-only">
         Ticket status
       </label>
-      <select
-        id="ticket-status"
-        className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+      {/* The design system's `Select`, not a native `<select>`: a native one
+          renders an OS-drawn popup that ignores the console's theme (#592).
+          
+          A status this console has no label for is rendered as the
+          PLACEHOLDER rather than as a disabled first option — Radix forbids a
+          `SelectItem` with `value=""`, and an unrecognised status was never a
+          choice an operator could pick, which is what the native version's
+          `disabled` was expressing. The trigger still shows the product's own
+          word for it, so nothing is hidden. */}
+      <Select
         value={TICKET_STATUSES.includes(status as TicketStatus) ? status : ""}
         disabled={pending}
-        onChange={(event) => apply(event.target.value)}
+        onValueChange={apply}
       >
-        {!TICKET_STATUSES.includes(status as TicketStatus) ? (
-          <option value="" disabled>
-            {status}
-          </option>
-        ) : null}
-        {TICKET_STATUSES.map((value) => (
-          <option key={value} value={value}>
-            {STATUS_LABELS[value]}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger id="ticket-status" className="w-48">
+          <SelectValue placeholder={status} />
+        </SelectTrigger>
+        <SelectContent>
+          {TICKET_STATUSES.map((value) => (
+            <SelectItem key={value} value={value}>
+              {STATUS_LABELS[value]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {errorNode}
     </div>
   );
@@ -170,20 +187,19 @@ export function ReplyForm({ ticketId }: { ticketId: string }) {
         <label htmlFor="ticket-status-on-send" className="sr-only">
           Status on send
         </label>
-        <select
-          id="ticket-status-on-send"
-          className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-          value={statusOnSend}
-          disabled={pending}
-          onChange={(event) => setStatusOnSend(event.target.value)}
-        >
-          <option value={NO_TRANSITION}>Just send</option>
-          {STATUS_ON_SEND.map((value) => (
-            <option key={value} value={value}>
-              {STATUS_ON_SEND_LABELS[value]}
-            </option>
-          ))}
-        </select>
+        <Select value={statusOnSend} disabled={pending} onValueChange={setStatusOnSend}>
+          <SelectTrigger id="ticket-status-on-send" className="w-56">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_TRANSITION}>Just send</SelectItem>
+            {STATUS_ON_SEND.map((value) => (
+              <SelectItem key={value} value={value}>
+                {STATUS_ON_SEND_LABELS[value]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button type="submit" disabled={pending || content.trim().length === 0}>
           {pending ? "Sending…" : "Send reply"}
         </Button>
