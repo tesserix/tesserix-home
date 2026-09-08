@@ -87,9 +87,12 @@ vi.mock("./tesserix", () => ({
 import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 
-const { readWindowStatus, readLatestRuns, readLatestEntitlementRun } = await import(
-  "./plan-catalog-repo",
-);
+const {
+  readWindowStatus,
+  readLatestRuns,
+  readLatestEntitlementRun,
+  readLastCleanEntitlementRun,
+} = await import("./plan-catalog-repo");
 
 let db: PGlite;
 
@@ -561,11 +564,15 @@ describe("a run recorded for one source does not answer for another — tesserix
  * what the QUERY ignores, not what the writer sends.
  */
 describe("entitlement runs are not price evidence", () => {
+  // `error` is defaulted from the outcome rather than passed at every call
+  // site: 0033's `..._error_belongs_to_failed` CHECK requires a `failed` row to
+  // carry one and forbids any other row from doing so, so deriving it here
+  // means a caller cannot write a row the real writer could not.
   const recordEntitlement = (mode: string, outcome: string, n: number, differenceCount = 0) =>
     db.query(
       `INSERT INTO plan_catalog_parity_runs
-         (check_kind, mode, source, outcome, ran_at, difference_count, differences)
-       VALUES ('entitlement', $1, $2, $3, $4, $5, $6::jsonb)`,
+         (check_kind, mode, source, outcome, ran_at, difference_count, differences, error)
+       VALUES ('entitlement', $1, $2, $3, $4, $5, $6::jsonb, $7)`,
       [
         mode,
         SOURCE,
@@ -580,6 +587,7 @@ describe("entitlement runs are not price evidence", () => {
             productValue: 1,
           })),
         ),
+        outcome === "failed" ? "the product could not be reached" : null,
       ],
     );
 
@@ -660,5 +668,54 @@ describe("entitlement runs are not price evidence", () => {
     await recordEntitlement("test", "clean", 1);
 
     expect(await readLatestEntitlementRun(SOURCE)).toMatchObject({ outcome: "clean" });
+  });
+
+  /**
+   * `readLastCleanEntitlementRun` — the staleness half (#618), and the two
+   * ways to get it wrong that only a real engine tells apart.
+   *
+   * Both produce entirely reasonable-looking SQL, and both fail in the SAME
+   * direction: a gauge that keeps reading fresh while the check is broken.
+   * That is worse than no gauge, because its silence is what an operator would
+   * take as evidence.
+   */
+  it("answers with the last CLEAN run, not merely the latest one", async () => {
+    // The failure this read exists for: a check that has started failing. A
+    // read that returned the latest row would hand back today's `failed` run,
+    // the gauge would read as minutes old, and the staleness alert would stay
+    // quiet for as long as the check stayed broken.
+    await recordEntitlement("test", "clean", 3);
+    await recordEntitlement("test", "failed", 0);
+
+    expect(await readLastCleanEntitlementRun(SOURCE)).toBe(daysAgo(3));
+  });
+
+  it("never lets a price run stand in for an entitlement one", async () => {
+    // The state production is in tonight: nightly price evidence, and an
+    // entitlement pass that has only just started running. Without the
+    // `check_kind` filter this gauge would have read fresh every night since
+    // #326, for a comparison that had never been performed.
+    await cleanWeek("test");
+
+    expect(await readLastCleanEntitlementRun(SOURCE)).toBeNull();
+  });
+
+  it("answers null when entitlement runs exist but none has ever been clean", async () => {
+    await recordEntitlement("test", "differences", 1, 2);
+    await recordEntitlement("test", "failed", 0);
+
+    expect(await readLastCleanEntitlementRun(SOURCE)).toBeNull();
+  });
+
+  it("crosses the mode boundary, because the mode is the product's and it moves", async () => {
+    // mark8ly's `CONSOLE_CATALOG_MODE` flips at the live-key swap
+    // (mark8ly#371), so consecutive nightly runs of the SAME unbroken check
+    // land under different modes. A mode-keyed read would answer "never clean"
+    // for `live` on the morning after the swap and leave `test` frozen and
+    // climbing — two alerts, neither describing anything that is wrong.
+    await recordEntitlement("test", "clean", 2);
+    await recordEntitlement("live", "clean", 0);
+
+    expect(await readLastCleanEntitlementRun(SOURCE)).toBe(daysAgo(0));
   });
 });

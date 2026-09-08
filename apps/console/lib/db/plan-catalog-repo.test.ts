@@ -15,6 +15,7 @@ import { tesserixQuery } from "./tesserix";
 import {
   readCatalogAmounts,
   readCatalogRows,
+  readLastCleanEntitlementRun,
   readLastCleanRuns,
   readLatestRuns,
   readWindowStatus,
@@ -397,6 +398,64 @@ describe("readLastCleanRuns", () => {
     const runs = await readLastCleanRuns();
 
     expect(runs.find((r) => r.mode === "test")?.ranAt).toBe("2026-09-06T02:15:00.000Z");
+  });
+});
+
+describe("readLastCleanEntitlementRun", () => {
+  it("returns when the source last agreed with the product's gate", async () => {
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      { ran_at: "2026-09-09T02:15:00.000Z" },
+    ] as never);
+
+    expect(await readLastCleanEntitlementRun("mark8ly")).toBe("2026-09-09T02:15:00.000Z");
+  });
+
+  it("answers null for a source that has never run clean, rather than throwing", async () => {
+    // The metrics endpoint turns this into the epoch, which is a staleness
+    // alert firing. Throwing would instead fail the whole scrape and take the
+    // PRICE series down with it — a source nothing has checked must cost its
+    // own series and nothing else.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+
+    expect(await readLastCleanEntitlementRun("mark8ly")).toBeNull();
+  });
+
+  it("asks for entitlement runs only, and only clean ones", async () => {
+    // Asserted on the SQL for the reason its price sibling's twin assertion
+    // is: with one source in `CATALOG_SOURCES`, no set of rows a mock returns
+    // can tell a filtered query from an unfiltered one. Dropping `clean` would
+    // report the last run of ANY outcome as the last clean one, so the
+    // staleness gauge would stay fresh while the check failed nightly —
+    // exactly the failure `readLastCleanRuns` exists to prevent on the price
+    // axis.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+
+    await readLastCleanEntitlementRun("mark8ly");
+
+    const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(String(sql)).toContain("check_kind = 'entitlement'");
+    expect(String(sql)).toContain("outcome = 'clean'");
+    expect(String(sql)).toContain("ORDER BY ran_at DESC");
+    expect(params).toEqual(["mark8ly"]);
+  });
+
+  it("does not key on mode, because the mode is the product's and it moves", async () => {
+    // `CONSOLE_CATALOG_MODE` moves at mark8ly's live-key swap (mark8ly#371).
+    // A read narrowed by mode would answer "never clean" from the moment of
+    // the swap, for a source that had been clean nightly.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+
+    await readLastCleanEntitlementRun("mark8ly");
+
+    expect(String(vi.mocked(tesserixQuery).mock.calls[0][0])).not.toContain("mode =");
+  });
+
+  it("normalises whatever the driver hands back to ISO 8601 UTC", async () => {
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      { ran_at: new Date("2026-09-09T02:15:00.000Z") },
+    ] as never);
+
+    expect(await readLastCleanEntitlementRun("mark8ly")).toBe("2026-09-09T02:15:00.000Z");
   });
 });
 

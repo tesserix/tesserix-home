@@ -1209,16 +1209,21 @@ export async function recordEntitlementParityRun(run: EntitlementParityRun): Pro
  *
  * {@link readLatestRuns} is keyed by pair because the price check is RUN per
  * pair — the CronJob loops over both modes every night, and each pair's window
- * is judged separately for #327's gate. The entitlement check is not: it runs
- * when an operator presses a button, and it files itself under whichever mode
- * the PRODUCT reported reading (`performEntitlementParityCheck` takes the mode
- * off the response, because the console cannot see mark8ly's
- * `CONSOLE_CATALOG_MODE` and it moves at the live-key swap). So "the latest
- * run for `test`" is not a question an operator can act on — they never chose
- * that mode and cannot make a run happen under the other one. "The latest
- * entitlement run, and which mode it turned out to be filed under" is, and
- * that is what this returns, with {@link LatestEntitlementRun.mode} carrying
- * the answer rather than the key.
+ * is judged separately for #327's gate. The entitlement check is not: it files
+ * itself under whichever mode the PRODUCT reported reading
+ * (`performEntitlementParityCheck` takes the mode off the response, because the
+ * console cannot see mark8ly's `CONSOLE_CATALOG_MODE` and it moves at the
+ * live-key swap). So "the latest run for `test`" is not a question an operator
+ * can act on — they never chose that mode and cannot make a run happen under
+ * the other one. "The latest entitlement run, and which mode it turned out to
+ * be filed under" is, and that is what this returns, with
+ * {@link LatestEntitlementRun.mode} carrying the answer rather than the key.
+ *
+ * It ALSO runs nightly, since tesserix-home#626 — this note used to say the
+ * check only ran when an operator pressed a button, and that was true until the
+ * machine credential (#618) made the unattended pass possible. The per-pair
+ * reasoning above is unaffected by that: what changed is who starts a run, not
+ * how many a run produces.
  *
  * `null` means no entitlement run has ever been recorded for this source. It
  * is an ANSWER, not an absence and emphatically not a clean run — the surface
@@ -1269,4 +1274,60 @@ export async function readLatestEntitlementRun(
     differences: row.differences as EntitlementDifference[],
     error: row.error,
   };
+}
+
+/**
+ * When this source's entitlements last AGREED with the product's gate, in ISO
+ * 8601 UTC — `null` when they never have.
+ *
+ * # Why {@link readLatestEntitlementRun} cannot answer this
+ *
+ * The same reason {@link readLastCleanRuns} exists beside {@link readLatestRuns}
+ * one axis over, and it is worth restating rather than cross-referencing,
+ * because the two questions look like one question until the check breaks:
+ * the latest run is whatever ran last, whatever its outcome. On a source that
+ * has been failing nightly for a week, that is last night's `failed` row — and
+ * a caller asking "when did the console and `plangate` last agree?" would read
+ * its timestamp and conclude the check is healthy.
+ *
+ * # Why it is not keyed by mode, and must not become so
+ *
+ * `readLatestEntitlementRun`'s header explains that the mode an entitlement run
+ * is filed under is the mode the PRODUCT reported reading. For THIS read that
+ * stops being a presentation detail and becomes a correctness one, because its
+ * consumer is a Prometheus gauge and a label is a series identity:
+ * `CONSOLE_CATALOG_MODE` moves at mark8ly's live-key swap (mark8ly#371), so a
+ * mode-keyed read would answer "never clean" from the instant of the swap for a
+ * source that had been clean every night up to it — and, on the other side,
+ * would leave the abandoned mode's series frozen and climbing forever. Two
+ * false alerts on the day the estate can least afford noise, and no true one.
+ * The source is stable across the swap. The mode stays where it already is: an
+ * ANSWER on the console surface, never a key.
+ *
+ * # Its one consumer publishes to a surface where free text must never appear
+ *
+ * So this reads `ran_at` and nothing else — no `error`, no `differences`, no
+ * outcome. Same discipline, and same reason, as {@link readLastCleanRuns}.
+ */
+export async function readLastCleanEntitlementRun(
+  source: CatalogSource,
+): Promise<string | null> {
+  const rows = await tesserixQuery<{ ran_at: string | Date }>(
+    `SELECT ran_at
+       FROM plan_catalog_parity_runs
+      WHERE check_kind = 'entitlement' AND outcome = 'clean' AND source = $1
+      ORDER BY ran_at DESC
+      LIMIT 1`,
+    [source],
+  );
+
+  const row = rows[0];
+  // `null` rather than a throw: a source nothing has ever checked clean is an
+  // ANSWER the metrics endpoint renders as the epoch, which is a staleness
+  // alert firing. Throwing would fail the whole scrape and take the price
+  // series down with it.
+  if (!row) return null;
+  // Same driver caveat every sibling documents: a `Date` from `pg`, a string
+  // from pglite, and `new Date(x)` accepts both.
+  return new Date(row.ran_at).toISOString();
 }
