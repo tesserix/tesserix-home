@@ -14,7 +14,15 @@ import {
   type SurfaceState,
 } from "@/components/kit/surface-state";
 import { fetchEstateTenants, fetchLifecycleReasonCodes } from "@/lib/platform-api";
-import type { ReasonCodeCatalog } from "@/lib/tenant-lifecycle";
+// From the standalone module, not the `lib/platform-api` re-export: this is a
+// server component so either would work, but the single-identity rule in
+// `platform-api-error.ts` is easier to keep when every reader names one path.
+import { PlatformApiError } from "@/lib/platform-api-error";
+import {
+  classifyReasonCodeGap,
+  type ReasonCodeCatalog,
+  type ReasonCodeGaps,
+} from "@/lib/tenant-lifecycle";
 import { splitTenantId, type EstateTenant, type TenantSourceFailure } from "@/lib/tenants";
 import { TenantDirectory } from "./tenant-directory";
 
@@ -297,22 +305,36 @@ export function productsOnScreen(tenants: readonly EstateTenant[]): string[] {
  */
 export async function fetchReasonCodeCatalog(
   products: readonly string[],
-): Promise<ReasonCodeCatalog> {
+): Promise<{ catalog: ReasonCodeCatalog; gaps: ReasonCodeGaps }> {
   const entries = await Promise.all(
     products.map(async (product) => {
       try {
-        return [product, await fetchLifecycleReasonCodes(product)] as const;
-      } catch {
-        return null;
+        return {
+          product,
+          codes: await fetchLifecycleReasonCodes(product),
+          gap: undefined,
+        };
+      } catch (caught: unknown) {
+        // The STATUS is kept, where this used to swallow the error whole.
+        // The platform API already separates the two failures that matter —
+        // 503 "could not be reached" from 501 "publishes no vocabulary"
+        // (`writeReasonCodesError`) — and the console was throwing that away
+        // and rendering one sentence for both. The `instanceof` happens HERE,
+        // on the server, so `lib/tenant-lifecycle.ts` can stay import-free for
+        // the client component that reads the result.
+        const status = caught instanceof PlatformApiError ? caught.status : undefined;
+        return { product, codes: undefined, gap: classifyReasonCodeGap(status) };
       }
     }),
   );
 
   const catalog: Record<string, Awaited<ReturnType<typeof fetchLifecycleReasonCodes>>> = {};
+  const gaps: Record<string, ReturnType<typeof classifyReasonCodeGap>> = {};
   for (const entry of entries) {
-    if (entry !== null) catalog[entry[0]] = entry[1];
+    if (entry.codes !== undefined) catalog[entry.product] = entry.codes;
+    else if (entry.gap !== undefined) gaps[entry.product] = entry.gap;
   }
-  return catalog;
+  return { catalog, gaps };
 }
 
 export default async function EstateTenantDirectory({
@@ -342,7 +364,8 @@ export default async function EstateTenantDirectory({
   // After the rows, because which products to ask depends on which are on
   // screen. Sequential rather than parallel with the read for that reason, and
   // it costs nothing when the read failed: there are no rows, so no products.
-  const reasonCodes = await fetchReasonCodeCatalog(productsOnScreen(tenants));
+  const { catalog: reasonCodes, gaps: reasonCodeGaps } =
+    await fetchReasonCodeCatalog(productsOnScreen(tenants));
 
   return (
     <div className="flex flex-col gap-6">
@@ -357,6 +380,7 @@ export default async function EstateTenantDirectory({
         tenants={tenants}
         failures={failures}
         reasonCodes={reasonCodes}
+        reasonCodeGaps={reasonCodeGaps}
         state={directoryState({ error, rows: tenants, filtered })}
         emptyMessage={emptyMessageFor(failures)}
         scopeNote={DIRECTORY_SCOPE_NOTE}

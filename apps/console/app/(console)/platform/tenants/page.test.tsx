@@ -350,7 +350,7 @@ describe("fetchReasonCodeCatalog", () => {
       suspend: [{ code: `${product}_code`, label: "A reason" }],
     }));
 
-    const catalog = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
+    const { catalog } = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
     expect(catalog.mark8ly?.suspend?.[0]?.code).toBe("mark8ly_code");
     expect(catalog.kora?.suspend?.[0]?.code).toBe("kora_code");
   });
@@ -366,23 +366,56 @@ describe("fetchReasonCodeCatalog", () => {
       return { suspend: [{ code: "abuse", label: "Abuse" }] };
     });
 
-    const catalog = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
+    const { catalog, gaps } = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
     expect(catalog.mark8ly).toBeDefined();
     expect("kora" in catalog).toBe(false);
+    // The failure is no longer only an ABSENCE. A 503 is carried as its own
+    // cause so the row can say "could not be reached, reload" instead of the
+    // 501 sentence that sends an operator to the product's admin.
+    expect(gaps.kora).toBe("unreachable");
+    expect("mark8ly" in gaps).toBe(false);
+  });
+
+  // The distinction this pair exists to keep: same absence from the catalog,
+  // different cause, different remedy on screen.
+  it("separates a product that published nothing from one that was unreachable", async () => {
+    const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
+    vi.mocked(fetchLifecycleReasonCodes).mockImplementation(async (product: string) => {
+      throw product === "kora"
+        ? new PlatformApiError("no vocabulary", 501)
+        : new PlatformApiError("unreachable", 503);
+    });
+
+    const { gaps } = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
+    expect(gaps.kora).toBe("unpublished");
+    expect(gaps.mark8ly).toBe("unreachable");
+  });
+
+  // A throw carrying no status is NOT assumed transient: telling an operator
+  // to reload when the cause is a parse failure wastes their time.
+  it("classifies a statusless failure as unknown rather than guessing", async () => {
+    const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
+    vi.mocked(fetchLifecycleReasonCodes).mockRejectedValue(new Error("boom"));
+
+    const { gaps } = await fetchReasonCodeCatalog(["mark8ly"]);
+    expect(gaps.mark8ly).toBe("unknown");
   });
 
   it("returns an empty catalog when every product fails", async () => {
     const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
     vi.mocked(fetchLifecycleReasonCodes).mockRejectedValue(new PlatformApiError("down", 503));
 
-    expect(await fetchReasonCodeCatalog(["mark8ly"])).toEqual({});
+    expect(await fetchReasonCodeCatalog(["mark8ly"])).toEqual({
+      catalog: {},
+      gaps: { mark8ly: "unreachable" },
+    });
   });
 
   it("asks nothing when there are no products", async () => {
     const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
     vi.mocked(fetchLifecycleReasonCodes).mockClear();
 
-    expect(await fetchReasonCodeCatalog([])).toEqual({});
+    expect(await fetchReasonCodeCatalog([])).toEqual({ catalog: {}, gaps: {} });
     expect(fetchLifecycleReasonCodes).not.toHaveBeenCalled();
   });
 });

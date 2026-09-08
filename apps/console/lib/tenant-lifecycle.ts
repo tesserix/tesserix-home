@@ -20,6 +20,53 @@
  * parsing and the lookup — no codes.
  */
 
+/**
+ * Why this render has no vocabulary for a product.
+ *
+ * The two cases have DIFFERENT remedies and must not share a sentence:
+ *
+ *   - `unreachable` — the product was not reached. The platform API answers
+ *     503 for this (`writeReasonCodesError`'s default branch, "the product
+ *     could not be reached for its lifecycle reason codes"). Reloading is the
+ *     remedy, and it is usually enough: `mark8ly-marketplace-api-admin` runs a
+ *     single replica with `maxSurge: 0`, so every one of its deploys takes the
+ *     platform-admin surface down for the length of an image pull. That window
+ *     is a documented, accepted trade-off in its chart — not a fault — which
+ *     is exactly why the console must render it as transient.
+ *   - `unpublished` — the product answered and published nothing. The platform
+ *     API answers 501 for this (`ErrNoReasonCodes`). It is a contract gap on
+ *     the product's side (§8.8) and reloading will never fix it.
+ *
+ * `unknown` is anything else, and it deliberately keeps the older, cautious
+ * copy rather than guessing at one of the two above.
+ */
+export type ReasonCodeGap = "unreachable" | "unpublished" | "unknown";
+
+/** Why each product this render asked has no vocabulary, keyed by product. */
+export type ReasonCodeGaps = Readonly<Record<string, ReasonCodeGap>>;
+
+/** The empty map, for a render where every product answered. */
+export const NO_REASON_CODE_GAPS: ReasonCodeGaps = Object.freeze({});
+
+/**
+ * Classifies a failed §8.8 read from its HTTP status.
+ *
+ * Takes the STATUS rather than the error, deliberately: this module has no
+ * imports and must keep none — it is reached from a `"use client"` component,
+ * and `PlatformApiError` is a value import whose chain used to drag `pg` into
+ * the browser bundle (see `platform-api-error.ts`). The caller does the
+ * `instanceof` on the server and passes the number.
+ *
+ * An absent status is `unknown`, not `unreachable`: a throw with no status is
+ * a client-side bug (a parse failure, a missing origin) as often as it is a
+ * transport one, and telling an operator to reload will not fix either.
+ */
+export function classifyReasonCodeGap(status: number | undefined): ReasonCodeGap {
+  if (status === 503) return "unreachable";
+  if (status === 501) return "unpublished";
+  return "unknown";
+}
+
 /** One reason a lifecycle change may carry. */
 export interface ReasonCode {
   readonly code: string;
