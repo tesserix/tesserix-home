@@ -147,7 +147,14 @@ var subscriptionParameters = []string{"source", "limit"}
 // a caller who sent one has a wrong model of the surface and a silently
 // dropped bound is how someone comes to believe a matrix was truncated.
 var entitlementParameters = []string{"source"}
-var trialParameters = []string{"source", "limit", "include_stripe_managed", "include_signup", "days"}
+
+// Every parameter trialsHandler READS must appear here, or
+// RejectUnknownParameters refuses the request before the parse runs — the
+// caller sees a 400 naming a parameter the handler does in fact understand.
+// TestTrialParametersCoverEveryParameterRead pins the two together.
+var trialParameters = []string{
+	"source", "limit", "include_stripe_managed", "include_signup", "days", "include_ended",
+}
 
 // MaxDays is the widest expiry window this surface will ask a product for.
 //
@@ -412,7 +419,11 @@ func (h *Handler) trials(w http.ResponseWriter, r *http.Request) {
 		// Same reading, and for the same reason: an unrecognised value on a
 		// widening flag means the narrower result.
 		IncludeSignup: query.Get("include_signup") == "true",
-		Days:          days,
+		// The one widening no `days` value can express: every window looks
+		// FORWARD, so a trial that has already ended is absent from all of
+		// them. Same true-only reading as the two above.
+		IncludeEnded: query.Get("include_ended") == "true",
+		Days:         days,
 	})
 	if err != nil {
 		h.writeReadError(w, r, err)
