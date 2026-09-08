@@ -7,12 +7,16 @@ vi.mock("@/lib/db/plan-catalog-repo", () => ({
   readLatestRuns: vi.fn(),
   readLastCleanRuns: vi.fn(),
   readWindowStatus: vi.fn(),
+  readLatestEntitlementRun: vi.fn(),
+  readLastCleanEntitlementRun: vi.fn(),
 }));
 
 import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import {
+  readLastCleanEntitlementRun,
   readLastCleanRuns,
+  readLatestEntitlementRun,
   readLatestRuns,
   readWindowStatus,
 } from "@/lib/db/plan-catalog-repo";
@@ -84,6 +88,10 @@ const PAIRS = STRIPE_MODES.flatMap((mode) =>
 const DIFFERENCES = "tesserix_console_stripe_parity_differences";
 const LAST_CLEAN = "tesserix_console_stripe_parity_last_clean_timestamp_seconds";
 const WINDOW = "tesserix_console_stripe_parity_window_satisfied";
+// `entitlement`, never `stripe`: the prefix says WHICH TWO THINGS a series
+// compares, and this check never touches Stripe. See the route header.
+const ENT_DIFFERENCES = "tesserix_console_entitlement_parity_differences";
+const ENT_LAST_CLEAN = "tesserix_console_entitlement_parity_last_clean_timestamp_seconds";
 
 /** The all-clean fixture the tests vary from, built off the constants rather
  *  than written out, so a second source added to `CATALOG_SOURCES` and not
@@ -118,6 +126,15 @@ function healthy(): void {
     pairs: [],
     satisfied: true,
   } as never);
+  vi.mocked(readLatestEntitlementRun).mockResolvedValue({
+    mode: "test",
+    outcome: "clean",
+    ranAt: "2026-09-09T02:15:00.000Z",
+    differenceCount: 0,
+    differences: [],
+    error: null,
+  } as never);
+  vi.mocked(readLastCleanEntitlementRun).mockResolvedValue("2026-09-09T02:15:00.000Z" as never);
 }
 
 async function body(): Promise<string> {
@@ -271,6 +288,124 @@ describe("every (mode, source) pair emits a sample", () => {
     expect(
       samples.filter((s) => s.name === DIFFERENCES).every((s) => s.value === "NaN"),
     ).toBe(true);
+  });
+});
+
+/**
+ * The entitlement pair — tesserix-home#618's remaining deliverable.
+ *
+ * #618 held this gauge back on the grounds that it "would be dishonest while
+ * nothing runs on a schedule". #626 gave it one, and these are the properties
+ * that make it honest now that it exists.
+ */
+describe("the entitlement series", () => {
+  it("emits both series for every source, always", async () => {
+    const { samples } = parse(await body());
+
+    for (const name of [ENT_DIFFERENCES, ENT_LAST_CLEAN]) {
+      expect(
+        samples.filter((sample) => sample.name === name).map((sample) => sample.labels.source),
+      ).toEqual([...CATALOG_SOURCES]);
+    }
+  });
+
+  it("carries NO mode label, on either series", async () => {
+    // Not cosmetic. `CONSOLE_CATALOG_MODE` moves at mark8ly's live-key swap
+    // (mark8ly#371), and a label is a series identity: a mode-labelled gauge
+    // would retire one series (frozen, staleness climbing forever) and start
+    // another at the epoch (never clean) at the moment of the swap. Two false
+    // alerts and no true one, on the day the estate can least afford noise.
+    const { samples } = parse(await body());
+    const entitlement = samples.filter(
+      (s) => s.name === ENT_DIFFERENCES || s.name === ENT_LAST_CLEAN,
+    );
+
+    // Asserted, not assumed: iterating an empty set would pass this test on a
+    // route that emits no entitlement series at all.
+    expect(entitlement).toHaveLength(2 * CATALOG_SOURCES.length);
+    for (const sample of entitlement) {
+      expect(Object.keys(sample.labels)).toEqual(["source"]);
+    }
+  });
+
+  it("reports the last run's difference count and the last clean timestamp", async () => {
+    vi.mocked(readLatestEntitlementRun).mockResolvedValue({
+      mode: "live",
+      outcome: "differences",
+      ranAt: "2026-09-09T02:15:00.000Z",
+      differenceCount: 4,
+      differences: [],
+      error: null,
+    } as never);
+    vi.mocked(readLastCleanEntitlementRun).mockResolvedValue(
+      "2026-09-08T02:15:00.000Z" as never,
+    );
+
+    const { samples } = parse(await body());
+
+    expect(samples.find((s) => s.name === ENT_DIFFERENCES)?.value).toBe("4");
+    expect(samples.find((s) => s.name === ENT_LAST_CLEAN)?.value).toBe(
+      String(Date.parse("2026-09-08T02:15:00.000Z") / 1000),
+    );
+  });
+
+  it("never reports 0 differences for a run that produced no comparison", async () => {
+    // The same lie `differenceValue` refuses on the price axis: a `failed` run
+    // stores `difference_count = 0` because it compared nothing, and 0 on this
+    // series would assert an agreement nobody observed.
+    for (const outcome of ["failed", "not_bootstrapped"] as const) {
+      vi.mocked(readLatestEntitlementRun).mockResolvedValue({
+        mode: "test",
+        outcome,
+        ranAt: "2026-09-09T02:15:00.000Z",
+        differenceCount: 0,
+        differences: [],
+        error: null,
+      } as never);
+
+      const { samples } = parse(await body());
+
+      expect(samples.find((s) => s.name === ENT_DIFFERENCES)?.value).toBe("NaN");
+    }
+  });
+
+  it("reports a source that has never run as NaN and the epoch, not as agreement", async () => {
+    // The state on the morning this ships: the machine credential exists and
+    // the nightly pass is deployed, but no entitlement row has been written
+    // yet. The honest answer is "nothing has been compared", and it must be
+    // distinguishable from a clean run AND from a failed scrape — hence a
+    // present sample rather than an omitted series.
+    vi.mocked(readLatestEntitlementRun).mockResolvedValue(null as never);
+    vi.mocked(readLastCleanEntitlementRun).mockResolvedValue(null as never);
+
+    const { samples } = parse(await body());
+
+    expect(samples.find((s) => s.name === ENT_DIFFERENCES)?.value).toBe("NaN");
+    expect(samples.find((s) => s.name === ENT_LAST_CLEAN)?.value).toBe("0");
+  });
+
+  it("asks for each source by name, so a second source cannot be silently skipped", async () => {
+    await body();
+
+    expect(vi.mocked(readLatestEntitlementRun).mock.calls.map(([s]) => s)).toEqual([
+      ...CATALOG_SOURCES,
+    ]);
+    expect(vi.mocked(readLastCleanEntitlementRun).mock.calls.map(([s]) => s)).toEqual([
+      ...CATALOG_SOURCES,
+    ]);
+  });
+
+  it("fails the whole scrape when an entitlement read throws", async () => {
+    // All-or-none, for the reason the route header already gives: a partial
+    // body publishes some series and leaves others absent, which quietly
+    // disarms one alert while the rest keep reporting — and reads as a healthy
+    // target the entire time.
+    vi.mocked(readLastCleanEntitlementRun).mockRejectedValue(new Error("nope") as never);
+
+    const res = await GET();
+
+    expect(res.status).toBe(503);
+    expect(await res.text()).not.toContain("nope");
   });
 });
 
