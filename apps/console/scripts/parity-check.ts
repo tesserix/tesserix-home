@@ -1,10 +1,12 @@
 import { pathToFileURL } from "node:url";
 
-import { performParityCheck } from "@/lib/billing/parity-run";
+import { machineCredential } from "@/lib/auth/machine-token";
+import { performParityCheck, runEntitlementParityCheck } from "@/lib/billing/parity-run";
 import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { recordParityRun } from "@/lib/db/plan-catalog-repo";
 import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
+import { platformApiOrigin } from "@/lib/platform-api";
 
 /**
  * The plan-catalog parity check, as the scheduler runs it.
@@ -76,6 +78,27 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  * took test down with it, one absent secret would put a hole in every day of
  * the window rather than in live's half of it.
  *
+ * # TWO CHECKS, ONE INVOCATION (#146)
+ *
+ * The price pass compares the plan catalog against Stripe Prices, per (mode,
+ * source). The entitlement pass compares the published plan-feature matrix
+ * against the one each PRODUCT actually enforces, per source — the mode is not
+ * an input there, it is an ANSWER the product gives, so the axis is sources
+ * alone (see `performEntitlementParityCheck`).
+ *
+ * They share this process and nothing else. In particular they share no early
+ * return: a price failure must not skip the entitlement pass, and an
+ * entitlement failure must not cost a price pair its row. That is the same
+ * independence property the pairs already have among themselves, one axis out,
+ * and for the identical reason — a missing row is the day-shaped hole this
+ * design exists to prevent, and it reads as a clean day a week later.
+ *
+ * The entitlement pass runs AS THE CONSOLE ITSELF (`as: "machine"`, #618).
+ * There is no operator here and none can be minted, so the operator resolver
+ * would answer "this session carries no platform API access token" every night
+ * and every run would be unattributable. The machine path was built for
+ * exactly this caller and this is its first and only production selection.
+ *
  * # Not in this repo
  *
  * The CronJob manifest itself lives in `tesserix-k8s` (#653). It needs: the
@@ -84,6 +107,11 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  * `STRIPE_RESTRICTED_READ_KEY_TEST` and `STRIPE_RESTRICTED_READ_KEY_LIVE` from
  * Secret Manager — each gated and each `optional: true`, because a mode
  * without a key must produce a `failed` row rather than an unschedulable pod.
+ *
+ * tesserix-k8s#1054 adds the entitlement pass's half: `ZITADEL_MACHINE_CLIENT_ID`,
+ * `ZITADEL_MACHINE_CLIENT_SECRET`, `ZITADEL_ISSUER`, `ZITADEL_PROJECT_ID` and
+ * `PLATFORM_API_ORIGIN` — also `optional: true`, and see
+ * {@link entitlementPreconditionGap} for what this job does when they are absent.
  */
 
 /**
@@ -104,8 +132,14 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
 export const EXIT_OK = 0;
 
 /**
- * At least one (mode, source) pair could not run, and said so in a `failed`
- * row.
+ * At least one check could not run, and said so in a `failed` row.
+ *
+ * ACROSS BOTH PASSES, deliberately. These codes describe the state of the
+ * EVIDENCE, not which comparator produced it: a nightly job exiting 0 while an
+ * entitlement row says `failed` would leave the same finding unread as a price
+ * row saying it. The two passes only ever RAISE the code — they are accumulated
+ * and the worst wins — so an entitlement outcome can never mask a price one,
+ * and the price pass's own contribution is bit-for-bit what it was.
  *
  * Non-zero so the CronJob's own alerting fires: an unreadable catalog, an
  * unreachable Stripe or a credential that names the wrong mode is an upstream
@@ -119,8 +153,16 @@ export const EXIT_OK = 0;
 export const EXIT_CHECK_FAILED = 1;
 
 /**
- * There was nowhere to write the evidence, for at least one (mode, source)
- * pair.
+ * There was nowhere to write the evidence, for at least one attempt.
+ *
+ * ACROSS BOTH PASSES, and the entitlement pass reaches it two ways rather than
+ * one — see {@link runEntitlementPass}. A comparison that never happened and a
+ * comparison whose row would not write are different faults with different
+ * remedies, but to the table they are the same fact: no evidence exists for
+ * this attempt, and nothing may make that look like agreement.
+ *
+ * NOT reached by an UNPROVISIONED machine credential. That is a legitimate
+ * deployment state, not a hole — see {@link entitlementPreconditionGap}.
  *
  * The one failure this design cannot record. Distinct from
  * {@link EXIT_CHECK_FAILED} on purpose: that code means a row EXISTS saying
@@ -175,9 +217,187 @@ function log(line: Record<string, unknown>, stream: "out" | "err"): void {
   else console.log(rendered);
 }
 
+/** What one pass contributed to the exit code. Accumulated, never returned
+ *  early on — see {@link runParityCheckJob}. */
+interface PassOutcome {
+  /** At least one comparison answered `failed`, and a row says so. */
+  checkFailed: boolean;
+  /** At least one attempt left no row at all. */
+  unrecordable: boolean;
+}
+
 /**
- * Run the check for every (mode, source) pair, record exactly one row each,
- * and report an exit code.
+ * Why the entitlement pass cannot run on this deployment, or `null` when it
+ * can.
+ *
+ * # An absent credential is a STATE, not a fault
+ *
+ * Every variable the machine path needs is `optional: true` in tesserix-k8s#1054,
+ * so a deployment without them is legitimate — and was the only state that
+ * existed until #618 was provisioned. Letting that reach
+ * {@link runEntitlementParityCheck} would produce an `unattributable` result
+ * every night: {@link EXIT_UNRECORDABLE}, a failing CronJob, and an alert that
+ * fires nightly for as long as nobody provisions the grant. That is the
+ * muted-alert failure {@link EXIT_OK} already spells out for `not_bootstrapped`,
+ * arriving one axis over.
+ *
+ * So it is checked BEFORE the first call, the pass is skipped, and the exit
+ * code is left exactly where the price pass put it. Nothing is recorded and
+ * nothing pretends to have been.
+ *
+ * # `incomplete` is checked here too, and is still not a failure
+ *
+ * Half a credential is a deploy that went wrong rather than one that never
+ * happened, and it is worth naming loudly — `machineCredential` names the
+ * missing variables and never a value. But it is no more recordable than an
+ * absent one: there is still no token and so still no comparison, and turning
+ * it into a non-zero exit would put the price pass's evidence behind an
+ * unrelated secret's rollout.
+ */
+function entitlementPreconditionGap(): { reason: string; stream: "out" | "err" } | null {
+  if (!platformApiOrigin()) {
+    return {
+      reason: "PLATFORM_API_ORIGIN is not set; no product can be asked for its matrix",
+      stream: "err",
+    };
+  }
+  const resolution = machineCredential();
+  if (resolution.state === "absent") {
+    // The ordinary unprovisioned state. stdout, because nothing is wrong.
+    return {
+      reason:
+        "no machine credential is configured for the platform API (#618); entitlement parity is not enabled on this deployment",
+      stream: "out",
+    };
+  }
+  if (resolution.state === "incomplete") {
+    return {
+      // Names the variables, never a value — `machineCredential`'s own
+      // contract, restated at the only place this job prints it.
+      reason: `the platform API machine credential is incompletely configured; missing ${resolution.missing.join(", ")}`,
+      stream: "err",
+    };
+  }
+  return null;
+}
+
+/**
+ * Compare each product's entitlement matrix against the published one, record
+ * a row per source, and report what it contributed to the exit code.
+ *
+ * # Three outcomes, not two, and the log must keep them apart
+ *
+ * {@link runEntitlementParityCheck} carries `run` and `notRecorded`
+ * independently, which is three states and not a boolean:
+ *
+ *  - `run === null` — UNATTRIBUTABLE. No comparison happened at all: the
+ *    product did not answer, answered for nobody, answered with a mode no row
+ *    can be filed under, or the read threw. THE REMEDY IS THE PRODUCT — its
+ *    deployment, its `CONSOLE_CATALOG_MODE`, its federation entry.
+ *  - `run !== null && notRecorded !== null` — UNRECORDABLE. The comparison was
+ *    DECIDED and the row would not write. THE REMEDY IS POSTGRES, and the
+ *    decided outcome is worth printing beside it because it is the only place
+ *    that finding now exists.
+ *  - `notRecorded === null` — recorded. The run's own outcome carries it.
+ *
+ * Both of the first two raise {@link EXIT_UNRECORDABLE}, because to the table
+ * they are the same absence. They are logged differently because they send
+ * different people at different systems, and a single "unrecordable" line would
+ * send both of them at the wrong one.
+ *
+ * # The write failure's message is NOT logged
+ *
+ * `notRecorded` has been through `sanitizeReason`, which redacts Stripe keys.
+ * A `pg` error is a different threat and passes through it untouched:
+ * "password authentication failed for user tesserix_admin" names the role, and
+ * a connection error echoes the host. So the raw `cause` is reduced by
+ * {@link describeWriteFailure} — class and `code` — exactly as the price pass
+ * already does, and for the same reason: this log line goes to the cluster's
+ * sink at a longer retention and a wider audience than the row.
+ *
+ * The UNATTRIBUTABLE reason IS logged in full. It is a platform-API or
+ * federation message about a product, holds no console credential, and is the
+ * only thing that says which product to go and look at.
+ */
+async function runEntitlementPass(): Promise<PassOutcome> {
+  const outcome: PassOutcome = { checkFailed: false, unrecordable: false };
+
+  const gap = entitlementPreconditionGap();
+  if (gap) {
+    log({ check: "entitlements", outcome: "skipped", reason: gap.reason }, gap.stream);
+    return outcome;
+  }
+
+  // One source at a time and accumulated, for the price pass's reasons
+  // verbatim: an early return on the first source would cost the rest their
+  // rows, and the log order stays fixed.
+  for (const source of CATALOG_SOURCES) {
+    // Never throws — every failure comes back as one of the three states.
+    const { run, notRecorded, cause } = await runEntitlementParityCheck(source, {
+      // The whole point of #618. See this file's header.
+      as: "machine",
+    });
+
+    if (run === null) {
+      log(
+        {
+          check: "entitlements",
+          source,
+          outcome: "unattributable",
+          // No `mode`: not knowing which mode was read is the DEFINITION of
+          // this state, and printing a guessed one would be the coercion
+          // `performEntitlementParityCheck` refuses at the source.
+          reason: notRecorded,
+        },
+        "err",
+      );
+      outcome.unrecordable = true;
+      continue;
+    }
+
+    if (notRecorded !== null) {
+      log(
+        {
+          check: "entitlements",
+          mode: run.mode,
+          source,
+          outcome: "unrecordable",
+          // What the comparison DECIDED, printed because the row that would
+          // have held it does not exist. Without this the finding is gone.
+          decided: run.outcome,
+          differenceCount: run.differences.length,
+          reason: "the entitlement parity run could not be written to plan_catalog_parity_runs",
+          ...describeWriteFailure(cause),
+        },
+        "err",
+      );
+      outcome.unrecordable = true;
+      continue;
+    }
+
+    log(
+      {
+        check: "entitlements",
+        mode: run.mode,
+        source,
+        outcome: run.outcome,
+        differenceCount: run.differences.length,
+        // Already redacted by `performEntitlementParityCheck`; null on every
+        // outcome except `failed`.
+        error: run.error,
+      },
+      run.outcome === "failed" ? "err" : "out",
+    );
+
+    if (run.outcome === "failed") outcome.checkFailed = true;
+  }
+
+  return outcome;
+}
+
+/**
+ * Run both checks — every (mode, source) price pair and every source's
+ * entitlement matrix — record exactly one row each, and report an exit code.
  *
  * Returns the code rather than calling `process.exit` so the whole thing is
  * testable — including the cases a naive implementation gets wrong, which are
@@ -215,7 +435,8 @@ export async function runParityCheckJob(): Promise<number> {
     // Accumulated rather than returned early, which IS the independence
     // property: an early return on the first pair's failure would cost the
     // rest their rows, and a missing row is the day-shaped hole this whole
-    // design exists to prevent.
+    // design exists to prevent. The entitlement pass below folds into the same
+    // two flags for the same reason, one axis out.
     let unrecordable = false;
     let checkFailed = false;
 
@@ -264,6 +485,17 @@ export async function runParityCheckJob(): Promise<number> {
         if (run.outcome === "failed") checkFailed = true;
       }
     }
+
+    // AFTER the price loop and OUTSIDE it, unconditionally. Not inside a
+    // `if (!checkFailed)`, and not before: the two passes are independent in
+    // both directions, so a Stripe outage must not cost the entitlement rows
+    // and vice versa. Both have written everything they can by this point.
+    const entitlements = await runEntitlementPass();
+    // OR'd rather than assigned: this pass may only raise the code. See
+    // {@link EXIT_CHECK_FAILED} — an entitlement result can never turn a price
+    // `failed` row, or a price row that would not write, into a green job.
+    checkFailed = checkFailed || entitlements.checkFailed;
+    unrecordable = unrecordable || entitlements.unrecordable;
 
     // Precedence, worst first. See {@link EXIT_UNRECORDABLE}: a `failed` row is
     // evidence and a missing row is a gap that reads as agreement.

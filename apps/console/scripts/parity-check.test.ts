@@ -9,6 +9,31 @@ vi.mock("@/lib/db/plan-catalog-repo", () => ({
   readCatalogAmounts: vi.fn(async () => []),
   readLivePublication: vi.fn(async () => null),
   recordParityRun: vi.fn(async () => {}),
+  // The entitlement pass's half of the repository. Named here rather than left
+  // out: a factory that omits an export the module under test imports fails at
+  // import time with a message about the mock, not about the job.
+  readEntitlements: vi.fn(async () => []),
+  recordEntitlementParityRun: vi.fn(async () => {}),
+}));
+// The federated read the entitlement pass makes, and the two things the job
+// inspects BEFORE making it. Stubbed rather than fetch-stubbed: what this file
+// asserts is which principal the job asks for and what it does with the three
+// answers, not how `platform-api` builds a request — that is
+// `platform-api.test.ts`'s subject.
+vi.mock("@/lib/platform-api", () => ({
+  fetchProductEntitlements: vi.fn(async () => ({ data: [], failures: [] })),
+  platformApiOrigin: vi.fn(() => "https://api.tesserix.test"),
+}));
+vi.mock("@/lib/auth/machine-token", () => ({
+  machineCredential: vi.fn(() => ({
+    state: "configured",
+    credential: {
+      clientId: "console-machine",
+      clientSecret: "not-a-real-secret",
+      tokenUrl: "https://zitadel.test/oauth/v2/token",
+      projectId: "386377618200461939",
+    },
+  })),
 }));
 vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/billing/stripe-read")>()),
@@ -31,8 +56,16 @@ import {
   StripeReadUnavailableError,
   type StripeMode,
 } from "@/lib/billing/stripe-read";
+import { machineCredential } from "@/lib/auth/machine-token";
 import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { readCatalogAmounts, recordParityRun } from "@/lib/db/plan-catalog-repo";
+import {
+  readCatalogAmounts,
+  readEntitlements,
+  readLivePublication,
+  recordEntitlementParityRun,
+  recordParityRun,
+} from "@/lib/db/plan-catalog-repo";
+import { fetchProductEntitlements, platformApiOrigin } from "@/lib/platform-api";
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
 import {
   EXIT_CHECK_FAILED,
@@ -114,6 +147,23 @@ function failMode(failing: StripeMode, cause: Error) {
   });
 }
 
+/** The lines the ENTITLEMENT pass emitted. Tagged `check: "entitlements"` at
+ *  the source, so this is a positive match and not a subtraction. */
+function entitlementLines(): Record<string, unknown>[] {
+  return loggedLines().filter((line) => line.check === "entitlements");
+}
+
+/**
+ * The lines the PRICE pass emitted.
+ *
+ * Matched by the ABSENCE of `check`, because the price pass's log shape is
+ * #327's gate evidence and adding a key to it would change what a week of
+ * archived lines look like. The separation lives in this file instead.
+ */
+function priceLines(): Record<string, unknown>[] {
+  return loggedLines().filter((line) => line.check === undefined);
+}
+
 /** Every structured line the job emitted, parsed back. */
 function loggedLines(): Record<string, unknown>[] {
   const calls = [
@@ -135,6 +185,30 @@ const PAIR_KEYS = STRIPE_MODES.flatMap((mode) =>
   CATALOG_SOURCES.map((source) => `${mode}/${source}`),
 );
 
+/** A provisioned machine credential, as `machineCredential` reports one. */
+const CONFIGURED_CREDENTIAL = {
+  state: "configured",
+  credential: {
+    clientId: "console-machine",
+    clientSecret: "not-a-real-secret",
+    tokenUrl: "https://zitadel.test/oauth/v2/token",
+    projectId: "386377618200461939",
+  },
+} as unknown as ReturnType<typeof machineCredential>;
+
+/** The federated entitlements page, with one product answering for `source`.
+ *  `catalogMode` is the PRODUCT's answer — the entitlement run's mode is taken
+ *  off it and never defaulted. */
+function matrixPage(catalogMode = "test", source: string = SINGLE_SOURCE) {
+  return {
+    data: [{ source, catalogMode, features: ["stores"], plans: { pro: { stores: 3 } } }],
+    failures: [] as { source: string; message: string }[],
+  } as unknown as Awaited<ReturnType<typeof fetchProductEntitlements>>;
+}
+
+/** The entitlement runs the job actually wrote. */
+const entitlementRuns = () => vi.mocked(recordEntitlementParityRun).mock.calls.map((c) => c[0]);
+
 const recordedFor = (mode: StripeMode) =>
   vi.mocked(recordParityRun).mock.calls.map((c) => c[0]).find((run) => run.mode === mode);
 
@@ -147,6 +221,16 @@ beforeEach(() => {
   vi.mocked(recordParityRun).mockResolvedValue(undefined);
   vi.mocked(stripePriceReader.listPrices).mockResolvedValue(matching);
   vi.mocked(closeTesserixPool).mockResolvedValue(undefined);
+  // The entitlement pass's steady state: provisioned credential, a reachable
+  // platform API, one product answering with a matrix, and a mode with nothing
+  // published — `not_bootstrapped`, which is a finding and exits 0. Every
+  // price-path test above therefore keeps the exit code it already asserted.
+  vi.mocked(platformApiOrigin).mockReturnValue("https://api.tesserix.test");
+  vi.mocked(machineCredential).mockReturnValue(CONFIGURED_CREDENTIAL);
+  vi.mocked(fetchProductEntitlements).mockResolvedValue(matrixPage());
+  vi.mocked(readLivePublication).mockResolvedValue(null);
+  vi.mocked(readEntitlements).mockResolvedValue([]);
+  vi.mocked(recordEntitlementParityRun).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -192,7 +276,7 @@ describe("one run covers every (mode, source) pair", () => {
     // catalogs, which is the same defect one axis over (tesserix-home#392).
     await runParityCheckJob();
 
-    const lines = loggedLines();
+    const lines = priceLines();
     expect(lines).toHaveLength(PAIR_COUNT);
     expect(lines.map((l) => `${l.mode}/${l.source}`)).toEqual(PAIR_KEYS);
     for (const line of lines) {
@@ -238,7 +322,7 @@ describe("the pairs are independent", () => {
     const code = await runParityCheckJob();
 
     expect(code).toBe(EXIT_UNRECORDABLE);
-    const line = loggedLines().find((l) => l.outcome === "unrecordable");
+    const line = priceLines().find((l) => l.outcome === "unrecordable");
     // Both axes on the unrecordable line too: an operator reading it has to
     // know which catalog's evidence is missing, not just which account's.
     expect(line).toMatchObject({
@@ -294,7 +378,7 @@ describe("a mode that has never been bootstrapped", () => {
 
     await runParityCheckJob();
 
-    const live = loggedLines().find((l) => l.mode === "live");
+    const live = priceLines().find((l) => l.mode === "live");
     expect(live).toMatchObject({ outcome: "not_bootstrapped", differenceCount: 0 });
   });
 
@@ -349,7 +433,7 @@ describe("a run with differences", () => {
 
     await runParityCheckJob();
 
-    expect(loggedLines().find((l) => l.mode === "test")).toMatchObject({
+    expect(priceLines().find((l) => l.mode === "test")).toMatchObject({
       outcome: "differences",
       differenceCount: 1,
     });
@@ -504,7 +588,7 @@ describe("when a row cannot be written at all", () => {
 
     await runParityCheckJob();
 
-    expect(loggedLines()[0]).toMatchObject({
+    expect(priceLines()[0]).toMatchObject({
       outcome: "unrecordable",
       errorName: "Error",
       errorCode: "28P01",
@@ -516,7 +600,7 @@ describe("when a row cannot be written at all", () => {
 
     await runParityCheckJob();
 
-    expect(loggedLines()[0]).toMatchObject({ errorName: "TypeError", errorCode: null });
+    expect(priceLines()[0]).toMatchObject({ errorName: "TypeError", errorCode: null });
   });
 
   it("refuses to run either mode when the database is not configured", async () => {
@@ -606,5 +690,324 @@ describe("it is a caller, not a second implementation", () => {
     for (const forbidden of ["create", "update", "del", "archive"]) {
       expect(reader[forbidden]).toBeUndefined();
     }
+  });
+});
+
+/**
+ * The entitlement pass (tesserix-home#146).
+ *
+ * Three properties, and they are not the price pass's restated. What this
+ * suite exists for:
+ *
+ *  1. THE TWO PASSES ARE INDEPENDENT IN BOTH DIRECTIONS. A Stripe outage must
+ *     not cost the entitlement rows, and an entitlement failure must not cost
+ *     a price pair its row. The second direction is the dangerous one — the
+ *     entitlement pass runs last, so an implementation that let it throw would
+ *     leave every price row written and still fail the job with no exit code.
+ *  2. THREE OUTCOMES, KEPT APART IN THE LOG. `run === null` sends someone to
+ *     look at the PRODUCT; `run !== null && notRecorded !== null` sends them
+ *     to POSTGRES. A single "unrecordable" line sends both at the wrong one.
+ *  3. AN UNPROVISIONED CREDENTIAL IS SURVIVABLE. Every variable the machine
+ *     path needs is `optional: true`, so a deployment without them is a
+ *     legitimate state — it must skip, say so, and leave the price run's exit
+ *     code exactly where it found it.
+ */
+const SOURCE_COUNT = CATALOG_SOURCES.length;
+
+describe("the entitlement pass", () => {
+  it("records one entitlement run per source", async () => {
+    await runParityCheckJob();
+
+    expect(recordEntitlementParityRun).toHaveBeenCalledTimes(SOURCE_COUNT);
+    expect(entitlementRuns().map((run) => run.source)).toEqual([...CATALOG_SOURCES]);
+  });
+
+  it("asks the product AS THE CONSOLE'S MACHINE IDENTITY, never as an operator", async () => {
+    // The whole reason #618 exists. There is no operator in a CronJob and none
+    // can be minted, so the operator resolver would answer "this session
+    // carries no platform API access token" and every night's run would be
+    // unattributable — a job that fails forever while nothing is wrong.
+    await runParityCheckJob();
+
+    for (const source of CATALOG_SOURCES) {
+      expect(fetchProductEntitlements).toHaveBeenCalledWith(source, { as: "machine" });
+    }
+  });
+
+  it("files the run under the mode the PRODUCT reports, not a hard-coded one", async () => {
+    vi.mocked(fetchProductEntitlements).mockResolvedValue(matrixPage("live"));
+
+    await runParityCheckJob();
+
+    expect(readLivePublication).toHaveBeenCalledWith("live");
+    expect(entitlementRuns()[0]).toMatchObject({ mode: "live" });
+  });
+
+  it("logs one line per source, tagged so it cannot be read as a price row", async () => {
+    await runParityCheckJob();
+
+    const lines = entitlementLines();
+    expect(lines).toHaveLength(SOURCE_COUNT);
+    expect(lines.map((l) => l.source)).toEqual([...CATALOG_SOURCES]);
+    for (const line of lines) {
+      expect(line).toMatchObject({ check: "entitlements", mode: "test" });
+    }
+  });
+
+  it("exits 0 for a mode with nothing published, as the price pass does", async () => {
+    // A finding, not a crash. A non-zero exit makes Kubernetes retry, and the
+    // retry writes a SECOND row for the same finding.
+    expect(await runParityCheckJob()).toBe(EXIT_OK);
+    expect(entitlementRuns()[0]).toMatchObject({ outcome: "not_bootstrapped" });
+  });
+
+  it("exits 0 for entitlement drift, because drift is the check's output", async () => {
+    vi.mocked(readLivePublication).mockResolvedValue({
+      id: "22222222-2222-2222-2222-222222222222",
+      revisionId: "33333333-3333-3333-3333-333333333333",
+      publishedBy: "operator",
+      publishedAt: "2026-09-01T00:00:00.000Z",
+    });
+    vi.mocked(readEntitlements).mockResolvedValue([{ plan: "pro", feature: "stores", value: 9 }]);
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_OK);
+    expect(entitlementRuns()[0]).toMatchObject({ outcome: "differences" });
+    expect(entitlementLines()[0]).toMatchObject({ outcome: "differences", differenceCount: 1 });
+  });
+});
+
+describe("the price pass and the entitlement pass are independent", () => {
+  it("still runs the entitlement pass when every price pair failed", async () => {
+    // The first direction. A Stripe outage is not a reason to stop asking
+    // products what they enforce, and stopping would put a hole in the
+    // entitlement half of the window for a reason that has nothing to do with
+    // it.
+    vi.mocked(readCatalogAmounts).mockRejectedValue(new Error("relation does not exist"));
+
+    await runParityCheckJob();
+
+    expect(recordEntitlementParityRun).toHaveBeenCalledTimes(SOURCE_COUNT);
+  });
+
+  it("still runs the entitlement pass when no price row could be written", async () => {
+    vi.mocked(recordParityRun).mockRejectedValue(new Error("no database"));
+
+    await runParityCheckJob();
+
+    expect(recordEntitlementParityRun).toHaveBeenCalledTimes(SOURCE_COUNT);
+  });
+
+  it("writes every price row even when the entitlement pass blows up", async () => {
+    // THE DIRECTION THAT COSTS EVIDENCE. `runEntitlementParityCheck` promises
+    // never to throw; this asserts the job does not DEPEND on that promise for
+    // the price rows, and — via the resolved exit code — that a broken
+    // entitlement pass cannot take the whole invocation down with it.
+    vi.mocked(fetchProductEntitlements).mockImplementation(() => {
+      throw new Error("entitlement pass exploded");
+    });
+
+    await expect(runParityCheckJob()).resolves.toBeTypeOf("number");
+
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+    expect(recordedFor("test")).toMatchObject({ outcome: "clean" });
+    expect(recordedFor("live")).toMatchObject({ outcome: "clean" });
+  });
+
+  it("cannot turn a failed price check into a green job", async () => {
+    // The entitlement pass only ever RAISES the code. An assignment rather
+    // than an OR here would let a clean entitlement run overwrite a price
+    // failure — the finding still in the table and nobody paged for it.
+    failMode("live", new Error("connect ETIMEDOUT api.stripe.com:443"));
+
+    expect(await runParityCheckJob()).toBe(EXIT_CHECK_FAILED);
+    expect(entitlementRuns()).toHaveLength(SOURCE_COUNT);
+  });
+
+  it("cannot turn an unwritable price row into a green job", async () => {
+    vi.mocked(recordParityRun).mockRejectedValue(new Error("no database"));
+
+    expect(await runParityCheckJob()).toBe(EXIT_UNRECORDABLE);
+  });
+
+  it("does not run at all when the database is not configured", async () => {
+    // The one early return that IS correct: the stored row is the deliverable,
+    // so a run that cannot be recorded is not a run — and that is as true of
+    // the entitlement half as of the price half.
+    vi.mocked(isDatabaseConfigured).mockReturnValue(false);
+
+    expect(await runParityCheckJob()).toBe(EXIT_UNRECORDABLE);
+    expect(fetchProductEntitlements).not.toHaveBeenCalled();
+    expect(recordEntitlementParityRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("the entitlement pass's three outcomes", () => {
+  it("raises a `failed` run to a non-zero exit, with the price rows intact", async () => {
+    vi.mocked(readLivePublication).mockRejectedValue(new Error("db read blew up"));
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_CHECK_FAILED);
+    expect(entitlementRuns()[0]).toMatchObject({ outcome: "failed" });
+    // The row that says so exists — this is a `failed` ROW, not a hole.
+    expect(recordEntitlementParityRun).toHaveBeenCalledTimes(SOURCE_COUNT);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+  });
+
+  it("reports an UNATTRIBUTABLE attempt as its own outcome, naming the product", async () => {
+    // No comparison happened: the product did not answer with a matrix. There
+    // is no mode to file a row under, so nothing is written — and the line has
+    // to send someone at the PRODUCT, not at Postgres.
+    vi.mocked(fetchProductEntitlements).mockResolvedValue({
+      data: [],
+      failures: [{ source: SINGLE_SOURCE, message: "upstream 503" }],
+    } as unknown as Awaited<ReturnType<typeof fetchProductEntitlements>>);
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_UNRECORDABLE);
+    expect(recordEntitlementParityRun).not.toHaveBeenCalled();
+    const line = entitlementLines()[0];
+    expect(line).toMatchObject({ outcome: "unattributable", source: SINGLE_SOURCE });
+    expect(String(line.reason)).toContain("upstream 503");
+    // No guessed mode. Not knowing which one was read IS this state.
+    expect(line.mode).toBeUndefined();
+  });
+
+  it("reports an UNRECORDABLE row differently, carrying what the check decided", async () => {
+    // The comparison WAS decided and the row would not write. Distinct from
+    // the case above in the log, because the remedy is Postgres and because
+    // this line is now the only place the finding exists.
+    vi.mocked(recordEntitlementParityRun).mockRejectedValue(
+      Object.assign(new Error("nope"), { code: "28P01" }),
+    );
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_UNRECORDABLE);
+    expect(entitlementLines()[0]).toMatchObject({
+      outcome: "unrecordable",
+      mode: "test",
+      source: SINGLE_SOURCE,
+      decided: "not_bootstrapped",
+      errorName: "Error",
+      errorCode: "28P01",
+    });
+  });
+
+  it("keeps the two apart, rather than reporting one word for both", async () => {
+    // Asserted as a pair so a future edit cannot collapse them into a shared
+    // "unrecordable" line and stay green: the exit code is the same for both,
+    // so the log is the ONLY thing that distinguishes them.
+    vi.mocked(fetchProductEntitlements).mockResolvedValue({
+      data: [],
+      failures: [{ source: SINGLE_SOURCE, message: "upstream 503" }],
+    } as unknown as Awaited<ReturnType<typeof fetchProductEntitlements>>);
+    await runParityCheckJob();
+    const unattributable = entitlementLines()[0].outcome;
+
+    vi.clearAllMocks();
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(readCatalogAmounts).mockResolvedValue(catalog);
+    vi.mocked(recordParityRun).mockResolvedValue(undefined);
+    vi.mocked(stripePriceReader.listPrices).mockResolvedValue(matching);
+    vi.mocked(closeTesserixPool).mockResolvedValue(undefined);
+    vi.mocked(platformApiOrigin).mockReturnValue("https://api.tesserix.test");
+    vi.mocked(machineCredential).mockReturnValue(CONFIGURED_CREDENTIAL);
+    vi.mocked(fetchProductEntitlements).mockResolvedValue(matrixPage());
+    vi.mocked(readLivePublication).mockResolvedValue(null);
+    vi.mocked(readEntitlements).mockResolvedValue([]);
+    vi.mocked(recordEntitlementParityRun).mockRejectedValue(new Error("no database"));
+    await runParityCheckJob();
+
+    expect(entitlementLines()[0].outcome).not.toBe(unattributable);
+  });
+
+  it("does not leak the driver's message, which names the role and the host", async () => {
+    // `sanitizeReason` would NOT save this — it redacts Stripe keys, and this
+    // is a `pg` error that arrives through `notRecorded` already sanitised and
+    // still fully readable. Same threat the price pass's
+    // `describeWriteFailure` exists for, same log sink.
+    vi.mocked(recordEntitlementParityRun).mockRejectedValue(
+      Object.assign(new Error("password authentication failed for user tesserix_admin"), {
+        code: "28P01",
+      }),
+    );
+
+    await runParityCheckJob();
+
+    const logged = JSON.stringify(loggedLines());
+    expect(logged).not.toContain("password authentication");
+    expect(logged).not.toContain("tesserix_admin");
+  });
+});
+
+describe("an unprovisioned machine credential", () => {
+  it("skips the pass and leaves the price run's exit code untouched", async () => {
+    // Every variable is `optional: true` in tesserix-k8s#1054, so this is a
+    // legitimate deployment state. Failing here would fire an alert nightly
+    // for as long as nobody provisions the grant — the muted-alert failure
+    // `not_bootstrapped` already exists to avoid.
+    vi.mocked(machineCredential).mockReturnValue({ state: "absent" } as unknown as ReturnType<
+      typeof machineCredential
+    >);
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_OK);
+    expect(fetchProductEntitlements).not.toHaveBeenCalled();
+    expect(recordEntitlementParityRun).not.toHaveBeenCalled();
+    // Still writes every price row: the skip is the entitlement pass's alone.
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+  });
+
+  it("says so, once, rather than silently doing nothing", async () => {
+    vi.mocked(machineCredential).mockReturnValue({ state: "absent" } as unknown as ReturnType<
+      typeof machineCredential
+    >);
+
+    await runParityCheckJob();
+
+    const lines = entitlementLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ outcome: "skipped" });
+    expect(String(lines[0].reason)).toContain("machine credential");
+  });
+
+  it("names the missing variables when the credential is only half configured", async () => {
+    // A deploy that went wrong, not one that never happened — otherwise
+    // indistinguishable from the state above. Names the variables and never a
+    // value.
+    vi.mocked(machineCredential).mockReturnValue({
+      state: "incomplete",
+      missing: ["ZITADEL_MACHINE_CLIENT_SECRET"],
+    } as unknown as ReturnType<typeof machineCredential>);
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_OK);
+    expect(String(entitlementLines()[0].reason)).toContain("ZITADEL_MACHINE_CLIENT_SECRET");
+    expect(fetchProductEntitlements).not.toHaveBeenCalled();
+  });
+
+  it("skips when there is no platform API to ask", async () => {
+    vi.mocked(platformApiOrigin).mockReturnValue(null);
+
+    const code = await runParityCheckJob();
+
+    expect(code).toBe(EXIT_OK);
+    expect(entitlementLines()[0]).toMatchObject({ outcome: "skipped" });
+    expect(String(entitlementLines()[0].reason)).toContain("PLATFORM_API_ORIGIN");
+    expect(fetchProductEntitlements).not.toHaveBeenCalled();
+  });
+
+  it("never puts the client secret into a log line", async () => {
+    // The credential is read by this file to decide whether to run. Nothing it
+    // prints may carry a value out of it.
+    await runParityCheckJob();
+
+    expect(JSON.stringify(loggedLines())).not.toContain("not-a-real-secret");
   });
 });

@@ -19,7 +19,7 @@ import {
   type EntitlementParityRun,
   type ParityRun,
 } from "@/lib/db/plan-catalog-repo";
-import { fetchProductEntitlements } from "@/lib/platform-api";
+import { fetchProductEntitlements, type PlatformPrincipal } from "@/lib/platform-api";
 
 // PER (MODE, SOURCE). `performParityCheck` takes both axes and neither has a
 // default, because a run that does not name the catalog it read cannot be
@@ -400,6 +400,23 @@ function unattributable(reason: string): EntitlementParityCheckResult {
   return { status: "unattributable", reason };
 }
 
+export interface EntitlementParityCheckOptions {
+  /**
+   * WHICH PRINCIPAL reads the product's matrix. Defaults to the operator, and
+   * the default is the safe one: every surface that existed before the nightly
+   * job is an operator acting on a page, and all of them must keep auditing as
+   * that operator on the platform API side.
+   *
+   * `"machine"` is the opt-in for a caller that HAS no operator — the parity
+   * CronJob (#618, #146). It is a caller-supplied argument rather than a
+   * fallback for the same reason `lib/platform-api.ts` takes the principal
+   * explicitly: a resolver that quietly reached for the machine credential when
+   * no session was found would widen what a request with no live session can
+   * see, and would audit the service principal for a human's action.
+   */
+  readonly as?: PlatformPrincipal;
+}
+
 /**
  * Compare one product's stored entitlements against the matrix it enforces —
  * and never throw.
@@ -431,6 +448,7 @@ function unattributable(reason: string): EntitlementParityCheckResult {
  */
 export async function performEntitlementParityCheck(
   source: CatalogSource,
+  options: EntitlementParityCheckOptions = {},
 ): Promise<EntitlementParityCheckResult> {
   let mode: StripeMode;
   let productPlans: Readonly<Record<string, Readonly<Record<string, number>>>>;
@@ -439,7 +457,7 @@ export async function performEntitlementParityCheck(
   // failure here is `unattributable`, because until the product has answered
   // there is no mode to file a `failed` row under.
   try {
-    const page = await fetchProductEntitlements(source);
+    const page = await fetchProductEntitlements(source, { as: options.as });
     const failure = page.failures.find((entry) => entry.source === source);
     if (failure) {
       return unattributable(
@@ -534,6 +552,21 @@ export interface EntitlementParityRunResult {
   /** Why no run could be attributed, or why its row could not be written.
    *  Non-null exactly when nothing was recorded. */
   readonly notRecorded: string | null;
+  /**
+   * The raw write failure, present ONLY when a decided run could not be
+   * written — i.e. alongside a non-null `run` and a non-null `notRecorded`.
+   *
+   * Carried so a caller can apply its OWN redaction policy rather than being
+   * stuck with this module's. `notRecorded` has been through `sanitizeReason`,
+   * which redacts Stripe keys because that is what a Stripe error can leak; a
+   * `pg` error is a different threat — "password authentication failed for
+   * user tesserix_admin" names the role and a connection error echoes the host,
+   * and neither is a Stripe key. An operator-facing surface may show the
+   * sanitised sentence; the CronJob's log line goes to the cluster's log sink
+   * at a longer retention and a wider audience, so `scripts/parity-check.ts`
+   * reduces this to the error's class and `code` instead (`describeWriteFailure`).
+   */
+  readonly cause?: unknown;
 }
 
 /**
@@ -550,8 +583,9 @@ export interface EntitlementParityRunResult {
  */
 export async function runEntitlementParityCheck(
   source: CatalogSource,
+  options: EntitlementParityCheckOptions = {},
 ): Promise<EntitlementParityRunResult> {
-  const result = await performEntitlementParityCheck(source);
+  const result = await performEntitlementParityCheck(source, options);
   if (result.status === "unattributable") {
     return { run: null, notRecorded: result.reason };
   }
@@ -561,7 +595,7 @@ export async function runEntitlementParityCheck(
     // The one failure this design cannot record, exactly as
     // `runAllParityPairs` describes it: with the database unreachable there is
     // nowhere to put the evidence.
-    return { run: result.run, notRecorded: sanitizeReason(cause) };
+    return { run: result.run, notRecorded: sanitizeReason(cause), cause };
   }
   return { run: result.run, notRecorded: null };
 }

@@ -1732,10 +1732,10 @@ describe("fetchProductEntitlements", () => {
  *
  * `/v1/billing/entitlements` is the one route T2 widened: it accepts either the
  * operator capability `billing` or the machine capability `read-entitlements`.
- * Nothing selects the machine path in production yet, and that is deliberate —
- * the Zitadel grant does not exist, so a CronJob wired to it would fail every
- * night. What these pin is that the path is correct when something does select
- * it, and that selecting it does NOT quietly become the default.
+ * One caller selects it: the nightly parity CronJob's entitlement pass
+ * (`scripts/parity-check.ts`, #146), which has no operator and cannot mint a
+ * session. What these pin is that the path is correct for it, and that
+ * selecting it does NOT quietly become the default for the operator surfaces.
  */
 describe("fetchProductEntitlements as the console's machine identity", () => {
   const MATRIX = {

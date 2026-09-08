@@ -34,9 +34,13 @@ import { withDeadline } from "./deadline";
  *
  * Provisioning it needs Zitadel admin access — see
  * `docs/RUNBOOK-MACHINE-CAPABILITY.md` and the "INFRASTRUCTURE HALF I CANNOT
- * DO" section of `.planning/quick/260908-mc1-machine-credential/PLAN.md`. Until
- * a service user exists and holds `read-entitlements`, none of these variables
- * are set on any deployment.
+ * DO" section of `.planning/quick/260908-mc1-machine-credential/PLAN.md`.
+ *
+ * The grant now exists and tesserix-k8s#1054 supplies these variables to the
+ * parity CronJob — but every one of them is `optional: true` there, and no
+ * other deployment sets them. So an absent credential remains the ordinary
+ * state of most pods, and this module must keep answering it rather than
+ * failing on it.
  *
  * Nothing here therefore throws at import time or at boot, and an unset
  * credential is a first-class ANSWER — `{ token: null, unavailable:
