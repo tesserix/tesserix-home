@@ -896,12 +896,13 @@ export async function fetchProductEntitlements(
   // caller asks the whole estate.
   const query = source ? `?${new URLSearchParams({ source }).toString()}` : "";
   const path = `/v1/billing/entitlements${query}`;
-  // DEFAULTS TO THE OPERATOR, and that is load-bearing: every caller today is a
-  // console surface or a server action an operator triggered, and all of them
-  // must keep auditing as that operator. `as: "machine"` is an opt-in for a
-  // caller that has no operator at all — a CronJob — and it is not wired to one
-  // yet, on purpose: without the Zitadel grant it would fail every night, which
-  // is noisier and less honest than not running (#618).
+  // DEFAULTS TO THE OPERATOR, and that is load-bearing: every console surface
+  // and every server action an operator triggered must keep auditing as that
+  // operator. `as: "machine"` is an opt-in for a caller that has no operator at
+  // all, and exactly one selects it — the nightly parity CronJob's entitlement
+  // pass (`scripts/parity-check.ts`, #618/#146). It stays an opt-in rather than
+  // a fallback: a resolver that reached for the machine credential whenever no
+  // session was found would audit the service principal for a human's action.
   return parseEntitlements(
     options.as === "machine"
       ? await machineRequest("entitlements", path)
