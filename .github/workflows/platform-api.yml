@@ -120,6 +120,34 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Reachability-based vulnerability scan, added because NOTHING in this
+      # repo checked Go dependencies. The pnpm audit gate in ci.yml cannot see
+      # a go.mod by construction, and Dependabot — which does read them —
+      # reports advisories without asking whether our code calls the vulnerable
+      # symbol. On 2026-09-10 it was flagging two high gRPC advisories here
+      # (GHSA-2v4p-qf9q-27wj, GHSA-vp52-pcj8-j9qc); govulncheck against the
+      # toolchain that actually ships reports them as NOT reachable, and
+      # exits 0.
+      #
+      # THAT EXIT BEHAVIOUR IS THE WHOLE DESIGN. govulncheck fails only when a
+      # vulnerable symbol is genuinely called, so this step is green on arrival
+      # and means something the day it goes red. A gate that is red from the
+      # first commit is one people learn to skip — the same reason ci.yml's
+      # audit step uses --audit-level=high rather than moderate.
+      #
+      # It also covers what Dependabot does NOT: the Go STANDARD LIBRARY. That
+      # matters more than it sounds. `go 1.26.5` in go.mod is a minimum, not a
+      # pin, and the Dockerfiles build `FROM golang:1.26-alpine` — a floating
+      # tag, currently 1.26.8. Scanning with a local 1.26.5 toolchain reports
+      # seven reachable stdlib findings that do not exist in the shipped
+      # binary; scanning here uses the same `go-version: '1.26'` the build
+      # does, so the answer describes what is deployed rather than what is
+      # installed on someone's laptop.
+      - name: Vulnerability scan (reachable only)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)"/bin/govulncheck ./...
+
       - name: Test
         run: go test -race -count=1 ./...
 
@@ -193,6 +221,13 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # Same reachability scan as the job above — see its comment for why this
+      # exits 0 on unreachable findings and why it covers the stdlib.
+      - name: Vulnerability scan (reachable only)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)"/bin/govulncheck ./...
 
       # This is the module boundary enforcement ADR-003 D2a requires, and it
       # runs as an ordinary test — internal/architecture checks the import graph
