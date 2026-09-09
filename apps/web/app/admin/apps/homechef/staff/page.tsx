@@ -291,7 +291,7 @@ export default function HomechefStaffPage() {
 
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted-foreground">
-          {data ? `${data.pagination.total} team members · page ${page} of ${data.pagination.totalPages}` : ""}
+          {data ? `Page ${page} of ${data.pagination.totalPages}` : ""}
         </span>
         <div className="flex gap-2">
           <button
