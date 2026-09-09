@@ -91,6 +91,45 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
+      # Fail on a high or critical advisory. This repo had NO audit gate until
+      # #629: `next@16.2.11` carried GHSA-2xp9-vwfh-vxw4, an unauthenticated
+      # RCE in the image-optimization path, and every check here stayed green
+      # while mark8ly's identical dependency blocked every PR in that repo
+      # within hours of the advisory landing. A gate is the only thing that
+      # turns "npm's feed learned something" into a signal anyone sees.
+      #
+      # THE ALLOWLIST LIVES IN package.json (`pnpm.auditConfig.ignoreGhsas`),
+      # not here — pnpm reads it from there and there is no CLI equivalent. It
+      # holds fourteen ids in two chains, both BUILD-TIME ONLY and in no
+      # deployed image:
+      #
+      #   image-size (2 ids) — apps/console -> @tesserix/web -> @tesserix/icons
+      #     -> react-native (PEER) -> @react-native/community-cli-plugin
+      #     -> metro -> image-size. metro is the React Native bundler; a
+      #     Next.js app never invokes it, and the peer is resolved only
+      #     because @tesserix/icons offers React Native support. Nothing to
+      #     upgrade to either: both advisories list `image-size <= 2.0.2`
+      #     with first patched version NONE, and 2.0.2 is the latest release.
+      #
+      #   @xmldom/xmldom (12 ids) — apps/mobile -> expo -> @expo/cli
+      #     -> @expo/plist -> @xmldom/xmldom. Expo prebuild tooling, which
+      #     runs on a developer machine and in the mobile build, never in a
+      #     server image. Fixes exist (0.8.15 / 0.9.12) but forcing a version
+      #     into Expo's tree risks breaking the mobile build for no
+      #     production gain — revisit on the next Expo SDK bump.
+      #
+      # THE GATE IGNORES ADVISORY IDS, NOT PACKAGES. A NEW advisory against
+      # metro, xmldom or anything else still fails this step, which is the
+      # property that makes the allowlist safe to hold open. Verified by
+      # negative control before merge: removing a single id from the list
+      # turns this step red (exit 1).
+      #
+      # `--audit-level=high` and not `moderate`: seven moderates are present
+      # today, all in the same build-time chains, and a gate that is red on
+      # arrival is a gate people learn to skip.
+      - name: Audit (high and critical)
+        run: pnpm audit --audit-level=high
+
       # apps/web and apps/console import @tesserix/platform-auth and
       # @tesserix/console-core, whose package.json entries point at dist/. A fresh
       # CI clone has no dist/, so Vitest fails with "Failed to resolve entry for
