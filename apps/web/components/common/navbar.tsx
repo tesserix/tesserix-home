@@ -98,133 +98,141 @@ export function Navbar() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-sm">
-      <nav
-        className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-8"
-        aria-label="Main navigation"
-      >
-        {/* Logo */}
-        <div className="flex lg:flex-1">
-          <Link href="/" className="-m-1.5 p-1.5">
-            <Image
-              src="/logo.png"
-              alt="Tesserix"
-              width={132}
-              height={32}
-              sizes="132px"
-              priority
-            />
-          </Link>
-        </div>
+    <>
+      {/* `backdrop-blur` makes this header a containing block for every
+          fixed-position descendant, so a `fixed inset-0` child resolves
+          against the header's own ~73px box instead of the viewport. That
+          is why the mobile overlay and panel below are siblings of the
+          header rather than children of it — nesting them back inside
+          silently shrinks the menu to the height of the header. */}
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-sm">
+        <nav
+          className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-8"
+          aria-label="Main navigation"
+        >
+          {/* Logo */}
+          <div className="flex lg:flex-1">
+            <Link href="/" className="-m-1.5 p-1.5">
+              <Image
+                src="/logo.png"
+                alt="Tesserix"
+                width={132}
+                height={32}
+                sizes="132px"
+                priority
+              />
+            </Link>
+          </div>
 
-        {/* Mobile menu button */}
-        <div className="flex lg:hidden">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="-m-2.5"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-menu"
-            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-          >
-            <span className="sr-only">{mobileMenuOpen ? "Close menu" : "Open menu"}</span>
-            {mobileMenuOpen ? (
-              <X className="h-6 w-6" aria-hidden="true" />
-            ) : (
-              <Menu className="h-6 w-6" aria-hidden="true" />
-            )}
-          </Button>
-        </div>
-
-        {/* Desktop navigation */}
-        <div className="hidden lg:flex lg:gap-x-8 lg:items-center">
-          {/* Products Mega Menu */}
-          <div ref={productsRef} className="relative">
+          {/* Mobile menu button */}
+          <div className="flex lg:hidden">
             <Button
               type="button"
               variant="ghost"
-              size="sm"
-              className="text-muted-foreground hover:text-foreground"
-              onClick={() => setProductsOpen(!productsOpen)}
-              aria-expanded={productsOpen}
-              aria-haspopup="true"
+              size="icon"
+              className="-m-2.5"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-menu"
+              aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             >
-              Products
-              <ChevronDown
-                className={cn("h-4 w-4 transition-transform", productsOpen && "rotate-180")}
-                aria-hidden="true"
-              />
-            </Button>
-
-            {/* Mega Menu Dropdown */}
-            <div
-              className={cn(
-                "absolute left-1/2 -translate-x-1/2 top-full mt-3 w-[500px] rounded-xl border bg-background p-4 shadow-lg transition-all",
-                productsOpen
-                  ? "opacity-100 visible translate-y-0"
-                  : "opacity-0 invisible -translate-y-2"
+              <span className="sr-only">{mobileMenuOpen ? "Close menu" : "Open menu"}</span>
+              {mobileMenuOpen ? (
+                <X className="h-6 w-6" aria-hidden="true" />
+              ) : (
+                <Menu className="h-6 w-6" aria-hidden="true" />
               )}
-              role="menu"
-            >
-              <div className="grid grid-cols-2 gap-2">
-                {products.map((product) => (
-                  <Link
-                    key={product.name}
-                    href={product.href}
-                    className="flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-muted"
-                    onClick={() => setProductsOpen(false)}
-                    role="menuitem"
-                  >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background">
-                      <product.icon className="h-5 w-5 text-foreground" />
-                    </div>
-                    <div>
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-foreground">{product.name}</span>
-                        {product.comingSoon ? (
-                          <span className="inline-flex items-center rounded-full border bg-muted/50 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                            Soon
-                          </span>
-                        ) : null}
-                      </span>
-                      <p className="text-sm text-muted-foreground">{product.description}</p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-              <div className="mt-3 pt-3 border-t">
-                <Link
-                  href="/products"
-                  className="flex items-center justify-center text-sm font-medium text-foreground hover:text-primary"
-                  onClick={() => setProductsOpen(false)}
-                >
-                  View all products →
-                </Link>
-              </div>
-            </div>
+            </Button>
           </div>
 
-          {navigation.map((item) => (
-            <Link
-              key={item.name}
-              href={item.href}
-              className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {item.name}
-            </Link>
-          ))}
-        </div>
+          {/* Desktop navigation */}
+          <div className="hidden lg:flex lg:gap-x-8 lg:items-center">
+            {/* Products Mega Menu */}
+            <div ref={productsRef} className="relative">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => setProductsOpen(!productsOpen)}
+                aria-expanded={productsOpen}
+                aria-haspopup="true"
+              >
+                Products
+                <ChevronDown
+                  className={cn("h-4 w-4 transition-transform", productsOpen && "rotate-180")}
+                  aria-hidden="true"
+                />
+              </Button>
 
-        {/* Balances the logo's lg:flex-1 so the nav links stay centred.
-            This held the "Sign in" CTA until the marketing/console split: the
-            console is reached at its own URL, so a public marketing site no
-            longer advertises a super-admin login. Removing the element
-            outright rather than emptying it would leave `justify-between` to
-            push the links against the right edge. */}
-        <div className="hidden lg:flex lg:flex-1" aria-hidden="true" />
-      </nav>
+              {/* Mega Menu Dropdown */}
+              <div
+                className={cn(
+                  "absolute left-1/2 -translate-x-1/2 top-full mt-3 w-[500px] rounded-xl border bg-background p-4 shadow-lg transition-all",
+                  productsOpen
+                    ? "opacity-100 visible translate-y-0"
+                    : "opacity-0 invisible -translate-y-2"
+                )}
+                role="menu"
+              >
+                <div className="grid grid-cols-2 gap-2">
+                  {products.map((product) => (
+                    <Link
+                      key={product.name}
+                      href={product.href}
+                      className="flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-muted"
+                      onClick={() => setProductsOpen(false)}
+                      role="menuitem"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background">
+                        <product.icon className="h-5 w-5 text-foreground" />
+                      </div>
+                      <div>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-foreground">{product.name}</span>
+                          {product.comingSoon ? (
+                            <span className="inline-flex items-center rounded-full border bg-muted/50 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                              Soon
+                            </span>
+                          ) : null}
+                        </span>
+                        <p className="text-sm text-muted-foreground">{product.description}</p>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+                <div className="mt-3 pt-3 border-t">
+                  <Link
+                    href="/products"
+                    className="flex items-center justify-center text-sm font-medium text-foreground hover:text-primary"
+                    onClick={() => setProductsOpen(false)}
+                  >
+                    View all products →
+                  </Link>
+                </div>
+              </div>
+            </div>
+
+            {navigation.map((item) => (
+              <Link
+                key={item.name}
+                href={item.href}
+                className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {item.name}
+              </Link>
+            ))}
+          </div>
+
+          {/* Balances the logo's lg:flex-1 so the nav links stay centred.
+              This held the "Sign in" CTA until the marketing/console split: the
+              console is reached at its own URL, so a public marketing site no
+              longer advertises a super-admin login. Removing the element
+              outright rather than emptying it would leave `justify-between` to
+              push the links against the right edge. */}
+          <div className="hidden lg:flex lg:flex-1" aria-hidden="true" />
+        </nav>
+      </header>
 
       {/* Mobile menu overlay */}
       <div
@@ -249,7 +257,7 @@ export function Navbar() {
           // the end) so the panel still slides out rather than vanishing.
           // Note: this does not stop the off-screen panel widening the
           // document — that needs `overflow-x: clip` on the root layout.
-          "fixed top-0 right-0 z-50 h-full w-full max-w-sm bg-background shadow-xl lg:hidden transition-[transform,visibility] duration-300 ease-in-out",
+          "fixed top-0 right-0 z-50 flex h-full w-full max-w-sm flex-col bg-background shadow-xl lg:hidden transition-[transform,visibility] duration-300 ease-in-out",
           mobileMenuOpen
             ? "visible translate-x-0"
             : "invisible translate-x-full"
@@ -258,7 +266,7 @@ export function Navbar() {
         aria-modal="true"
         aria-label="Mobile navigation"
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b">
+        <div className="flex shrink-0 items-center justify-between px-6 py-4 border-b">
           <Image
             src="/logo.png"
             alt="Tesserix"
@@ -278,7 +286,7 @@ export function Navbar() {
           </Button>
         </div>
 
-        <div className="px-6 py-6 space-y-6 overflow-y-auto h-[calc(100%-73px)]">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {/* Products section */}
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
@@ -325,6 +333,6 @@ export function Navbar() {
 
         </div>
       </div>
-    </header>
+    </>
   );
 }
