@@ -5,6 +5,7 @@ import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import {
+  formatDate,
   formatDateTime,
   formatINR,
   titleCase,
@@ -843,7 +844,7 @@ function DeliveryFailuresTab() {
                 {mealPlanDays.map((d) => (
                   <tr key={d.dayId} className="border-t border-border">
                     <td className="px-4 py-2">{d.mealPlanNumber || d.mealPlanId.slice(0, 8)}</td>
-                    <td className="px-4 py-2">{d.date}</td>
+                    <td className="px-4 py-2">{formatDate(d.date)}</td>
                     <td className="px-4 py-2">{formatINR(d.price)}</td>
                     <td className="px-4 py-2">
                       <StatusBadge label={titleCase(d.holdStatus)} tone={holdTone(d.holdStatus)} />
