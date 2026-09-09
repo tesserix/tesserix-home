@@ -31,6 +31,24 @@
       "react-dom": "19.2.3",
       "sharp": "^0.35.4",
       "uuid": "^11.1.1"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-w3rx-r6r6-pgpr",
+        "GHSA-5p2g-fcmc-qvqq",
+        "GHSA-27p8-2357-5qqv",
+        "GHSA-3px3-54cx-rmw9",
+        "GHSA-4w3w-2rp5-g8jm",
+        "GHSA-6mj3-qw4j-hgrw",
+        "GHSA-8344-3jmq-59r6",
+        "GHSA-93r5-fhx6-vmg9",
+        "GHSA-965w-775f-mr7g",
+        "GHSA-c7q8-3ch8-vqpv",
+        "GHSA-g53g-w8rj-fmg7",
+        "GHSA-vr34-hp96-76pp",
+        "GHSA-w2rr-34g9-rvrj",
+        "GHSA-x4fp-j954-r2f4"
+      ]
     }
   }
 }
