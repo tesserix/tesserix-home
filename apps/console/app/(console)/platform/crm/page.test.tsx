@@ -9,11 +9,13 @@ const dueOpportunities = vi.fn();
 const driftingOpportunities = vi.fn();
 const closedOpportunities = vi.fn();
 const wonWithoutConversion = vi.fn();
+const funnelSummary = vi.fn();
 const fetchConversionSignal = vi.fn();
 
 vi.mock("@/lib/db/crm-repo", () => ({
   wonWithoutConversion: (...args: unknown[]) => wonWithoutConversion(...args),
   closedOpportunities: (...args: unknown[]) => closedOpportunities(...args),
+  funnelSummary: (...args: unknown[]) => funnelSummary(...args),
 }));
 
 vi.mock("@/lib/crm-queues", () => ({
@@ -43,6 +45,7 @@ import CrmPage, {
 } from "./page";
 import { HANDOFF_EMPTY_MESSAGE, buildHandoffItems } from "./handoff-tab";
 import { CLOSED_EMPTY_MESSAGE } from "./closed-tab";
+import { FUNNEL_EMPTY_MESSAGE } from "./funnel-tab";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -1156,5 +1159,67 @@ describe("readQueueFilters narrows the stage to the tab's own admissible set", (
     await renderCrmPage({ stage: "won" });
 
     expect(dueOpportunities).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+  });
+});
+
+describe("the Funnel tab", () => {
+  /** An all-zero funnel: the shape `funnelSummary` returns for a database
+   *  with no opportunities at all, which is production today. */
+  const EMPTY_FUNNEL = {
+    counts: (["new", "contacted", "qualified", "won", "lost"] as const).map((stage) => ({
+      stage,
+      count: 0,
+      share: 0,
+    })),
+    total: 0,
+    stalled: [],
+  };
+
+  it("is offered as a fourth tab, keeping the filters the operator already set", async () => {
+    await renderCrmPage({ product: "mark8ly" });
+
+    const funnel = screen.getByRole("link", { name: "Funnel" });
+    expect(hrefOf(funnel).get("tab")).toBe("funnel");
+    expect(hrefOf(funnel).get("product")).toBe("mark8ly");
+  });
+
+  it("renders the funnel when it is the active tab", async () => {
+    funnelSummary.mockResolvedValue(EMPTY_FUNNEL);
+
+    await renderCrmPage({ tab: "funnel" });
+
+    expect(screen.getByText(FUNNEL_EMPTY_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("reads no queue, no handoff and no closed list while it is active", async () => {
+    funnelSummary.mockResolvedValue(EMPTY_FUNNEL);
+
+    await renderCrmPage({ tab: "funnel" });
+
+    // The rule `tabHref`'s comment states: only the active tab's data is
+    // ever read. Handoff's fan-out is the cost that rule exists for.
+    expect(dueOpportunities).not.toHaveBeenCalled();
+    expect(driftingOpportunities).not.toHaveBeenCalled();
+    expect(wonWithoutConversion).not.toHaveBeenCalled();
+    expect(closedOpportunities).not.toHaveBeenCalled();
+  });
+
+  it("is not read by any other tab", async () => {
+    await renderCrmPage({});
+    expect(funnelSummary).not.toHaveBeenCalled();
+
+    await renderCrmPage({ tab: "closed" });
+    expect(funnelSummary).not.toHaveBeenCalled();
+  });
+
+  it("applies no filter to the breakdown, however the URL is filtered", async () => {
+    funnelSummary.mockResolvedValue(EMPTY_FUNNEL);
+
+    await renderCrmPage({ tab: "funnel", product: "mark8ly", owner: "Priya" });
+
+    // A breakdown under a filter reads as the whole when it is a slice —
+    // see `funnel-tab.tsx`'s header. The filters stay on the URL and are
+    // simply not passed to the read.
+    expect(funnelSummary).toHaveBeenCalledWith();
   });
 });

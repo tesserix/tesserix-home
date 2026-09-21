@@ -2,7 +2,7 @@
  * The CRM surface's URL: what this page reads out of a query string, and how
  * it builds the links that put values back into one.
  *
- * Its own module because three server modules now need it — `page.tsx` and
+ * Its own module because several server modules now need it — `page.tsx` and
  * the two tabs that page and filter (`closed-tab.tsx`, and `page.tsx`'s own
  * Work tab) — and having the tabs import it from `page.tsx`, which imports
  * them, would be an import cycle. Browser-safe by construction: nothing here
@@ -11,7 +11,7 @@
 
 export type QueueSearchParams = Record<string, string | string[] | undefined>;
 
-export type CrmTab = "work" | "handoff" | "closed";
+export type CrmTab = "work" | "handoff" | "closed" | "funnel";
 
 /** Which tab `?tab=` selects — anything else (including nothing) is "work",
  *  the surface's default. Same "unrecognised input reads as unfiltered"
@@ -19,6 +19,7 @@ export type CrmTab = "work" | "handoff" | "closed";
 export function readTab(searchParams: QueueSearchParams): CrmTab {
   if (searchParams.tab === "handoff") return "handoff";
   if (searchParams.tab === "closed") return "closed";
+  if (searchParams.tab === "funnel") return "funnel";
   return "work";
 }
 
