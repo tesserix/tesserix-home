@@ -29,6 +29,7 @@ import { productLabel } from "./product-label";
 import { CrmQueueView } from "./queue-view";
 import { renderHandoffTab } from "./handoff-tab";
 import { renderClosedTab } from "./closed-tab";
+import { renderFunnelTab } from "./funnel-tab";
 import {
   buildQueueNextHref,
   buildQueuePreviousHref,
@@ -340,6 +341,7 @@ function CrmTabNav({
     { id: "work", label: "Work" },
     { id: "handoff", label: "Handoff" },
     { id: "closed", label: "Closed" },
+    { id: "funnel", label: "Funnel" },
   ];
   return (
     // Plain page links, not ARIA tabs: `role="tab"` with no `role="tablist"`
@@ -533,6 +535,11 @@ export default async function CrmPage({
   let content;
   if (activeTab === "handoff") {
     content = await renderHandoffTab(reauthReturnTo);
+  } else if (activeTab === "funnel") {
+    // No `searchParams`, no filters: this tab states a breakdown rather than
+    // listing rows, and `funnel-tab.tsx`'s header records why a filtered
+    // breakdown is the wrong thing to show.
+    content = await renderFunnelTab({ reauthReturnTo });
   } else if (activeTab === "closed") {
     content = await renderClosedTab({
       searchParams: resolvedSearchParams,
