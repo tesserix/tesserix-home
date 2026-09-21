@@ -109,3 +109,11 @@ export {
   type ListOrganisationsOptions,
   listOrganisations,
 } from "./crm-browse-repo";
+
+export {
+  STALLED_LIMIT,
+  type StageCount,
+  type StalledRow,
+  type FunnelSummary,
+  funnelSummary,
+} from "./crm-funnel-repo";
