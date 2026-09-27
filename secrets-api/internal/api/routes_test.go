@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -130,11 +131,11 @@ func TestEveryRouteIsGatedOrExplicitlyPublic(t *testing.T) {
 	// A silently shrinking router — say, NewAccess stops being registered
 	// because Bao went back to nil in this test — would make every remaining
 	// assertion in this test vacuously true: an empty router trivially has no
-	// ungated route. This is the tripwire for that. The service registers 27
-	// routes today (25 gated + the 2 public ones above); update this constant
+	// ungated route. This is the tripwire for that. The service registers 29
+	// routes today (27 gated + the 2 public ones above); update this constant
 	// when a route is deliberately added or removed, not when it silently
 	// stops appearing.
-	const wantRoutes = 27
+	const wantRoutes = 29
 	if len(routes) != wantRoutes {
 		t.Fatalf("router registered %d routes, want %d — did a handler fail to register, or did the route count genuinely change?", len(routes), wantRoutes)
 	}
@@ -222,4 +223,30 @@ func concretePath(pattern string) string {
 
 func splitPath(pattern string) []string {
 	return strings.Split(pattern, "/")
+}
+
+func TestRecoveryRoutesEnforceOperatorCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		roles        []string
+		want         int
+	}{
+		{http.MethodGet, "/api/recovery", nil, http.StatusUnauthorized},
+		{http.MethodPost, "/api/recovery/jobs", nil, http.StatusUnauthorized},
+		{http.MethodPost, "/api/recovery/jobs", []string{string(authcore.CapPlatform)}, http.StatusForbidden},
+		{http.MethodGet, "/api/recovery", []string{string(authcore.CapPlatform)}, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.method+tc.path+fmt.Sprint(tc.want), func(t *testing.T) {
+			router := api.NewRouter(testDeps(t, tc.roles))
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+			if tc.roles != nil {
+				req.Header.Set("Authorization", "Bearer aaa.bbb.ccc")
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
 }

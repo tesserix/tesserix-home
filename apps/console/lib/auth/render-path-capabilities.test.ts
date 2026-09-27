@@ -76,6 +76,7 @@ describe("the verb gate is live everywhere it decides a mutation", () => {
    *  the secrets write action are the two deliberate exceptions, both
    *  asserted separately below. */
   const GATED_FILES = [
+    "app/(console)/platform/secrets/recovery/actions.ts",
     "app/(console)/platform/crm/import/actions.ts",
     "app/(console)/platform/tickets/[id]/actions.ts",
     "app/(console)/platform/billing/catalog/actions.ts",

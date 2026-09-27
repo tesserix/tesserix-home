@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentSession, hasCapability } from "@tesserix/platform-auth";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 // Imported from `surface-state` and NOT from `states`: this is a server
@@ -175,7 +176,7 @@ export default async function SecretsInventoryPage() {
       <ConsolePageHeader
         title="Secrets"
         description="Every secret in the estate, and which of them no application can read."
-        actions={canCreate ? <NewSecretLink /> : null}
+        actions={<><Link href="/platform/secrets/recovery" className="rounded-md border px-3 py-2 text-sm font-medium">Backups</Link>{canCreate ? <NewSecretLink /> : null}</>}
       />
 
       <SecretsTable

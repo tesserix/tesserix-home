@@ -20,6 +20,7 @@ import (
 	"github.com/tesserix/tesserix-home/secrets-api/internal/gcpsm"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/gitops"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/k8s"
+	"github.com/tesserix/tesserix-home/secrets-api/internal/recovery"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/secrets"
 )
 
@@ -140,7 +141,15 @@ func run(log *slog.Logger) error {
 	log.Info("starting", "port", cfg.Port,
 		"backends", cfg.Backends, "defaultBackend", cfg.DefaultBackend)
 
+	var recoveryService *recovery.Service
+	if cfg.RecoveryBucket != "" {
+		recoveryService, err = recovery.NewInCluster(ctx, cfg.RecoveryBucket)
+		if err != nil {
+			log.Warn("recovery controls unavailable", "error", err)
+		}
+	}
 	srv := api.NewServer(api.Deps{
+		Recovery:  recoveryService,
 		Config:    cfg,
 		Bao:       client,
 		Secrets:   registry,
