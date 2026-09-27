@@ -20,8 +20,9 @@ import (
 )
 
 type Deps struct {
-	Recovery *recovery.Service
-	Config   config.Config
+	WorkloadSecrets *handlers.WorkloadSecrets
+	Recovery        *recovery.Service
+	Config          config.Config
 	// Bao is nil when the OpenBao backend is not enabled; namespace access
 	// control is then unavailable, since it is an OpenBao policy.
 	Bao     *bao.Client
@@ -76,6 +77,10 @@ func NewRouter(d Deps) *gin.Engine {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
+
+	if d.WorkloadSecrets != nil {
+		d.WorkloadSecrets.Register(r)
+	}
 
 	// Everything below requires a verified Zitadel token. The two groups differ
 	// only in the capability they demand.

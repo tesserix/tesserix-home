@@ -190,3 +190,27 @@ func TestConsoleClientIDIsOptional(t *testing.T) {
 		t.Errorf("ConsoleClientID = %q, want empty", cfg.ConsoleClientID)
 	}
 }
+
+func TestWorkloadBrokerRequiresExplicitScopedConfiguration(t *testing.T) {
+	env := validEnv()
+	cfg, err := loadFrom(env)
+	if err != nil || cfg.WorkloadSecretBrokerEnabled {
+		t.Fatal("broker must default off")
+	}
+	env["WORKLOAD_SECRET_BROKER_ENABLED"] = "true"
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("unscoped broker accepted")
+	}
+	env["WORKLOAD_SECRET_AUDIENCE"] = "secret-service"
+	env["WORKLOAD_SECRET_ALLOWED_SUBJECTS"] = "system:serviceaccount:devai:devai-api"
+	env["WORKLOAD_SECRET_NAMESPACE"] = "devai"
+	env["WORKLOAD_SECRET_APP"] = "devai-api"
+	cfg, err = loadFrom(env)
+	if err != nil || !cfg.WorkloadSecretBrokerEnabled || cfg.WorkloadSecretNamespace != "devai" || len(cfg.WorkloadSecretAllowed) != 1 {
+		t.Fatalf("scoped broker configuration rejected: %v", err)
+	}
+	env["WORKLOAD_SECRET_BROKER_ENABLED"] = "invalid"
+	if _, err := loadFrom(env); err == nil {
+		t.Fatal("invalid enable flag accepted")
+	}
+}
