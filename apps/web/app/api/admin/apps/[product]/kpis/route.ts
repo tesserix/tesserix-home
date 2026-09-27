@@ -136,8 +136,8 @@ export async function GET(
         }),
       ),
       readOpenBaoKeyHealth([
-        "kora/app/kora-gemini-api-key-developer",
-        "kora/app/kora-ai-gateway-anthropic-api-key",
+        "kora/app/kora-gemini-api-key",
+        "kora/app/kora-openai-api-key",
       ]).catch((err) => {
         logger.warn(`[kora-kpis] key-health: ${err instanceof Error ? err.message : "failed"}`);
         return null;
