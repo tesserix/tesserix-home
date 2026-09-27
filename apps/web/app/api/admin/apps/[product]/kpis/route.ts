@@ -19,7 +19,7 @@ import { chQuery, clickhouseConfigured } from "@/lib/db/clickhouse";
 import { tesserixQuery } from "@/lib/db/tesserix";
 import { logger } from "@/lib/logger";
 import { queryInstant } from "@/lib/metrics/prometheus";
-import { readKeyHealth } from "@/lib/secrets/key-health";
+import { readOpenBaoKeyHealth } from "@/lib/secrets/openbao-key-health";
 import type { AdminStats } from "@tesserix/homechef-shared";
 
 export async function GET(
@@ -135,9 +135,9 @@ export async function GET(
           }
         }),
       ),
-      readKeyHealth("tesseracthub-480811", [
-        "prod-kora-gemini-api-key",
-        "prod-kora-openai-api-key",
+      readOpenBaoKeyHealth([
+        "kora/app/kora-gemini-api-key-developer",
+        "kora/app/kora-ai-gateway-anthropic-api-key",
       ]).catch((err) => {
         logger.warn(`[kora-kpis] key-health: ${err instanceof Error ? err.message : "failed"}`);
         return null;
