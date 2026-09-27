@@ -14,9 +14,14 @@ import (
 type Lookup func(key string) string
 
 type Config struct {
-	RecoveryBucket string
-	Environment    string
-	Port           int
+	WorkloadSecretBrokerEnabled bool
+	WorkloadSecretAudience      string
+	WorkloadSecretAllowed       []string
+	WorkloadSecretNamespace     string
+	WorkloadSecretApp           string
+	RecoveryBucket              string
+	Environment                 string
+	Port                        int
 
 	// Zitadel is the only identity provider. ZitadelProjectID doubles as the
 	// expected token audience, which is why it is required: without it the
@@ -90,6 +95,22 @@ func Load(get Lookup) (Config, error) {
 		GitHubProjectPath:       valueOr(get("GITHUB_PROJECT_PATH"), "argocd/prod/projects/security.yaml"),
 	}
 
+	enabled, err := strconv.ParseBool(valueOr(get("WORKLOAD_SECRET_BROKER_ENABLED"), "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("config: invalid workload broker flag: %w", err)
+	}
+	cfg.WorkloadSecretBrokerEnabled = enabled
+	cfg.WorkloadSecretAudience = strings.TrimSpace(get("WORKLOAD_SECRET_AUDIENCE"))
+	cfg.WorkloadSecretNamespace = strings.TrimSpace(get("WORKLOAD_SECRET_NAMESPACE"))
+	cfg.WorkloadSecretApp = strings.TrimSpace(get("WORKLOAD_SECRET_APP"))
+	for _, subject := range strings.Split(get("WORKLOAD_SECRET_ALLOWED_SUBJECTS"), ",") {
+		if subject = strings.TrimSpace(subject); subject != "" {
+			cfg.WorkloadSecretAllowed = append(cfg.WorkloadSecretAllowed, subject)
+		}
+	}
+	if enabled && (cfg.WorkloadSecretAudience == "" || !secrets.IsDNSLabel(cfg.WorkloadSecretNamespace) || !secrets.IsDNSLabel(cfg.WorkloadSecretApp) || len(cfg.WorkloadSecretAllowed) == 0) {
+		return Config{}, fmt.Errorf("config: workload broker requires audience, allowed subjects and fixed namespace/app")
+	}
 	port, err := strconv.Atoi(valueOr(get("PORT"), "8080"))
 	if err != nil {
 		return Config{}, fmt.Errorf("config: PORT is not a number: %w", err)
@@ -100,6 +121,9 @@ func Load(get Lookup) (Config, error) {
 		return Config{}, err
 	}
 
+	if enabled && !cfg.BackendEnabled(secrets.BackendOpenBao) {
+		return Config{}, fmt.Errorf("config: workload broker requires OpenBao")
+	}
 	required := []struct{ name, value string }{
 		{"ZITADEL_ISSUER", cfg.ZitadelIssuer},
 		{"ZITADEL_PROJECT_ID", cfg.ZitadelProjectID},

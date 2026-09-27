@@ -22,6 +22,7 @@ import (
 	"github.com/tesserix/tesserix-home/secrets-api/internal/k8s"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/recovery"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/secrets"
+	"github.com/tesserix/tesserix-home/secrets-api/internal/workloadauth"
 )
 
 func main() {
@@ -148,17 +149,33 @@ func run(log *slog.Logger) error {
 			log.Warn("recovery controls unavailable", "error", err)
 		}
 	}
+	auditLog := audit.New(os.Stdout)
+	var workloadSecrets *handlers.WorkloadSecrets
+	if cfg.WorkloadSecretBrokerEnabled {
+		reviewer, err := workloadauth.NewInCluster()
+		if err != nil {
+			return err
+		}
+		workloadSecrets, err = handlers.NewWorkloadSecrets(handlers.WorkloadSecretsConfig{
+			Audience: cfg.WorkloadSecretAudience, AllowedSubjects: cfg.WorkloadSecretAllowed,
+			Namespace: cfg.WorkloadSecretNamespace, App: cfg.WorkloadSecretApp,
+		}, reviewer, client, auditLog)
+		if err != nil {
+			return err
+		}
+	}
 	srv := api.NewServer(api.Deps{
-		Recovery:  recoveryService,
-		Config:    cfg,
-		Bao:       client,
-		Secrets:   registry,
-		Audit:     audit.New(os.Stdout),
-		Log:       log,
-		Discovery: discovery,
-		Whitelist: whitelist,
-		Reviews:   reviews,
-		Verifier:  verifier,
+		WorkloadSecrets: workloadSecrets,
+		Recovery:        recoveryService,
+		Config:          cfg,
+		Bao:             client,
+		Secrets:         registry,
+		Audit:           auditLog,
+		Log:             log,
+		Discovery:       discovery,
+		Whitelist:       whitelist,
+		Reviews:         reviews,
+		Verifier:        verifier,
 	})
 
 	errCh := make(chan error, 1)

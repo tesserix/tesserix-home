@@ -14,10 +14,12 @@ import (
 
 	authcore "github.com/tesserix/tesserix-home/platform-auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api"
+	"github.com/tesserix/tesserix-home/secrets-api/internal/api/handlers"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/audit"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/bao"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/config"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/secrets"
+	"github.com/tesserix/tesserix-home/secrets-api/internal/workloadauth"
 )
 
 // publicRoutes is an allowlist, and that direction is the whole point. Per-route
@@ -95,13 +97,20 @@ func testDeps(t *testing.T, roles []string) api.Deps {
 	if err != nil {
 		t.Fatalf("secrets.NewRegistry: %v", err)
 	}
+	broker, err := handlers.NewWorkloadSecrets(handlers.WorkloadSecretsConfig{
+		Audience: "secret-service", AllowedSubjects: []string{"system:serviceaccount:devai:devai-api"}, Namespace: "devai", App: "devai-api",
+	}, workloadReviewer{}, stubStore{}, audit.New(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return api.Deps{
-		Config:   config.Config{},
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Bao:      stubBaoServer(t),
-		Secrets:  registry,
-		Audit:    audit.New(io.Discard),
-		Verifier: authcore.NewVerifier(stubParser{roles: roles}, testProject),
+		WorkloadSecrets: broker,
+		Config:          config.Config{},
+		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Bao:             stubBaoServer(t),
+		Secrets:         registry,
+		Audit:           audit.New(io.Discard),
+		Verifier:        authcore.NewVerifier(stubParser{roles: roles}, testProject),
 	}
 }
 
@@ -131,11 +140,11 @@ func TestEveryRouteIsGatedOrExplicitlyPublic(t *testing.T) {
 	// A silently shrinking router — say, NewAccess stops being registered
 	// because Bao went back to nil in this test — would make every remaining
 	// assertion in this test vacuously true: an empty router trivially has no
-	// ungated route. This is the tripwire for that. The service registers 29
-	// routes today (27 gated + the 2 public ones above); update this constant
+	// ungated route. This is the tripwire for that. The service registers 32
+	// routes today (30 gated + the 2 public ones above); update this constant
 	// when a route is deliberately added or removed, not when it silently
 	// stops appearing.
-	const wantRoutes = 29
+	const wantRoutes = 32
 	if len(routes) != wantRoutes {
 		t.Fatalf("router registered %d routes, want %d — did a handler fail to register, or did the route count genuinely change?", len(routes), wantRoutes)
 	}
@@ -248,5 +257,31 @@ func TestRecoveryRoutesEnforceOperatorCapabilities(t *testing.T) {
 				t.Fatalf("status %d, want %d", w.Code, tc.want)
 			}
 		})
+	}
+}
+
+type workloadReviewer struct{}
+
+func (workloadReviewer) Review(_ context.Context, token, audience string) (workloadauth.Identity, error) {
+	if token != "workload-token" || audience != "secret-service" {
+		return workloadauth.Identity{}, workloadauth.ErrUnauthenticated
+	}
+	return workloadauth.Identity{Subject: "system:serviceaccount:devai:devai-api"}, nil
+}
+func TestWorkloadBrokerUsesDedicatedAuthenticationBoundary(t *testing.T) {
+	router := api.NewRouter(testDeps(t, nil))
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/workload-secrets/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer workload-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"write":true`) {
+		t.Fatalf("capabilities returned %d", response.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/secrets", nil)
+	req.Header.Set("Authorization", "Bearer workload-token")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	if response.Code < 400 {
+		t.Fatal("workload identity entered console API")
 	}
 }
