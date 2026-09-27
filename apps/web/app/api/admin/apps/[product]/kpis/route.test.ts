@@ -1,10 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const queryInstant = vi.fn();
-const readKeyHealth = vi.fn();
+const readOpenBaoKeyHealth = vi.fn();
 vi.mock("@/lib/metrics/prometheus", () => ({ queryInstant: (q: string) => queryInstant(q) }));
-vi.mock("@/lib/secrets/key-health", () => ({
-  readKeyHealth: (projectId: string, names: ReadonlyArray<string>) => readKeyHealth(projectId, names),
+vi.mock("@/lib/secrets/openbao-key-health", () => ({
+  readOpenBaoKeyHealth: (names: ReadonlyArray<string>) => readOpenBaoKeyHealth(names),
 }));
 vi.mock("@/lib/logger", () => ({ logger: { warn: vi.fn(), error: vi.fn() } }));
 
@@ -25,8 +25,8 @@ function req(product: string) {
 // implicit cleanup callback, invoking it (with no args) after the test.
 beforeEach(() => {
   queryInstant.mockReset();
-  readKeyHealth.mockReset();
-  readKeyHealth.mockResolvedValue({ configured: 2, oldestAgeDays: 7 });
+  readOpenBaoKeyHealth.mockReset();
+  readOpenBaoKeyHealth.mockResolvedValue({ configured: 2, oldestAgeDays: 7 });
 });
 
 describe("kora kpis", () => {
@@ -47,11 +47,11 @@ describe("kora kpis", () => {
     expect(body.ai_keys_configured).toBe(2);
     expect(body.ai_key_age_days).toBe(7);
 
-    // readKeyHealth must be called with the two Kora secret names, metadata
+    // readOpenBaoKeyHealth must be called with the two Kora secret names, metadata
     // only — the client/project wiring lives in lib/secrets/key-health.ts.
-    expect(readKeyHealth).toHaveBeenCalledWith("tesseracthub-480811", [
-      "prod-kora-gemini-api-key",
-      "prod-kora-openai-api-key",
+    expect(readOpenBaoKeyHealth).toHaveBeenCalledWith([
+      "kora/app/kora-gemini-api-key",
+      "kora/app/kora-openai-api-key",
     ]);
 
     // The mock branch above matches the budget query loosely (by substring),
@@ -146,12 +146,12 @@ describe("kora kpis", () => {
   it("does not query prometheus or secret manager for other products", async () => {
     const res = await req("fanzone");
     expect(queryInstant).not.toHaveBeenCalled();
-    // Twin of the assertion above: readKeyHealth is gated behind the same
-    // `product === "kora"` guard. Without this, hoisting the readKeyHealth
+    // Twin of the assertion above: readOpenBaoKeyHealth is gated behind the same
+    // `product === "kora"` guard. Without this, hoisting the readOpenBaoKeyHealth
     // call above the guard would pass every other test while every
     // mark8ly/homechef/devai KPI request silently started making two GCP
     // Secret Manager API calls.
-    expect(readKeyHealth).not.toHaveBeenCalled();
+    expect(readOpenBaoKeyHealth).not.toHaveBeenCalled();
     // fanzone has no KPI branch, so it falls into the unknown-product path
     // below — 501, not a silent {}. See the "unknown product" describe block.
     expect(res.status).toBe(501);
@@ -163,7 +163,7 @@ describe("kora kpis", () => {
   // must still surface as 0 — that is the alarm the tile exists to raise.
   it("reports a measured zero from Secret Manager as 0", async () => {
     queryInstant.mockResolvedValue(sample(5));
-    readKeyHealth.mockResolvedValue({ configured: 0, oldestAgeDays: 0 });
+    readOpenBaoKeyHealth.mockResolvedValue({ configured: 0, oldestAgeDays: 0 });
 
     const body = await (await req("kora")).json();
     expect(body.food_index_missing).toBe(5);
@@ -172,11 +172,11 @@ describe("kora kpis", () => {
     expect(body.ai_keys_configured).toBe(0);
   });
 
-  // Its twin: readKeyHealth now signals "could not check" with null, and that
+  // Its twin: readOpenBaoKeyHealth now signals "could not check" with null, and that
   // must blank the two key tiles without touching the four Prometheus ones.
-  it("blanks only the key-health tiles when readKeyHealth returns null", async () => {
+  it("blanks only the key-health tiles when readOpenBaoKeyHealth returns null", async () => {
     queryInstant.mockResolvedValue(sample(5));
-    readKeyHealth.mockResolvedValue(null);
+    readOpenBaoKeyHealth.mockResolvedValue(null);
 
     const body = await (await req("kora")).json();
     expect(body.food_index_missing).toBe(5);
@@ -185,15 +185,15 @@ describe("kora kpis", () => {
     expect("ai_key_age_days" in body).toBe(false);
   });
 
-  // readKeyHealth already catches its own errors internally (see
+  // readOpenBaoKeyHealth already catches its own errors internally (see
   // key-health.ts), but route.ts must not RELY on that — a mock (or a future
   // refactor) that rejects must not propagate. Without a try/catch around
   // the call site, this rejection would escape `GET` entirely, Next would
   // return a 500, and all six tiles would blank — the exact inverse of the
   // independent-degradation invariant the test above exists to prove.
-  it("returns 200 with prometheus tiles intact when readKeyHealth rejects", async () => {
+  it("returns 200 with prometheus tiles intact when readOpenBaoKeyHealth rejects", async () => {
     queryInstant.mockResolvedValue(sample(5));
-    readKeyHealth.mockRejectedValue(new Error("PERMISSION_DENIED"));
+    readOpenBaoKeyHealth.mockRejectedValue(new Error("PERMISSION_DENIED"));
 
     const res = await req("kora");
     expect(res.status).toBe(200);
@@ -209,10 +209,10 @@ describe("kora kpis", () => {
   });
 
   // Proves the two upstreams run CONCURRENTLY rather than sequentially: with
-  // queryInstant hung on a promise that never resolves, readKeyHealth must
+  // queryInstant hung on a promise that never resolves, readOpenBaoKeyHealth must
   // still have been invoked once pending microtasks flush. If the two calls
   // were composed sequentially (`await Promise.all(prometheus...)` completing
-  // before `readKeyHealth(...)` is even called), readKeyHealth would never
+  // before `readOpenBaoKeyHealth(...)` is even called), readOpenBaoKeyHealth would never
   // be called at all here, since the prometheus leg never settles.
   it("invokes secret manager without waiting for prometheus to resolve first", async () => {
     // queryInstant is called once per query (four times) — every call must
@@ -224,7 +224,7 @@ describe("kora kpis", () => {
           releasePrometheus.push(() => resolve(sample(1)));
         }),
     );
-    readKeyHealth.mockResolvedValue({ configured: 2, oldestAgeDays: 7 });
+    readOpenBaoKeyHealth.mockResolvedValue({ configured: 2, oldestAgeDays: 7 });
 
     const pending = req("kora");
 
@@ -234,7 +234,7 @@ describe("kora kpis", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(readKeyHealth).toHaveBeenCalled();
+    expect(readOpenBaoKeyHealth).toHaveBeenCalled();
 
     // Let the request settle before the test ends.
     releasePrometheus.forEach((release) => release());
