@@ -14,8 +14,9 @@ import (
 type Lookup func(key string) string
 
 type Config struct {
-	Environment string
-	Port        int
+	RecoveryBucket string
+	Environment    string
+	Port           int
 
 	// Zitadel is the only identity provider. ZitadelProjectID doubles as the
 	// expected token audience, which is why it is required: without it the
@@ -66,6 +67,7 @@ func LoadFromEnv() (Config, error) { return Load(os.Getenv) }
 
 func Load(get Lookup) (Config, error) {
 	cfg := Config{
+		RecoveryBucket:  strings.TrimSpace(get("OPENBAO_RECOVERY_BUCKET")),
 		Environment:     valueOr(get("ENVIRONMENT"), "production"),
 		OpenBaoAddr:     strings.TrimSpace(get("OPENBAO_ADDR")),
 		OpenBaoMount:    valueOr(get("OPENBAO_MOUNT"), "kv"),

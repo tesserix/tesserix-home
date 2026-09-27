@@ -15,11 +15,13 @@ import (
 	"github.com/tesserix/tesserix-home/secrets-api/internal/bao"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/config"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/k8s"
+	"github.com/tesserix/tesserix-home/secrets-api/internal/recovery"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/secrets"
 )
 
 type Deps struct {
-	Config config.Config
+	Recovery *recovery.Service
+	Config   config.Config
 	// Bao is nil when the OpenBao backend is not enabled; namespace access
 	// control is then unavailable, since it is an OpenBao policy.
 	Bao     *bao.Client
@@ -101,6 +103,7 @@ func NewRouter(d Deps) *gin.Engine {
 	handlers.NewCluster(d.Discovery).Register(authed)
 	handlers.NewWhitelist(d.Whitelist, d.Audit).Register(authed)
 	handlers.NewReviews(d.Reviews, d.Audit).Register(groups)
+	handlers.NewRecovery(d.Recovery, d.Audit).Register(groups)
 
 	return r
 }
