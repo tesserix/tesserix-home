@@ -23,6 +23,7 @@ vi.mock("./tesserix", () => ({
 const {
   updateOrganisation,
   updateContact,
+  setLawfulBasis,
   setPrimaryContact,
   createContact,
   createOrganisation,
@@ -338,6 +339,7 @@ const CURRENT_CONTACT = {
   email: "priya@bondibaker.example",
   phone: null,
   instagram_handle: "bondibaker",
+  followers_count: 1200,
 };
 
 const UNCHANGED_CONTACT = {
@@ -482,6 +484,153 @@ describe("updateContact", () => {
     await expect(
       updateContact({ ...UNCHANGED_CONTACT, email: "taken@example.com" }),
     ).rejects.not.toBeInstanceOf(DuplicateContactError);
+  });
+
+  // ══ THE FOLLOWER COUNT, AND THE ONE WAY IT MUST NOT BEHAVE ══
+  //
+  // The console's contact form submits the four identifying fields and
+  // nothing else. If an omitted `followersCount` meant null the way an
+  // omitted `name` does, every operator fixing a typo would silently wipe the
+  // count off that contact — and the scrape is the only writer that has ever
+  // populated the column, so nothing would put it back. This is the test that
+  // makes that regression fail rather than ship.
+  it("leaves the recorded follower count alone when none is supplied", async () => {
+    const { changed } = await updateContact({ ...UNCHANGED_CONTACT, name: "Priya S" });
+
+    expect(changed).toEqual([{ field: "name", from: "Priya", to: "Priya S" }]);
+    const [, params] = query.mock.calls[1];
+    // COALESCE($7, followers_count) with a null $7 — the column keeps 1200.
+    expect(params[6]).toBeNull();
+  });
+
+  it("records a refreshed count as a per-field diff, stringified for the timeline", async () => {
+    const { changed } = await updateContact({ ...UNCHANGED_CONTACT, followersCount: 2298 });
+
+    expect(changed).toEqual([{ field: "followersCount", from: "1200", to: "2298" }]);
+
+    const [, params] = query.mock.calls[1];
+    expect(params[6]).toBe(2298);
+
+    const [, activityParams] = query.mock.calls[2];
+    expect(JSON.parse(activityParams[3] as string)).toEqual({
+      followersCount: { from: "1200", to: "2298" },
+    });
+  });
+
+  it("treats a re-scrape returning the same count as no change", async () => {
+    const { changed } = await updateContact({ ...UNCHANGED_CONTACT, followersCount: 1200 });
+
+    expect(changed).toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  // 51 of the 259 migrated rows hold NULL here, so "nothing recorded" is a
+  // state the diff meets in production, not a hypothetical.
+  it("reads a NULL stored count as nothing recorded rather than zero", async () => {
+    query.mockResolvedValue([{ ...CURRENT_CONTACT, followers_count: null }]);
+
+    const { changed } = await updateContact({ ...UNCHANGED_CONTACT, followersCount: 88 });
+
+    expect(changed).toEqual([{ field: "followersCount", from: null, to: "88" }]);
+  });
+
+  // The column has no CHECK behind it, so a bad value would be stored and the
+  // follower bands would then file the lead in a bucket answering no question.
+  it.each([-1, 1.5, Number.NaN])("refuses %s as a follower count", async (value) => {
+    await expect(
+      updateContact({ ...UNCHANGED_CONTACT, followersCount: value }),
+    ).rejects.toThrow(/non-negative integer/);
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe("setLawfulBasis", () => {
+  beforeEach(() => {
+    query.mockReset();
+    query.mockResolvedValue([{ ...CURRENT_CONTACT, lawful_basis: "not_recorded_pre_migration" }]);
+  });
+
+  // THE REASON THIS FUNCTION EXISTS. `updateContact` reads an omitted
+  // identifying field as "clear it", so the bulk path needs a writer that
+  // cannot express that call at all. If this UPDATE ever grows a `name` or
+  // `instagram_handle` column, the backfill can wipe the CRM's only channel
+  // to 256 leads — so the statement is asserted, not just its effect.
+  it("updates lawful_basis alone and never the identifying columns", async () => {
+    await setLawfulBasis({
+      contactId: "c1",
+      lawfulBasis: "legitimate_interests",
+      actor: "ops@tesserix.app",
+    });
+
+    const [updateSql, params] = query.mock.calls[1];
+    expect(updateSql).toMatch(/UPDATE crm_contacts/);
+    expect(updateSql).toMatch(/lawful_basis = \$2/);
+    expect(updateSql).not.toMatch(/name/);
+    expect(updateSql).not.toMatch(/email/);
+    expect(updateSql).not.toMatch(/phone/);
+    expect(updateSql).not.toMatch(/instagram_handle/);
+    expect(updateSql).not.toMatch(/followers_count/);
+    expect(params).toEqual(["c1", "legitimate_interests"]);
+  });
+
+  it("locks the row before comparing, as updateContact does", async () => {
+    await setLawfulBasis({
+      contactId: "c1",
+      lawfulBasis: "legitimate_interests",
+      actor: "ops@tesserix.app",
+    });
+
+    const [sql] = query.mock.calls[0];
+    expect(sql).toMatch(/FOR UPDATE/);
+  });
+
+  it("records the legacy marker as the from-value on the timeline", async () => {
+    const { changed } = await setLawfulBasis({
+      contactId: "c1",
+      lawfulBasis: "legitimate_interests",
+      actor: "ops@tesserix.app",
+    });
+
+    expect(changed).toEqual([
+      {
+        field: "lawfulBasis",
+        from: "not_recorded_pre_migration",
+        to: "legitimate_interests",
+      },
+    ]);
+
+    const [activitySql, activityParams] = query.mock.calls[2];
+    expect(activitySql).toMatch(/INSERT INTO crm_activities/);
+    expect(activityParams[1]).toBe("ops@tesserix.app");
+  });
+
+  // A re-run of the backfill must be a no-op, not 259 timeline entries
+  // claiming a decision was re-made.
+  it("writes nothing when the contact already holds that basis", async () => {
+    query.mockResolvedValue([{ ...CURRENT_CONTACT, lawful_basis: "legitimate_interests" }]);
+
+    const { changed } = await setLawfulBasis({
+      contactId: "c1",
+      lawfulBasis: "legitimate_interests",
+      actor: "ops@tesserix.app",
+    });
+
+    expect(changed).toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  // The marker exists to mean "nobody has decided". A path that could write
+  // it back would let a bulk job manufacture that state for rows a human had
+  // already ruled on.
+  it("refuses to write the legacy pre-migration marker", async () => {
+    await expect(
+      setLawfulBasis({
+        contactId: "c1",
+        lawfulBasis: "not_recorded_pre_migration",
+        actor: "ops@tesserix.app",
+      }),
+    ).rejects.toThrow(/not a selectable lawful basis/);
+    expect(query).not.toHaveBeenCalled();
   });
 });
 

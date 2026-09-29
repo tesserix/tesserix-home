@@ -667,7 +667,13 @@ async function writeEditActivity(
 /** The contact fields an operator may correct. `is_primary` is deliberately
  *  not among them — it is not this contact's property alone, so it moves
  *  through `setPrimaryContact` where the siblings can be demoted with it. */
-export type ContactField = "name" | "email" | "phone" | "instagramHandle" | "lawfulBasis";
+export type ContactField =
+  | "name"
+  | "email"
+  | "phone"
+  | "instagramHandle"
+  | "lawfulBasis"
+  | "followersCount";
 
 export interface ChangedContactField {
   field: ContactField;
@@ -701,6 +707,25 @@ export interface UpdateContactInput {
    * record evidences nothing.
    */
   lawfulBasis?: LawfulBasis;
+  /**
+   * A refreshed follower count, or `undefined` to leave the recorded one
+   * alone (#LDQ).
+   *
+   * ABSENT MEANS "LEAVE IT", NOT "CLEAR IT" — the same third state
+   * `lawfulBasis` uses, and here it is load-bearing rather than merely
+   * convenient. The console's contact form submits the four identifying
+   * fields and nothing else, so a `followersCount` that treated absence as
+   * null would silently wipe the count off every contact anyone edited to
+   * fix a typo. The scrape is the only writer that has ever populated this
+   * column; an edit form is the last thing that should be able to empty it.
+   *
+   * NOT NULLABLE, unlike the four identifying fields. "We looked and the
+   * number is gone" is not a correction an operator makes here — an account
+   * that has vanished is a deal to void, and erasure nulls this column
+   * through `eraseContact`. Leaving null out keeps this parameter to the one
+   * meaning it has: a newer reading of a number that was already a number.
+   */
+  followersCount?: number;
 }
 
 interface NormalisedContact {
@@ -712,6 +737,9 @@ interface NormalisedContact {
    *  Never null: a basis can be corrected but not cleared, because a contact
    *  held under no basis is the defect #248 reports. */
   lawfulBasis: LawfulBasis | undefined;
+  /** `undefined` means "unchanged" — see `UpdateContactInput.followersCount`
+   *  for why absence cannot mean null on this column. */
+  followersCount: number | undefined;
 }
 
 /**
@@ -740,6 +768,75 @@ export async function updateContact(
   });
 }
 
+export interface SetLawfulBasisInput {
+  contactId: string;
+  lawfulBasis: LawfulBasis;
+  /** Who decided. `crm_activities.actor`, never defaulted — the whole point
+   *  of recording a basis is being able to say who determined it. */
+  actor: string;
+}
+
+/**
+ * Record a lawful basis against one contact, and NOTHING ELSE.
+ *
+ * ══ WHY THIS EXISTS WHEN `updateContact` ALREADY TAKES A BASIS ══
+ *
+ * Because of what `updateContact` does with the fields a caller OMITS. For
+ * the four identifying columns an absent input means null — "clear it" — and
+ * that is correct for an edit form, where the form is the whole of what the
+ * operator is asserting. It is catastrophic for a bulk backfill: a loop that
+ * passed `{ contactId, lawfulBasis, actor }` and nothing else would set a
+ * basis on all 259 migrated contacts while erasing every name, email, phone
+ * and handle on the way through, and the CRM's only channel to 256 of those
+ * leads is the handle it had just deleted.
+ *
+ * The backfill COULD echo the four values back unchanged, and that is exactly
+ * the kind of correctness that holds until someone edits the loop. A function
+ * that cannot express the destructive call is a better guarantee than a
+ * caller that remembers not to make it, so the bulk path gets one.
+ *
+ * Everything else is deliberately shared with `updateContact` rather than
+ * reimplemented: the same `FOR UPDATE` lock, the same `ChangedContactField`
+ * diff shape, and the same `writeContactEditActivity` row. A second, quieter
+ * way to change this column is precisely what would make the provenance
+ * unreadable — `lawful_basis` is the field a data subject's "on what basis,
+ * and who decided" is answered from, so an unlogged writer would defeat the
+ * reason the column is there.
+ *
+ * An edit that changes nothing writes nothing, same as `updateContact` — a
+ * re-run of the backfill is a no-op rather than 259 timeline entries saying
+ * a decision was re-made.
+ */
+export async function setLawfulBasis(
+  input: SetLawfulBasisInput,
+): Promise<{ changed: ChangedContactField[] }> {
+  const next = assertCorrectableLawfulBasis(input.lawfulBasis);
+  if (next === undefined) {
+    // Unreachable via the type, reachable via a JS caller — and silently
+    // writing nothing would report a backfill as done that never ran.
+    throw new Error("setLawfulBasis: a lawful basis is required");
+  }
+
+  return tesserixTx(async (query) => {
+    const current = await selectContactForUpdate(query, input.contactId);
+    if (current.lawfulBasis === next) return { changed: [] };
+
+    const changed: ChangedContactField[] = [
+      { field: "lawfulBasis", from: current.lawfulBasis ?? null, to: next },
+    ];
+
+    await query(
+      `UPDATE crm_contacts
+          SET lawful_basis = $2,
+              updated_at = now()
+        WHERE id = $1`,
+      [input.contactId, next],
+    );
+    await writeContactEditActivity(query, current.organisationId, input.actor, changed);
+    return { changed };
+  });
+}
+
 /** The same normalisation `insertContact` applies, so a corrected value is
  *  stored in the form the indexes and `isSuppressed` expect (#236). */
 function normaliseContactInput(input: UpdateContactInput): NormalisedContact {
@@ -754,6 +851,7 @@ function normaliseContactInput(input: UpdateContactInput): NormalisedContact {
     // column: an exported function must not depend on its callers having
     // validated. `undefined` passes through as "unchanged".
     lawfulBasis: assertCorrectableLawfulBasis(input.lawfulBasis),
+    followersCount: assertRefreshableFollowersCount(input.followersCount),
   };
 }
 
@@ -761,6 +859,27 @@ function assertCorrectableLawfulBasis(value: LawfulBasis | undefined): LawfulBas
   if (value === undefined) return undefined;
   if (!isSelectableLawfulBasis(value)) {
     throw new Error(`updateContact: ${String(value)} is not a selectable lawful basis`);
+  }
+  return value;
+}
+
+/**
+ * Gate the incoming count, for the reason `assertCorrectableLawfulBasis`
+ * gives at the other guarded column: an exported function must not depend on
+ * its callers having validated.
+ *
+ * `followers_count` is a plain integer column with no CHECK behind it, so a
+ * float or a negative would be stored rather than refused, and the follower
+ * BANDS (`crm-filters.ts`) would then sort a lead into a bucket that answers
+ * no question anyone asked. Refusing here keeps the column in the shape the
+ * bands and `primaryContactFollowerClause` already assume.
+ */
+function assertRefreshableFollowersCount(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(
+      `updateContact: ${String(value)} is not a valid follower count (want a non-negative integer)`,
+    );
   }
   return value;
 }
@@ -776,8 +895,10 @@ async function selectContactForUpdate(
     phone: string | null;
     instagram_handle: string | null;
     lawful_basis: string | null;
+    followers_count: number | null;
   }>(
-    `SELECT organisation_id, name, email, phone, instagram_handle, lawful_basis
+    `SELECT organisation_id, name, email, phone, instagram_handle, lawful_basis,
+            followers_count
        FROM crm_contacts
       WHERE id = $1
         FOR UPDATE`,
@@ -797,6 +918,10 @@ async function selectContactForUpdate(
     // compare against, `not_recorded_pre_migration` included. Only the
     // incoming value is gated.
     lawfulBasis: (row.lawful_basis ?? undefined) as LawfulBasis | undefined,
+    // A NULL in the column becomes `undefined` here so the diff reads it as
+    // "nothing recorded", which is what 51 of the 259 migrated rows hold.
+    // The incoming value is gated; this one is only compared.
+    followersCount: row.followers_count ?? undefined,
   };
 }
 
@@ -816,6 +941,18 @@ function diffContact(
       field: "lawfulBasis",
       from: current.lawfulBasis ?? null,
       to: next.lawfulBasis,
+    });
+  }
+  // Guarded on `undefined` for the same reason as the basis above, and
+  // STRINGIFIED because `ChangedContactField` carries `string | null` — the
+  // metadata bag this feeds is read by people, and a count that arrived as a
+  // number on one row and a string on another would make the timeline's
+  // from/to pairs disagree about their own type.
+  if (next.followersCount !== undefined && next.followersCount !== current.followersCount) {
+    changed.push({
+      field: "followersCount",
+      from: current.followersCount === undefined ? null : String(current.followersCount),
+      to: String(next.followersCount),
     });
   }
   return changed;
@@ -844,9 +981,18 @@ async function writeContact(
               phone = $4,
               instagram_handle = $5,
               lawful_basis = COALESCE($6, lawful_basis),
+              followers_count = COALESCE($7, followers_count),
               updated_at = now()
         WHERE id = $1`,
-      [contactId, next.name, next.email, next.phone, next.instagramHandle, next.lawfulBasis ?? null],
+      [
+        contactId,
+        next.name,
+        next.email,
+        next.phone,
+        next.instagramHandle,
+        next.lawfulBasis ?? null,
+        next.followersCount ?? null,
+      ],
     );
   } catch (cause) {
     const key = duplicateContactKey(cause);
