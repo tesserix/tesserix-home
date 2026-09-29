@@ -1477,6 +1477,7 @@ const CONTACT_SUMMARY_KEYS: Readonly<Record<ChangedContactField["field"], string
   phone: "phone",
   instagramHandle: "instagram",
   lawfulBasis: "lawful_basis",
+  followersCount: "followers_count",
 };
 
 function summariseContactChanges(
