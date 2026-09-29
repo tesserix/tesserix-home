@@ -837,6 +837,83 @@ export async function setLawfulBasis(
   });
 }
 
+export interface SetFollowersCountInput {
+  contactId: string;
+  followersCount: number;
+  actor: string;
+}
+
+/**
+ * Record a fresh follower count against one contact, and NOTHING ELSE.
+ *
+ * ══ WHY THIS EXISTS WHEN `updateContact` ALREADY TAKES A COUNT ══
+ *
+ * The same reason `setLawfulBasis` exists, and it is worth restating rather
+ * than cross-referencing, because the two were written months apart and the
+ * trap is easy to walk back into.
+ *
+ * `updateContact` reads an omitted IDENTIFYING field as "clear it". A refresh
+ * loop is the one caller that naturally supplies a count and nothing else, so
+ * the obvious `{ contactId, followersCount, actor }` call would write a new
+ * number onto every contact it touched WHILE nulling the name, email, phone
+ * and handle — and a follower refresh runs over the whole target list at once,
+ * so the blast radius is the entire outreach set. The handle is the CRM's only
+ * channel to all but three contacts; losing it to a metrics refresh would be
+ * an absurd way to lose the business.
+ *
+ * The loop could read each contact first and echo the four values back. That
+ * works until someone simplifies the loop. A writer that cannot express the
+ * destructive call is the guarantee; a caller that remembers not to make it is
+ * a convention.
+ *
+ * ══ WHAT IT SHARES, DELIBERATELY ══
+ *
+ * The `FOR UPDATE` lock, the `ChangedContactField` diff shape, the
+ * `writeContactEditActivity` row, and `assertRefreshableFollowersCount`. A
+ * refreshed count and a hand-edited one read identically on the timeline,
+ * which is what lets an operator see "this number moved, and a scrape moved
+ * it" months later.
+ *
+ * A re-run with the same number writes nothing — the count only moves the
+ * timeline when it actually moved.
+ */
+export async function setFollowersCount(
+  input: SetFollowersCountInput,
+): Promise<{ changed: ChangedContactField[] }> {
+  const next = assertRefreshableFollowersCount(input.followersCount);
+  if (next === undefined) {
+    // Unreachable via the type, reachable from JS — and a silent no-op would
+    // report a refresh as done that never ran.
+    throw new Error("setFollowersCount: a follower count is required");
+  }
+
+  return tesserixTx(async (query) => {
+    const current = await selectContactForUpdate(query, input.contactId);
+    if (current.followersCount === next) return { changed: [] };
+
+    const changed: ChangedContactField[] = [
+      {
+        field: "followersCount",
+        // Stringified for the reason `diffContact` gives: the metadata bag is
+        // read by people, and a count typed as a number on one row and a
+        // string on another makes the from/to pairs disagree about themselves.
+        from: current.followersCount === undefined ? null : String(current.followersCount),
+        to: String(next),
+      },
+    ];
+
+    await query(
+      `UPDATE crm_contacts
+          SET followers_count = $2,
+              updated_at = now()
+        WHERE id = $1`,
+      [input.contactId, next],
+    );
+    await writeContactEditActivity(query, current.organisationId, input.actor, changed);
+    return { changed };
+  });
+}
+
 /** The same normalisation `insertContact` applies, so a corrected value is
  *  stored in the form the indexes and `isSuppressed` expect (#236). */
 function normaliseContactInput(input: UpdateContactInput): NormalisedContact {

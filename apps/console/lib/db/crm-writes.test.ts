@@ -24,6 +24,7 @@ const {
   updateOrganisation,
   updateContact,
   setLawfulBasis,
+  setFollowersCount,
   setPrimaryContact,
   createContact,
   createOrganisation,
@@ -630,6 +631,88 @@ describe("setLawfulBasis", () => {
         actor: "ops@tesserix.app",
       }),
     ).rejects.toThrow(/not a selectable lawful basis/);
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe("setFollowersCount", () => {
+  beforeEach(() => {
+    query.mockReset();
+    query.mockResolvedValue([CURRENT_CONTACT]);
+  });
+
+  // THE REASON THIS FUNCTION EXISTS, and the same claim `setLawfulBasis`
+  // makes: a refresh loop is the natural caller that supplies one field and
+  // nothing else, so the writer it reaches for must not be able to null the
+  // rest. If this UPDATE ever grows an identifying column, a metrics job can
+  // erase the CRM's only channel to its entire target list.
+  it("updates followers_count alone and never the identifying columns", async () => {
+    await setFollowersCount({ contactId: "c1", followersCount: 4054, actor: "ops@tesserix.app" });
+
+    const [updateSql, params] = query.mock.calls[1];
+    expect(updateSql).toMatch(/UPDATE crm_contacts/);
+    expect(updateSql).toMatch(/followers_count = \$2/);
+    expect(updateSql).not.toMatch(/name/);
+    expect(updateSql).not.toMatch(/email/);
+    expect(updateSql).not.toMatch(/phone/);
+    expect(updateSql).not.toMatch(/instagram_handle/);
+    expect(updateSql).not.toMatch(/lawful_basis/);
+    expect(params).toEqual(["c1", 4054]);
+  });
+
+  it("locks the row before comparing, as the other writers do", async () => {
+    await setFollowersCount({ contactId: "c1", followersCount: 4054, actor: "ops@tesserix.app" });
+
+    const [sql] = query.mock.calls[0];
+    expect(sql).toMatch(/FOR UPDATE/);
+  });
+
+  it("records the movement on the timeline, stringified", async () => {
+    const { changed } = await setFollowersCount({
+      contactId: "c1",
+      followersCount: 4054,
+      actor: "ops@tesserix.app",
+    });
+
+    expect(changed).toEqual([{ field: "followersCount", from: "1200", to: "4054" }]);
+
+    const [activitySql, activityParams] = query.mock.calls[2];
+    expect(activitySql).toMatch(/INSERT INTO crm_activities/);
+    expect(activityParams[1]).toBe("ops@tesserix.app");
+    expect(JSON.parse(activityParams[3] as string)).toEqual({
+      followersCount: { from: "1200", to: "4054" },
+    });
+  });
+
+  // A re-scrape that found the same number is not news, and must not put a
+  // row on the timeline saying the count moved.
+  it("writes nothing when the count has not moved", async () => {
+    const { changed } = await setFollowersCount({
+      contactId: "c1",
+      followersCount: 1200,
+      actor: "ops@tesserix.app",
+    });
+
+    expect(changed).toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a NULL stored count as nothing recorded rather than zero", async () => {
+    query.mockResolvedValue([{ ...CURRENT_CONTACT, followers_count: null }]);
+
+    const { changed } = await setFollowersCount({
+      contactId: "c1",
+      followersCount: 88,
+      actor: "ops@tesserix.app",
+    });
+
+    expect(changed).toEqual([{ field: "followersCount", from: null, to: "88" }]);
+  });
+
+  it.each([-1, 2.5, Number.NaN])("refuses %s before touching the database", async (value) => {
+    await expect(
+      setFollowersCount({ contactId: "c1", followersCount: value, actor: "ops@tesserix.app" }),
+    ).rejects.toThrow(/non-negative integer/);
     expect(query).not.toHaveBeenCalled();
   });
 });

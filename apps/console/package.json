@@ -14,6 +14,7 @@
     "build:cron": "esbuild scripts/parity-check.ts --bundle --platform=node --format=esm --target=node22 --conditions=react-server --alias:@=. --external:pg --outfile=dist/parity-check.mjs",
     "build:bootstrap": "esbuild scripts/catalog-bootstrap.ts --bundle --platform=node --format=esm --target=node22 --conditions=react-server --alias:@=. --external:pg --outfile=dist/catalog-bootstrap.mjs",
     "build:backfill-lawful-basis": "esbuild scripts/backfill-lawful-basis.ts --bundle --platform=node --format=esm --target=node22 --conditions=react-server --alias:@=. --external:pg --outfile=dist/backfill-lawful-basis.mjs",
+    "build:refresh-followers": "esbuild scripts/refresh-followers.ts --bundle --platform=node --format=esm --target=node22 --conditions=react-server --alias:@=. --external:pg --outfile=dist/refresh-followers.mjs",
     "build:preflight": "esbuild scripts/require-schema-version.ts --bundle --platform=node --format=esm --target=node22 --conditions=react-server --alias:@=. --external:pg --outfile=dist/require-schema-version.mjs",
     "build:schema-version": "node scripts/emit-schema-version.mjs",
     "start": "next start",
