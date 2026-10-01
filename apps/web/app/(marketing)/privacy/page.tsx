@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { LAST_UPDATED, LegalPage, LegalSection } from "../legal/legal-page";
 
 export const metadata: Metadata = {
@@ -52,6 +53,19 @@ export default function PrivacyPage() {
             Billing details — invoicing and subscription information. We do
             not store your payment card details; these are handled directly
             by our payment processors.
+          </li>
+          <li>
+            Public business profile details we sourced ourselves — for
+            sellers we approach about Mark8ly without them having contacted
+            us first. This is the only category here that does not come from
+            you, so it is covered separately and in full at{" "}
+            <Link
+              href="/privacy/outreach"
+              className="text-foreground underline-offset-4 hover:underline"
+            >
+              How we found you
+            </Link>
+            .
           </li>
         </ul>
       </LegalSection>

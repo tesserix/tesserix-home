@@ -10,6 +10,20 @@ import { AnimateOnScroll } from "@tesserix/web";
  */
 export const LAST_UPDATED = "11 August 2026";
 
+/**
+ * The outreach notice (/privacy/outreach) carries its own date rather than
+ * sharing `LAST_UPDATED`.
+ *
+ * Not a style choice: the date on a legal page is a factual claim about when
+ * that text last changed. Reusing one constant across pages is fine while
+ * they change together, but /privacy/outreach was added on its own, and
+ * pointing it at `LAST_UPDATED` would date it to August — before it existed.
+ * Bumping `LAST_UPDATED` instead would mark /terms and /cookies as revised
+ * when neither was touched. Both are misstatements, so the page that moved
+ * gets its own constant.
+ */
+export const OUTREACH_NOTICE_LAST_UPDATED = "1 October 2026";
+
 interface LegalPageProps {
   eyebrow: string;
   title: string;

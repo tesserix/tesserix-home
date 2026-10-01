@@ -4,12 +4,18 @@ import {
   backfillLawfulBasis,
   type BackfillLawfulBasisResult,
 } from "@/lib/db/crm-lawful-basis-backfill";
-import { isSelectableLawfulBasis, SELECTABLE_LAWFUL_BASES } from "@/lib/crm-provenance";
+import {
+  isSelectableLawfulBasis,
+  isStoredLawfulBasis,
+  LEGACY_LAWFUL_BASIS,
+  SELECTABLE_LAWFUL_BASES,
+} from "@/lib/crm-provenance";
 import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
 
 /**
- * Record a lawful basis against the contacts the migration left without one
- * (#248), as an operator runs it once.
+ * Record a lawful basis against a cohort of contacts, as an operator runs it
+ * once. Written for #248 — the contacts the migration left without one — and
+ * also used to correct that backfill's own output; see `--from` below.
  *
  * `scripts/catalog-bootstrap.ts` is the pattern, and its reasoning applies
  * unchanged: whoever runs this has a database connection rather than an
@@ -37,6 +43,20 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  *   node --env-file=.env.development dist/backfill-lawful-basis.mjs \
  *     --basis legitimate_interests --actor you@tesserix.app
  *   # ...then the same line with --commit
+ *
+ * ══ `--from` AND `--source` NARROW THE COHORT ══
+ *
+ * `--from` defaults to the legacy marker, which is the #248 run above.
+ * Supplying it lets the job correct a basis that was recorded wrongly — and
+ * `--source` is what keeps such a run off the contacts that legitimately
+ * hold the old value. The DPDP correction (LIA section 6) is:
+ *
+ *   node --env-file=.env.development dist/backfill-lawful-basis.mjs \
+ *     --from legitimate_interests --basis dpdp_public_data_exempt \
+ *     --source instagram_outreach --actor you@tesserix.app
+ *
+ * Without `--source` that line would also relabel every Australian,
+ * Canadian and European contact, for which `legitimate_interests` is correct.
  */
 
 const EXIT_OK = 0;
@@ -60,11 +80,28 @@ export async function runBackfillLawfulBasisJob(argv: readonly string[]): Promis
   const basis = readFlag(argv, "basis");
   const actor = readFlag(argv, "actor");
   const limitRaw = readFlag(argv, "limit");
+  const fromRaw = readFlag(argv, "from");
+  const source = readFlag(argv, "source");
   const commit = argv.includes("--commit");
 
   const selectable = SELECTABLE_LAWFUL_BASES.map((option) => option.value).join(", ");
   if (basis === undefined || !isSelectableLawfulBasis(basis)) {
     log({ outcome: "usage", reason: `--basis must be one of: ${selectable}` }, "err");
+    return EXIT_USAGE;
+  }
+  // `--from` accepts the legacy marker, which `--basis` does not: the whole
+  // point of the default run is to read rows holding it. So this validates
+  // with `isStoredLawfulBasis` — the read-side check — and not with the
+  // write-side one.
+  if (fromRaw !== undefined && !isStoredLawfulBasis(fromRaw)) {
+    log(
+      { outcome: "usage", reason: `--from must be one of: ${selectable}, ${LEGACY_LAWFUL_BASIS}` },
+      "err",
+    );
+    return EXIT_USAGE;
+  }
+  if (source !== undefined && source.trim().length === 0) {
+    log({ outcome: "usage", reason: "--source cannot be blank; omit it to match every source" }, "err");
     return EXIT_USAGE;
   }
   if (actor === undefined || actor.trim().length === 0) {
@@ -87,12 +124,29 @@ export async function runBackfillLawfulBasisJob(argv: readonly string[]): Promis
       actor: actor.trim(),
       dryRun: !commit,
       limit,
+      from: fromRaw,
+      source: source?.trim(),
     });
     // `dryRun` is logged beside the counts for `catalog-bootstrap`'s reason:
     // the field names do not change between a rehearsal and a real run, so
     // it is the only thing telling the two lines apart. `candidates` means
     // "would change" on a dry run and "were considered" on a real one.
-    log({ outcome: "ok", basis, actor: actor.trim(), dryRun: !commit, ...result }, "out");
+    log(
+      {
+        outcome: "ok",
+        basis,
+        // `from` and `source` are logged even when defaulted. The log line is
+        // the only durable record of which cohort a run touched, and
+        // "relabelled 259 rows" is unreadable afterwards without knowing
+        // what they were selected by.
+        from: fromRaw ?? LEGACY_LAWFUL_BASIS,
+        source: source?.trim() ?? null,
+        actor: actor.trim(),
+        dryRun: !commit,
+        ...result,
+      },
+      "out",
+    );
     // Failures are reported in the payload AND in the exit code: a run that
     // skipped rows is not a run that succeeded, and a caller that only reads
     // the status must not be told otherwise.
