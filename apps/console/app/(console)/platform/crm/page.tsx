@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ESTATE } from "@tesserix/console-core";
 import { ConsolePageHeader } from "@/components/kit/page-header";
+import { CrmToolLinks } from "./crm-tool-links";
 import type { QueueItem, QueueStatus, QueueStatusTone } from "@/components/kit/queue-list";
 import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar";
 // Imported from `surface-state` and not from `states`: this is a server
@@ -563,6 +564,7 @@ export default async function CrmPage({
       <ConsolePageHeader
         title="CRM"
         description="Leads and opportunities that need a rep's attention today."
+        actions={<CrmToolLinks />}
       />
 
       <CrmTabNav searchParams={resolvedSearchParams} active={activeTab} />

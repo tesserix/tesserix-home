@@ -82,8 +82,43 @@ export async function previewImportAction(rows: ImportRow[]): Promise<PreviewImp
     if (cause instanceof ErasureCheckUnavailableError) {
       return { ok: false, message: cause.message };
     }
+    // The two cases above are the ones with something useful to say to the
+    // operator. Everything else reaches the generic message — and used to
+    // reach it having discarded the only thing that explains the failure,
+    // which made "Could not preview this import" undiagnosable from the
+    // outside: no stack, no pod log line, nothing to grep. An operator can
+    // report that they saw it and that is the end of what anyone can learn.
+    //
+    // Logged, not surfaced. The cause may be a driver error naming a column
+    // or a constraint, and this action's whole input is other people's
+    // contact details — the message stays generic for the reason every other
+    // failure here does. `rows.length` is the one safe fact worth having
+    // beside it: a failure at 500 rows and a failure at 2 are different bugs.
+    logPreviewFailure(cause, rows.length);
     return { ok: false, message: PREVIEW_FAILED_MESSAGE };
   }
+}
+
+/**
+ * Why a bare `console.error` rather than the structured logger: there is not
+ * one. `apps/console` reports server-side faults this way throughout —
+ * `app/auth/callback/route.ts` alone does it six times — and introducing a
+ * second convention for one call site would leave the next reader unsure
+ * which to grep for.
+ *
+ * NO ROW DATA. Not the rows, not a sample, not a count of how many carried an
+ * email. A CSV of scraped sellers is exactly the data an operator is not
+ * entitled to see in a log line they did not already have access to, and a
+ * log is read by more people and retained longer than the surface that
+ * produced it.
+ */
+function logPreviewFailure(cause: unknown, rowCount: number): void {
+  console.error("[crm/import] preview failed", {
+    rowCount,
+    name: cause instanceof Error ? cause.name : typeof cause,
+    message: cause instanceof Error ? cause.message : String(cause),
+    stack: cause instanceof Error ? cause.stack : undefined,
+  });
 }
 
 /**
