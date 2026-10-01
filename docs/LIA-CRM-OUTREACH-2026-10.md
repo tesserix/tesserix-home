@@ -171,7 +171,17 @@ These are preconditions, not follow-ups.
    Art 14(3)(a) gives one month from collection; the earliest leads were
    collected 29 September 2026, so the clock is already running.
 2. **The opt-out works end to end** — a reply of "STOP" reaches a human and
-   results in a suppression entry. Untested as of this draft.
+   results in a suppression entry.
+
+   The software half is built and covered: `addSuppression` audits and
+   revalidates, outreach to a suppressed contact is refused, and both
+   `previewImport` and `commitImport` check the suppression list (and the
+   erasure register before it). **The gap is operational, not technical** —
+   nothing connects an Instagram reply to the database and nothing will, per
+   #254, so the guarantee rests on a person reading an inbox.
+   `RUNBOOK-OUTREACH-OBJECTIONS.md` is that procedure. It is still **unmet**
+   until someone is actually assigned to the @mark8ly inbox, including its
+   message-requests tab, which is where replies from non-followers land.
 3. ~~**`privacy@tesserix.app` exists and is monitored.**~~ **DONE**, 1 October
    2026. Cloudflare Email Routing forwards it to a monitored mailbox; all three
    `route*.mx.cloudflare.net` MX records resolve and the domain's SPF already
