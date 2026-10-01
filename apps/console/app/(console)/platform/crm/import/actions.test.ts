@@ -132,6 +132,57 @@ describe("previewImportAction", () => {
     expect(result).toEqual({ ok: false, message: "Could not preview this import." });
   });
 
+  // The generic message is right and it is not enough on its own: an operator
+  // reports seeing it and, before this, that was everything anyone could
+  // learn. No stack, no log line, nothing to grep — the failure was
+  // undiagnosable from outside the process that raised it.
+  it("logs the cause it refuses to show, so the failure can be diagnosed", async () => {
+    signIn(["crm"]);
+    const error = new Error("connection terminated");
+    vi.mocked(previewImport).mockRejectedValue(error);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await previewImportAction([{ email: "ava@example.com" }]);
+
+    expect(logged).toHaveBeenCalledWith(
+      "[crm/import] preview failed",
+      expect.objectContaining({ name: "Error", message: "connection terminated", rowCount: 1 }),
+    );
+    logged.mockRestore();
+  });
+
+  // The rows are the operator's input and the whole point of the generic
+  // message; a log is read by more people and kept longer than the surface
+  // that produced it, so the contact details must not follow the error into
+  // it.
+  it("keeps row data out of that log line", async () => {
+    signIn(["crm"]);
+    vi.mocked(previewImport).mockRejectedValue(new Error("boom"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await previewImportAction([{ email: "ava@example.com", name: "Ava Chen" }]);
+
+    const serialised = JSON.stringify(logged.mock.calls);
+    expect(serialised).not.toContain("ava@example.com");
+    expect(serialised).not.toContain("Ava Chen");
+    logged.mockRestore();
+  });
+
+  // A capability refusal already has its own message and its own audit row;
+  // logging it here as an unexpected fault would put a routine "no" in the
+  // error stream and train whoever reads it to skim past the line that means
+  // something.
+  it("does not log a capability refusal as a fault", async () => {
+    signIn([]);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await previewImportAction([{ email: "ava@example.com" }]);
+
+    expect(result).toEqual({ ok: false, message: "You don't have permission to edit the CRM." });
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
   // An unbounded file holds the pool's one connection for 2×N round trips —
   // refused before the session or the database is touched at all.
   // #248. The batch's lawful basis is validated at THIS boundary, the same
