@@ -273,9 +273,15 @@ describe("OrganisationsView location cell", () => {
     // `COUNTRY_LABELS` covers only the codes the table can produce today; a
     // code added to the table before its label must still render as itself
     // rather than vanish.
-    const cell = renderRowWithLocation("Auckland", "NZ");
+    //
+    // `ZZ`, not a real code. This test used `NZ` until New Zealand became a
+    // supported market and gained a label — at which point the test broke
+    // while the behaviour it guards was untouched. ZZ is ISO 3166-1's
+    // user-assigned range, so it can never be assigned to a country and this
+    // premise cannot expire again.
+    const cell = renderRowWithLocation("Somewhere", "ZZ");
 
-    expect(cell.textContent).toContain("NZ");
+    expect(cell.textContent).toContain("ZZ");
   });
 
   it("keeps a missing location distinct from a missing country", () => {
