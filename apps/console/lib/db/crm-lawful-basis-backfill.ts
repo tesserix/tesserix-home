@@ -96,11 +96,27 @@ export interface BackfillLawfulBasisOptions {
    * cohort — it is the value all 259 production rows carry, per
    * `CONTACT_SOURCE`'s note, and no later import writes it.
    *
-   * Country would be the more obvious filter and does not work:
-   * `crm_organisations.country` is NULL for 208 of the 259 (migration 0025),
-   * so filtering on it would silently miss four fifths of the cohort.
+   * Country was NOT usable when this was written: `crm_organisations.country`
+   * was NULL for 208 of 259 rows. The mapper has since learned the ten
+   * markets and the backfill has run, so `country` below is now the precise
+   * filter and `source` is the blunt one.
    */
   source?: string;
+  /**
+   * Restrict candidates to one `crm_organisations.country` (ISO 3166-1
+   * alpha-2, as that column stores). Optional; omitted means every country.
+   *
+   * Added because `source` stopped being able to separate the cohorts. The
+   * 2026-09 sweep imported all ten markets in two batches that both landed as
+   * `source = 'import'`, so after the second batch the six Indian contacts —
+   * which need `dpdp_public_data_exempt` rather than the GDPR basis the other
+   * 367 correctly carry — were no longer addressable by source alone.
+   *
+   * It is a filter on the ORGANISATION, not the contact: `country` is derived
+   * from `crm_organisations.location` by `@tesserix/crm-country`, and a
+   * contact has no location of its own.
+   */
+  country?: string;
 }
 
 export interface BackfillLawfulBasisFailure {
@@ -126,7 +142,7 @@ interface CandidateRow {
 export async function backfillLawfulBasis(
   options: BackfillLawfulBasisOptions,
 ): Promise<BackfillLawfulBasisResult> {
-  const { basis, actor, dryRun, limit, from, source } = options;
+  const { basis, actor, dryRun, limit, from, source, country } = options;
   const currentBasis = from ?? LEGACY_LAWFUL_BASIS;
 
   // Refused rather than treated as a no-op: `setLawfulBasis` compares before
@@ -140,16 +156,33 @@ export async function backfillLawfulBasis(
     );
   }
 
+  // Placeholders are numbered from the params actually pushed rather than
+  // hardcoded, because `source` and `country` are independently optional:
+  // with `$2` written into the country clause, a country-only run would bind
+  // it to a parameter that was never added.
   const params: unknown[] = [currentBasis];
-  if (source !== undefined) params.push(source);
+  const clauses: string[] = [];
+  if (source !== undefined) {
+    params.push(source);
+    clauses.push(`AND c.source = $${params.length}`);
+  }
+  if (country !== undefined) {
+    params.push(country);
+    clauses.push(`AND o.country = $${params.length}`);
+  }
 
+  // The join is unconditional even when `country` is absent. `organisation_id`
+  // is NOT NULL on `crm_contacts`, so an inner join cannot drop a row, and one
+  // query shape means the country-filtered path and the unfiltered one cannot
+  // diverge in what they consider a candidate.
   const rows = await tesserixQuery<CandidateRow>(
-    `SELECT id
-       FROM crm_contacts
-      WHERE lawful_basis = $1
-        AND erased_at IS NULL
-        ${source === undefined ? "" : "AND source = $2"}
-      ORDER BY created_at
+    `SELECT c.id
+       FROM crm_contacts c
+       JOIN crm_organisations o ON o.id = c.organisation_id
+      WHERE c.lawful_basis = $1
+        AND c.erased_at IS NULL
+        ${clauses.join("\n        ")}
+      ORDER BY c.created_at
       ${limit === undefined ? "" : "LIMIT " + String(Number(limit))}`,
     params,
   );

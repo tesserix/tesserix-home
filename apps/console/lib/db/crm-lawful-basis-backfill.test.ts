@@ -127,7 +127,9 @@ describe("backfillLawfulBasis", () => {
     });
 
     const [sql, params] = tesserixQuery.mock.calls[0];
-    expect(sql).toMatch(/AND source = \$2/);
+    // Table-qualified since the organisation join landed; `source` lives on
+    // `crm_contacts` and `country` on `crm_organisations`.
+    expect(sql).toMatch(/AND c\.source = \$2/);
     expect(params).toEqual(["legitimate_interests", "instagram_outreach"]);
   });
 
@@ -150,6 +152,40 @@ describe("backfillLawfulBasis", () => {
 
     expect(tesserixQuery).not.toHaveBeenCalled();
     expect(setLawfulBasis).not.toHaveBeenCalled();
+  });
+
+  // `source` alone stopped separating the cohorts once the sweep imported all
+  // ten markets as two batches that both landed as `source = 'import'`.
+  it("narrows by organisation country, joining because contacts have none", async () => {
+    await backfillLawfulBasis({
+      ...OPTIONS,
+      from: "legitimate_interests",
+      basis: "dpdp_public_data_exempt",
+      source: "import",
+      country: "IN",
+    });
+
+    const [sql, params] = tesserixQuery.mock.calls[0];
+    expect(sql).toMatch(/JOIN crm_organisations o ON o\.id = c\.organisation_id/);
+    expect(sql).toMatch(/AND c\.source = \$2/);
+    expect(sql).toMatch(/AND o\.country = \$3/);
+    expect(params).toEqual(["legitimate_interests", "import", "IN"]);
+  });
+
+  // The bug a hardcoded `$2` in the country clause would cause: with no
+  // `source`, country must bind to $2, not to a parameter never pushed.
+  it("numbers the country placeholder from the params actually bound", async () => {
+    await backfillLawfulBasis({
+      ...OPTIONS,
+      from: "legitimate_interests",
+      basis: "dpdp_public_data_exempt",
+      country: "IN",
+    });
+
+    const [sql, params] = tesserixQuery.mock.calls[0];
+    expect(sql).toMatch(/AND o\.country = \$2/);
+    expect(sql).not.toMatch(/c\.source/);
+    expect(params).toEqual(["legitimate_interests", "IN"]);
   });
 
   it("still defaults to the legacy marker when `from` is omitted", async () => {
