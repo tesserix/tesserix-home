@@ -172,8 +172,18 @@ These are preconditions, not follow-ups.
    collected 29 September 2026, so the clock is already running.
 2. **The opt-out works end to end** — a reply of "STOP" reaches a human and
    results in a suppression entry. Untested as of this draft.
-3. **`privacy@tesserix.app` exists and is monitored.** The notice publishes it;
-   the existing policy uses `sales@tesserix.app`. One of the two has to change.
+3. ~~**`privacy@tesserix.app` exists and is monitored.**~~ **DONE**, 1 October
+   2026. Cloudflare Email Routing forwards it to a monitored mailbox; all three
+   `route*.mx.cloudflare.net` MX records resolve and the domain's SPF already
+   includes `_spf.mx.cloudflare.net`, so inbound is live.
+
+   Caveat for whoever answers it: Cloudflare Email Routing is **inbound-forward
+   only**. A reply sent from the forwarding mailbox comes from that account's
+   own address, not from `privacy@tesserix.app`. Art 12(3) requires the
+   objection to be *actioned* within a month, not answered from a particular
+   address, so this is cosmetic rather than a compliance gap — but the domain
+   already has outbound through `amazonses.com` and `spf.postal.tesserix.app`
+   if a proper send-as is wanted.
 4. **Retention is implemented, not just stated.** The notice says twelve months
    from collection. Nothing currently enforces that.
 
