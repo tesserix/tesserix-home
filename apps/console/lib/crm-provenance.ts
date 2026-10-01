@@ -24,6 +24,7 @@ export type LawfulBasis =
   | "legitimate_interests"
   | "consent"
   | "contract"
+  | "dpdp_public_data_exempt"
   | "not_recorded_pre_migration";
 
 export interface LawfulBasisOption {
@@ -58,7 +59,47 @@ export const SELECTABLE_LAWFUL_BASES: readonly LawfulBasisOption[] = [
     label: "Contract",
     description: "An existing customer relationship we hold their details to service.",
   },
+  {
+    value: "dpdp_public_data_exempt",
+    label: "DPDP — publicly available data",
+    description:
+      "India only. The person published these details themselves, so India's DPDP Act does not apply to them (s.3(c)(ii)). Not for EU/UK contacts — the GDPR has no equivalent carve-out.",
+  },
 ];
+
+/**
+ * `dpdp_public_data_exempt` IS NOT A LAWFUL BASIS EITHER, and the column
+ * holding it is still the right place for it.
+ *
+ * The other three values answer "under which of the Act's bases do we hold
+ * this?". This one answers "the Act does not reach this data at all" —
+ * India's DPDP s.3(c)(ii) excludes personal data the data principal has
+ * themselves made publicly available. That is a different kind of claim, and
+ * `lawful_basis` already carries a value of that kind: `LEGACY_LAWFUL_BASIS`
+ * is an admission rather than a basis, kept storable for the same reason.
+ * One column recording "why we are entitled to hold this row" is what a
+ * subject-access request is answered from; splitting the exemption into a
+ * second column would mean the answer lives in two places and a reader has
+ * to know to check both.
+ *
+ * WHY IT EXISTS AT ALL. The 259 migrated contacts were relabelled to
+ * `legitimate_interests` by the #248 backfill. That was wrong, and wrong in a
+ * way worth naming: legitimate interests is a GDPR Art 6(1)(f) concept, and
+ * DPDP has no counterpart. Its section 4 offers consent or the closed list of
+ * "certain legitimate uses" in section 7, which does not include business
+ * development, and it provides no balancing test to fall back on. So the old
+ * label asserted a justification that does not exist in the statute that
+ * governs those contacts.
+ *
+ * WHY IT IS SELECTABLE. Unlike the legacy marker this is a forward-looking
+ * determination an operator can correctly make, so refusing it would leave
+ * the only honest label for an Indian scraped contact unavailable. The
+ * India-only limit is stated in the description rather than enforced in code:
+ * `crm_organisations.country` is NULL for most rows (migration 0025 records
+ * 208 of 259), so a country-conditional guard would reject the very contacts
+ * it exists to serve. See `docs/LIA-CRM-OUTREACH-2026-10.md` §6.
+ */
+export const DPDP_PUBLIC_DATA_EXEMPT = "dpdp_public_data_exempt" as const;
 
 /**
  * The marker the May-2026 leads migration wrote, and the value every one of

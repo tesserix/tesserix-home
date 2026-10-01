@@ -132,7 +132,15 @@ describe("ImportView lawful basis", () => {
     await user.click(screen.getByRole("combobox", { name: /lawful basis/i }));
     await waitFor(() => expect(screen.getByRole("listbox")).toBeInTheDocument());
     const options = screen.getAllByRole("option").map((option) => option.textContent ?? "");
-    expect(options).toEqual(["Legitimate interests", "Consent", "Contract"]);
+    // The exact list, not a `not.toContain` on the legacy marker: this is the
+    // dropdown an operator records a compliance determination from, so adding
+    // a basis should have to be acknowledged here rather than passing quietly.
+    expect(options).toEqual([
+      "Legitimate interests",
+      "Consent",
+      "Contract",
+      "DPDP — publicly available data",
+    ]);
   });
 });
 
