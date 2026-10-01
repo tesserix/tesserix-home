@@ -232,8 +232,12 @@ describe("the derived country on the organisation summary rail", () => {
   });
 
   it("falls back to the stored code when there is no label for it", async () => {
-    await renderOrganisationPage(["read"], { location: "Auckland", country: "NZ" });
+    // `ZZ` rather than a plausible country code: this used `NZ` until New
+    // Zealand became a supported market and gained a label, which broke the
+    // test without the behaviour changing at all. ZZ is in ISO 3166-1's
+    // user-assigned range and will never be a country.
+    await renderOrganisationPage(["read"], { location: "Somewhere", country: "ZZ" });
 
-    expect(railValue("Country")).toContain("NZ");
+    expect(railValue("Country")).toContain("ZZ");
   });
 });

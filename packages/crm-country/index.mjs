@@ -44,6 +44,19 @@
 export const COUNTRY_LABELS = {
   AU: "Australia",
   IN: "India",
+  // The nine markets the 2026-09 Instagram sweep imported. Until that import
+  // this table knew two countries, so 284 of 373 new organisations landed with
+  // a NULL country — and country is the axis any per-market action filters on,
+  // including the EU/UK outreach hold the LIA defines.
+  CA: "Canada",
+  DE: "Germany",
+  ES: "Spain",
+  FR: "France",
+  GB: "United Kingdom",
+  IT: "Italy",
+  NL: "Netherlands",
+  NZ: "New Zealand",
+  US: "United States",
 };
 
 // Keys are lowercased location fragments (a whole `location` value, or the
@@ -63,6 +76,46 @@ export const COUNTRY_BY_LOCATION = {
   // Countries
   australia: "AU",
   india: "IN",
+
+  // The nine markets added for the 2026-09 sweep. The bare names on the left
+  // of each group are the exact values that import wrote and that the live
+  // unmapped report returned; the rest are the forms a seller writes their own
+  // location in, which is what the next scrape or a manual create will carry.
+  //
+  // `GB`, not `UK`: this column stores ISO 3166-1 alpha-2 and the code for the
+  // United Kingdom is GB. "uk" is a key here because it is what people type,
+  // never a value.
+  canada: "CA",
+  usa: "US",
+  "u.s.a.": "US",
+  "u.s.": "US",
+  us: "US",
+  america: "US",
+  "united states": "US",
+  "united states of america": "US",
+  uk: "GB",
+  "united kingdom": "GB",
+  britain: "GB",
+  "great britain": "GB",
+  england: "GB",
+  scotland: "GB",
+  wales: "GB",
+  "northern ireland": "GB",
+  france: "FR",
+  italy: "IT",
+  italia: "IT",
+  germany: "DE",
+  deutschland: "DE",
+  netherlands: "NL",
+  "the netherlands": "NL",
+  nederland: "NL",
+  holland: "NL",
+  spain: "ES",
+  espana: "ES",
+  "españa": "ES",
+  "new zealand": "NZ",
+  nz: "NZ",
+  aotearoa: "NZ",
 
   // Indian metros / cities
   chennai: "IN",

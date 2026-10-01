@@ -24,6 +24,52 @@ describe("countryFromLocation", () => {
     expect(countryFromLocation("  chennai ")).toBe("IN");
   });
 
+  // The nine markets the 2026-09 sweep imported. These are the EXACT values
+  // the live unmapped report returned for 165 organisations — not invented
+  // examples — so a regression here is a regression against real rows.
+  it.each([
+    ["Canada", "CA"],
+    ["Italy", "IT"],
+    ["Germany", "DE"],
+    ["USA", "US"],
+    ["UK", "GB"],
+    ["France", "FR"],
+    ["Netherlands", "NL"],
+    ["New Zealand", "NZ"],
+    ["Spain", "ES"],
+  ])("maps the swept market %s to %s", (location, code) => {
+    expect(countryFromLocation(location)).toBe(code);
+  });
+
+  // GB and not UK: the column stores ISO 3166-1 alpha-2, where the United
+  // Kingdom is GB. "UK" is what a person types, never what is stored.
+  it("stores the UK as its ISO code, not the colloquial one", () => {
+    expect(countryFromLocation("UK")).toBe("GB");
+    expect(countryFromLocation("United Kingdom")).toBe("GB");
+    expect(countryFromLocation("Scotland")).toBe("GB");
+  });
+
+  it.each([
+    ["Deutschland", "DE"],
+    ["Italia", "IT"],
+    ["Nederland", "NL"],
+    ["España", "ES"],
+    ["Aotearoa", "NZ"],
+    ["United States of America", "US"],
+  ])("maps %s, the form a seller writes it in, to %s", (location, code) => {
+    expect(countryFromLocation(location)).toBe(code);
+  });
+
+  // The markets deliberately NOT added: Belgium contaminated the Dutch and
+  // French sweeps and is not a supported market, so it must stay null rather
+  // than being filed under NL for looking Dutch.
+  it.each(["Belgium", "Austria", "Switzerland", "Brazil"])(
+    "leaves the unsupported market %s unmapped",
+    (location) => {
+      expect(countryFromLocation(location)).toBeNull();
+    },
+  );
+
   it("maps production locations found unmapped in a live run", () => {
     // Fix round 1: these 10 distinct locations (Indian, every one) were
     // seen in production and returned null before this table was extended.
