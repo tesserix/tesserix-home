@@ -35,6 +35,23 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   // Facebook/LinkedIn link-preview crawlers.
   "/launch",
   "/login",
+  // The legal pages, which were behind the session gate until #644 — a
+  // privacy policy and a terms of service that require an account are not
+  // published, they are filed.
+  //
+  // Each of these is read by people who by definition have no session: a
+  // visitor deciding whether to sign up, a regulator, an app store reviewer,
+  // and — for /privacy/outreach — a stranger who received a cold DM and is
+  // following the link in it to find out what we hold and how to object.
+  // That last one is a GDPR Art 14 notice, and Art 12(1) requires it be
+  // "easily accessible"; a login wall is the opposite of that, and the people
+  // most entitled to read it are exactly the ones who cannot get an account.
+  //
+  // `/privacy` covers `/privacy/outreach` through the `p + "/"` prefix rule
+  // in `isPublicPath` below, the same way `/products` covers its slugs.
+  "/privacy",
+  "/terms",
+  "/cookies",
   // Next.js metadata file routes (root-level opengraph image, robots.txt,
   // sitemap.xml) — fetched by social-media link-preview crawlers and search
   // engine bots, neither of which carry a tesserix-home session. Nested
@@ -64,7 +81,13 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/api/internal",
 ];
 
-function isPublicPath(pathname: string): boolean {
+/**
+ * Exported for `middleware.test.ts`. The list it reads decides what an
+ * anonymous visitor can reach, and the legal pages were silently behind the
+ * session gate until #644 — a regression nothing could have caught, because
+ * nothing asserted the rule.
+ */
+export function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) {
     return true;
   }
