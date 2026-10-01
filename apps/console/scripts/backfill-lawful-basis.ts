@@ -57,6 +57,14 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  *
  * Without `--source` that line would also relabel every Australian,
  * Canadian and European contact, for which `legitimate_interests` is correct.
+ *
+ * `--source` stopped being enough once the 2026-09 sweep imported all ten
+ * markets as two batches that both landed as `source = 'import'`. `--country`
+ * is the precise filter now that the mapper knows those markets:
+ *
+ *   node --env-file=.env.development dist/backfill-lawful-basis.mjs \
+ *     --from legitimate_interests --basis dpdp_public_data_exempt \
+ *     --source import --country IN --actor you@tesserix.app
  */
 
 const EXIT_OK = 0;
@@ -82,6 +90,7 @@ export async function runBackfillLawfulBasisJob(argv: readonly string[]): Promis
   const limitRaw = readFlag(argv, "limit");
   const fromRaw = readFlag(argv, "from");
   const source = readFlag(argv, "source");
+  const country = readFlag(argv, "country");
   const commit = argv.includes("--commit");
 
   const selectable = SELECTABLE_LAWFUL_BASES.map((option) => option.value).join(", ");
@@ -102,6 +111,18 @@ export async function runBackfillLawfulBasisJob(argv: readonly string[]): Promis
   }
   if (source !== undefined && source.trim().length === 0) {
     log({ outcome: "usage", reason: "--source cannot be blank; omit it to match every source" }, "err");
+    return EXIT_USAGE;
+  }
+  // Shape-checked, not checked against a list of real countries: the column
+  // stores whatever `@tesserix/crm-country` derived, and a job that refused a
+  // code the mapper can actually produce would be the more annoying failure.
+  // Two uppercase letters is what alpha-2 is, and it catches the realistic
+  // slip — passing "India" or "in" instead of "IN".
+  if (country !== undefined && !/^[A-Z]{2}$/.test(country)) {
+    log(
+      { outcome: "usage", reason: "--country must be an ISO 3166-1 alpha-2 code, uppercase (e.g. IN)" },
+      "err",
+    );
     return EXIT_USAGE;
   }
   if (actor === undefined || actor.trim().length === 0) {
@@ -126,6 +147,7 @@ export async function runBackfillLawfulBasisJob(argv: readonly string[]): Promis
       limit,
       from: fromRaw,
       source: source?.trim(),
+      country,
     });
     // `dryRun` is logged beside the counts for `catalog-bootstrap`'s reason:
     // the field names do not change between a rehearsal and a real run, so
@@ -141,6 +163,7 @@ export async function runBackfillLawfulBasisJob(argv: readonly string[]): Promis
         // what they were selected by.
         from: fromRaw ?? LEGACY_LAWFUL_BASIS,
         source: source?.trim() ?? null,
+        country: country ?? null,
         actor: actor.trim(),
         dryRun: !commit,
         ...result,
