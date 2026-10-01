@@ -14,6 +14,7 @@ export default defineConfig({
       "app/**/*.test.ts",
       "scripts/**/*.test.ts",
       "next.config.test.ts",
+      "middleware.test.ts",
     ],
     exclude: ["node_modules", ".next", "tests"],
   },
