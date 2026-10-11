@@ -982,6 +982,7 @@ export async function fetchProductEntities(
   search?: string,
   page = 1,
   limit = ENTITIES_LIMIT,
+  signal?: AbortSignal,
 ): Promise<import("./entities").EntityPage> {
   const { parseEntities } = await import("./entities");
 
@@ -995,6 +996,7 @@ export async function fetchProductEntities(
     await platformRequest(
       "entities",
       `/v1/entities/${encodeURIComponent(type)}?${query.toString()}`,
+      signal ? { signal } : {},
     ),
   );
 }

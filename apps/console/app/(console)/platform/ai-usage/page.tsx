@@ -29,6 +29,7 @@ import { EventsTable } from "./events-table";
 import { GuardrailRules } from "./guardrail-rules";
 import { UsageFilters } from "./usage-filters";
 import { UsageTrend } from "./usage-trend";
+import { resolveUsageUserNames } from "./user-names";
 
 /**
  * AI cost and token usage, as observed at the agentgateway data plane.
@@ -262,6 +263,7 @@ export default async function AiUsagePage({
   const providers = settled<AiUsageBreakdown>(providerResult);
   const models = settled<AiUsageBreakdown>(modelResult);
   const users = settled<AiUsageBreakdown>(userResult);
+  const userNames = await resolveUsageUserNames(filters.product, users.data?.rows.map((row) => row.key) ?? []);
   const services = settled<AiUsageBreakdown>(serviceResult);
   const guardrails = settled<AiUsageGuardrails>(guardrailResult);
   const events = settled<AiUsageEvents>(eventsResult);
@@ -278,6 +280,20 @@ export default async function AiUsagePage({
 
   const breakdownState = (data: AiUsageBreakdown | null, error: unknown): SurfaceState =>
     usageState({ error, rows: data?.rows ?? [], filtered });
+
+  const userBreakdown = (
+    <BreakdownTable
+      title="By user"
+      description={filters.product === "kora"
+        ? "Account names with stable user IDs. IDs remain visible when a name is unavailable."
+        : "Select Kora to display account names alongside user IDs."}
+      names={userNames}
+      axisLabel="User"
+      rows={users.data?.rows ?? []}
+      state={breakdownState(users.data, users.error)}
+      emptyMessage={EMPTY_MESSAGES.breakdown}
+    />
+  );
 
   const descriptors = aiUsageFilters({
     products: (productVocabulary.data?.rows ?? []).map((row) => row.key),
@@ -344,6 +360,7 @@ export default async function AiUsagePage({
                   state={breakdownState(products.data, products.error)}
                   emptyMessage={EMPTY_MESSAGES.breakdown}
                 />
+                {userBreakdown}
               </div>
             ),
           },
@@ -376,7 +393,7 @@ export default async function AiUsagePage({
             label: "Users and services",
             content: (
               <div className="flex flex-col gap-8">
-                <BreakdownTable title="By user" description="Pseudonymous user IDs within the selected product and retained request window." axisLabel="User" rows={users.data?.rows ?? []} state={breakdownState(users.data, users.error)} emptyMessage={EMPTY_MESSAGES.breakdown} />
+                {userBreakdown}
                 <BreakdownTable title="By service" axisLabel="Service" rows={services.data?.rows ?? []} state={breakdownState(services.data, services.error)} emptyMessage={EMPTY_MESSAGES.breakdown} />
               </div>
             ),
