@@ -1,0 +1,53 @@
+name: Publish verified Console recovery image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: publish-verified-console
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Cloud Build 9c316743-2847-40d8-8f2a-c64d3963b60d; source tree equals e1a6ca3.
+      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:aefe1f282fdc9bc79cc42bd93f6edb1c0a938bfda5d4d1e87808c1a674a7a052
+      TARGET: ghcr.io/tesserix/tesserix-console:main-e1a6ca3
+      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-e1a6ca3
+    steps:
+      - name: Authenticate with the existing release identity
+        id: gcp
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: projects/849928263410/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-actions@tesseracthub-480811.iam.gserviceaccount.com
+          project_id: tesseracthub-480811
+          token_format: access_token
+          create_credentials_file: false
+      - name: Publish the verified digest and warm the Kargo mirror
+        env:
+          GCP_TOKEN: ${{ steps.gcp.outputs.access_token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GCP_TOKEN" | docker login asia-south1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          if docker manifest inspect "$TARGET" >/dev/null 2>&1; then
+            echo 'Refusing to overwrite an existing immutable release tag.' >&2
+            exit 1
+          fi
+          docker pull "$SOURCE"
+          docker tag "$SOURCE" "$TARGET"
+          docker push "$TARGET"
+          docker pull "$MIRROR"
+          test "$(docker image inspect "$SOURCE" --format '{{.Id}}')" = "$(docker image inspect "$MIRROR" --format '{{.Id}}')"
