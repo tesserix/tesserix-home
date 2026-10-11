@@ -289,6 +289,7 @@ describe("the page", () => {
       "model",
       "user",
       "service",
+      "agent",
       "product",
       "provider",
     ]);
@@ -350,4 +351,12 @@ describe("attribution breakdowns", () => {
   expect(screen.getByRole("table", {name: "By user"})).toBeInTheDocument();
   expect(screen.getByText("Asha Patel")).toBeInTheDocument();
   expect(screen.getByText("user-a")).toBeInTheDocument();
+ });
+
+ it("shows agent consumption on Overview", async () => {
+  fetchers.breakdown.mockImplementation(async (by: string) => breakdown(by, by === "agent" ? ["nutrition-coach"] : []));
+  await renderPage({product: "kora"});
+  expect(fetchers.breakdown).toHaveBeenCalledWith("agent", expect.objectContaining({product:"kora"}));
+  expect(screen.getByRole("table", {name: "By agent"})).toBeInTheDocument();
+  expect(screen.getByText("nutrition-coach")).toBeInTheDocument();
  });

@@ -126,13 +126,13 @@ func insertEvent(ctx context.Context, tx pgx.Tx, record Record) (bool, error) {
 			provider, request_model, response_model,
 			input_tokens, output_tokens, cached_input_tokens,
 			cost_usd, cost_source, status_code, outcome,
-			guardrail_action, guardrail_rule, latency_ms, user_id, service_name
+			guardrail_action, guardrail_rule, latency_ms, user_id, service_name, agent_id, agent_version, agent_run_id
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9,
 			$10, $11, $12,
 			$13, $14, $15, $16,
-			$17, $18, $19, $20, $21
+			$17, $18, $19, $20, $21, $22, $23, $24
 		)
 		ON CONFLICT (span_id) DO NOTHING
 		RETURNING span_id`,
@@ -141,7 +141,7 @@ func insertEvent(ctx context.Context, tx pgx.Tx, record Record) (bool, error) {
 		record.Provider, record.RequestModel, nullable(record.ResponseModel),
 		record.InputTokens, record.OutputTokens, record.CachedInputTokens,
 		record.CostUSD, record.CostSource, record.StatusCode, record.Outcome,
-		nullable(record.GuardrailAction), nullable(record.GuardrailRule), latency, nullable(record.UserID), nullable(record.ServiceName))
+		nullable(record.GuardrailAction), nullable(record.GuardrailRule), latency, nullable(record.UserID), nullable(record.ServiceName), nullable(record.AgentID), nullable(record.AgentVersion), nullable(record.AgentRunID))
 	if err != nil {
 		return false, fmt.Errorf("inserting event: %w", err)
 	}

@@ -129,9 +129,9 @@ func (r *Repository) Breakdown(ctx context.Context, since time.Time, d domain.Di
 	}
 
 	source := "ai_usage_hourly"
-	if d == domain.ByUser || d == domain.ByService {
+	if d == domain.ByUser || d == domain.ByService || d == domain.ByAgent {
 		source = `(SELECT occurred_at AS bucket, product, provider,
-   COALESCE(user_id,'') AS user_id, COALESCE(service_name,'') AS service_name,
+   COALESCE(user_id,'') AS user_id, COALESCE(service_name,'') AS service_name, COALESCE(agent_id,'') AS agent_id,
    1 AS requests, input_tokens, output_tokens, cached_input_tokens, cost_usd,
    CASE WHEN outcome IN ('provider_error','gateway_error') THEN 1 ELSE 0 END AS error_requests,
    CASE WHEN outcome='guardrail_blocked' THEN 1 ELSE 0 END AS blocked_requests
@@ -228,7 +228,7 @@ func (r *Repository) Events(ctx context.Context, since time.Time, limit int, f E
 		       provider, request_model, response_model,
 		       input_tokens, output_tokens, cached_input_tokens,
 		       cost_usd::float8, cost_source, status_code, outcome,
-		       guardrail_action, guardrail_rule, latency_ms, user_id, service_name
+		       guardrail_action, guardrail_rule, latency_ms, user_id, service_name, agent_id, agent_version, agent_run_id
 		FROM ai_usage_events
 		WHERE occurred_at >= $1` + where + `
 		ORDER BY occurred_at DESC, span_id DESC
@@ -249,7 +249,7 @@ func (r *Repository) Events(ctx context.Context, since time.Time, limit int, f E
 			&e.Provider, &e.RequestModel, &e.ResponseModel,
 			&e.Tokens.Input, &e.Tokens.Output, &e.Tokens.Cached,
 			&e.CostUSD, &e.CostSource, &e.StatusCode, &outcome,
-			&e.GuardrailAction, &e.GuardrailRule, &e.LatencyMS, &e.UserID, &e.ServiceName,
+			&e.GuardrailAction, &e.GuardrailRule, &e.LatencyMS, &e.UserID, &e.ServiceName, &e.AgentID, &e.AgentVersion, &e.AgentRunID,
 		); err != nil {
 			return nil, fmt.Errorf("events ai usage: %w", err)
 		}

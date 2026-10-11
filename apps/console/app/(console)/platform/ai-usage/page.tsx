@@ -239,6 +239,7 @@ export default async function AiUsagePage({
     modelResult,
     userResult,
     serviceResult,
+    agentResult,
     guardrailResult,
     eventsResult,
     productVocabularyResult,
@@ -251,6 +252,7 @@ export default async function AiUsagePage({
     fetchAiUsageBreakdown("model", query),
     fetchAiUsageBreakdown("user", query),
     fetchAiUsageBreakdown("service", query),
+    fetchAiUsageBreakdown("agent", query),
     fetchAiUsageGuardrails(query),
     fetchAiUsageEvents(query),
     fetchAiUsageBreakdown("product", vocabularyQuery),
@@ -265,6 +267,7 @@ export default async function AiUsagePage({
   const users = settled<AiUsageBreakdown>(userResult);
   const userNames = await resolveUsageUserNames(filters.product, users.data?.rows.map((row) => row.key) ?? []);
   const services = settled<AiUsageBreakdown>(serviceResult);
+  const agents = settled<AiUsageBreakdown>(agentResult);
   const guardrails = settled<AiUsageGuardrails>(guardrailResult);
   const events = settled<AiUsageEvents>(eventsResult);
   const productVocabulary = settled<AiUsageBreakdown>(productVocabularyResult);
@@ -280,6 +283,10 @@ export default async function AiUsagePage({
 
   const breakdownState = (data: AiUsageBreakdown | null, error: unknown): SurfaceState =>
     usageState({ error, rows: data?.rows ?? [], filtered });
+
+  const agentBreakdown = (
+    <BreakdownTable title="By agent" description="Server-reported agent IDs. Version and run details are available in Events." axisLabel="Agent" rows={agents.data?.rows ?? []} state={breakdownState(agents.data, agents.error)} emptyMessage={EMPTY_MESSAGES.breakdown} />
+  );
 
   const userBreakdown = (
     <BreakdownTable
@@ -361,6 +368,7 @@ export default async function AiUsagePage({
                   emptyMessage={EMPTY_MESSAGES.breakdown}
                 />
                 {userBreakdown}
+                {agentBreakdown}
               </div>
             ),
           },
@@ -394,6 +402,7 @@ export default async function AiUsagePage({
             content: (
               <div className="flex flex-col gap-8">
                 {userBreakdown}
+                {agentBreakdown}
                 <BreakdownTable title="By service" axisLabel="Service" rows={services.data?.rows ?? []} state={breakdownState(services.data, services.error)} emptyMessage={EMPTY_MESSAGES.breakdown} />
               </div>
             ),

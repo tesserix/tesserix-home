@@ -61,6 +61,9 @@ type GuardrailRow struct {
 type Event struct {
 	UserID          *string
 	ServiceName     *string
+	AgentID         *string
+	AgentVersion    *string
+	AgentRunID      *string
 	SpanID          string
 	TraceID         string
 	OccurredAt      time.Time

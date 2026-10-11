@@ -117,3 +117,9 @@ describe("gateway attribution", () => {
   expect(eventCostLabel({...EVENT, costSource: "partial"})).toBe("$0.0031 (partial)");
  });
 });
+
+ it("shows agent identity, version and run alongside usage", () => {
+  renderEvents([{...EVENT, agentId: "nutrition-coach", agentVersion: "1.0.0", agentRunId: "run-123"}]);
+  expect(screen.getByText("nutrition-coach · v1.0.0")).toBeInTheDocument();
+  expect(screen.getByText("Run: run-123")).toBeInTheDocument();
+ });

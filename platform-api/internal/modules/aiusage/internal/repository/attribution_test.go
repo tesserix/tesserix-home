@@ -14,9 +14,9 @@ func TestAttributionIsQueryableWithoutMixingProducts(t *testing.T) {
 	ctx := t.Context()
 	at := time.Now().UTC()
 	for _, r := range []ingest.Record{
-		{SpanID: "a", Product: "kora", UserID: "user-a", ServiceName: "kora-api", InputTokens: 100, CostUSD: 0.001},
-		{SpanID: "b", Product: "kora", UserID: "user-b", ServiceName: "kora-ai-agents", InputTokens: 200, CostUSD: 0.002},
-		{SpanID: "c", Product: "other", UserID: "user-a", ServiceName: "other-api", InputTokens: 300, CostUSD: 0.003},
+		{SpanID: "a", Product: "kora", UserID: "user-a", ServiceName: "kora-api", AgentID: "nutrition-coach", AgentVersion: "1.0.0", AgentRunID: "run-a", InputTokens: 100, CostUSD: 0.001},
+		{SpanID: "b", Product: "kora", UserID: "user-b", ServiceName: "kora-ai-agents", AgentID: "meal-planner", AgentVersion: "2.0.0", AgentRunID: "run-b", InputTokens: 200, CostUSD: 0.002},
+		{SpanID: "c", Product: "other", UserID: "user-a", ServiceName: "other-api", AgentID: "meal-planner", InputTokens: 300, CostUSD: 0.003},
 	} {
 		r.OccurredAt = at
 		r.Gateway = "test"
@@ -29,7 +29,7 @@ func TestAttributionIsQueryableWithoutMixingProducts(t *testing.T) {
 		}
 	}
 	repo := repository.New(pool)
-	for _, axis := range []string{"user", "service"} {
+	for _, axis := range []string{"user", "service", "agent"} {
 		d, err := domain.ParseDimension(axis)
 		if err != nil {
 			t.Fatal(err)
@@ -46,7 +46,7 @@ func TestAttributionIsQueryableWithoutMixingProducts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].UserID == nil || *events[0].UserID != "user-b" || events[0].ServiceName == nil || *events[0].ServiceName != "kora-ai-agents" {
+	if len(events) != 2 || events[0].AgentID == nil || *events[0].AgentID != "meal-planner" || events[0].AgentRunID == nil || *events[0].AgentRunID != "run-b" || events[0].AgentVersion == nil || *events[0].AgentVersion != "2.0.0" || events[0].UserID == nil || *events[0].UserID != "user-b" || events[0].ServiceName == nil || *events[0].ServiceName != "kora-ai-agents" {
 		t.Fatalf("events: %+v", events)
 	}
 }

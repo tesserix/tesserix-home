@@ -16,7 +16,7 @@ import { PlatformApiError } from "./platform-api-error";
 export const AI_USAGE_WINDOWS = ["24h", "7d", "30d"] as const;
 export type AiUsageWindowKey = (typeof AI_USAGE_WINDOWS)[number];
 
-export const AI_USAGE_AXES = ["product", "provider", "model", "capability", "gateway", "user", "service"] as const;
+export const AI_USAGE_AXES = ["product", "provider", "model", "capability", "gateway", "user", "service", "agent"] as const;
 export type AiUsageAxis = (typeof AI_USAGE_AXES)[number];
 
 export const AI_OUTCOMES = [
@@ -105,6 +105,9 @@ export interface AiUsageGuardrails {
 export interface AiUsageEvent {
   readonly userId?: string | null;
   readonly serviceName?: string | null;
+  readonly agentId?: string | null;
+  readonly agentVersion?: string | null;
+  readonly agentRunId?: string | null;
   readonly spanId: string;
   readonly traceId: string;
   readonly occurredAt: string;
@@ -283,6 +286,9 @@ export function parseAiUsageEvents(json: unknown): AiUsageEvents {
       return {
         userId: nullableStr(e.user_id, `events[${i}].user_id`),
         serviceName: nullableStr(e.service_name, `events[${i}].service_name`),
+        agentId: nullableStr(e.agent_id, `events[${i}].agent_id`),
+        agentVersion: nullableStr(e.agent_version, `events[${i}].agent_version`),
+        agentRunId: nullableStr(e.agent_run_id, `events[${i}].agent_run_id`),
         spanId: str(e.span_id, `events[${i}].span_id`),
         traceId: str(e.trace_id, `events[${i}].trace_id`),
         occurredAt: str(e.occurred_at, `events[${i}].occurred_at`),

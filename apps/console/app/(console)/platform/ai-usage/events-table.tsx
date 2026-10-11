@@ -116,6 +116,8 @@ export function EventsTable({ events, state, emptyMessage }: EventsTableProps) {
                 <div>{event.product}</div>
                 <div className="text-xs text-muted-foreground">{event.serviceName ?? "Service unknown"}</div>
                 <div className="text-xs text-muted-foreground">{event.userId ?? "No user attribution"}</div>
+                {event.agentId ? <div className="text-xs">{event.agentId}{event.agentVersion ? ` · v${event.agentVersion}` : ""}</div> : null}
+                {event.agentRunId ? <div className="break-all text-xs text-muted-foreground">Run: {event.agentRunId}</div> : null}
                 {event.capability ? (
                   <div className="text-xs text-muted-foreground">{event.capability}</div>
                 ) : null}
