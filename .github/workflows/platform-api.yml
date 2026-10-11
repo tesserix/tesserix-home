@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.26.9'
           cache-dependency-path: platform-auth/go.sum
 
       - name: Verify formatting
@@ -135,14 +135,8 @@ jobs:
       # first commit is one people learn to skip — the same reason ci.yml's
       # audit step uses --audit-level=high rather than moderate.
       #
-      # It also covers what Dependabot does NOT: the Go STANDARD LIBRARY. That
-      # matters more than it sounds. `go 1.26.5` in go.mod is a minimum, not a
-      # pin, and the Dockerfiles build `FROM golang:1.26-alpine` — a floating
-      # tag, currently 1.26.8. Scanning with a local 1.26.5 toolchain reports
-      # seven reachable stdlib findings that do not exist in the shipped
-      # binary; scanning here uses the same `go-version: '1.26'` the build
-      # does, so the answer describes what is deployed rather than what is
-      # installed on someone's laptop.
+      # Keep the scan toolchain aligned with Dockerfile.platform-api so
+      # standard-library findings describe the shipped binary.
       - name: Vulnerability scan (reachable only)
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -191,7 +185,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.26.9'
           cache-dependency-path: platform-api/go.sum
 
       - name: Verify formatting
