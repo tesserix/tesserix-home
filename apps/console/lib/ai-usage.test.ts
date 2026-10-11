@@ -163,11 +163,14 @@ describe("parseAiUsageEvents", () => {
   it("preserves user and service attribution on partially priced events", () => {
     const page = parseAiUsageEvents({ window, events: [{ ...event,
       user_id: "11111111-1111-4111-8111-111111111111", service_name: "token-optimizer",
-      cost_source: "partial",
+      cost_source: "partial", agent_id: "nutrition-coach", agent_version: "1.0.0", agent_run_id: "run-123",
     }] });
     expect(page.events[0].userId).toBe("11111111-1111-4111-8111-111111111111");
     expect(page.events[0].serviceName).toBe("token-optimizer");
     expect(page.events[0].costSource).toBe("partial");
+    expect(page.events[0].agentId).toBe("nutrition-coach");
+    expect(page.events[0].agentVersion).toBe("1.0.0");
+    expect(page.events[0].agentRunId).toBe("run-123");
   });
 
   it("rejects an outcome outside the vocabulary", () => {

@@ -20,11 +20,14 @@ type Record struct {
 	TraceID    string
 	OccurredAt time.Time
 
-	Gateway     string
-	Product     string
-	Capability  string
-	UserID      string
-	ServiceName string
+	Gateway      string
+	Product      string
+	Capability   string
+	UserID       string
+	ServiceName  string
+	AgentID      string
+	AgentVersion string
+	AgentRunID   string
 
 	Provider      string
 	RequestModel  string

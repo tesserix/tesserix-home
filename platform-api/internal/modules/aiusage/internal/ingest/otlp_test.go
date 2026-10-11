@@ -395,3 +395,14 @@ func TestFromTracesCapturesGatewayDecisionUsage(t *testing.T) {
 		t.Fatalf("bad decision accounting: %+v", r)
 	}
 }
+
+func TestFromTracesPreservesAgentExecution(t *testing.T) {
+	records := ingest.FromTraces(export("agentgateway", span(t, llm(map[string]*commonpb.AnyValue{
+		"tesserix.agent_id":      str("nutrition-coach"),
+		"tesserix.agent_version": str("1.0.0"),
+		"tesserix.agent_run_id":  str("run-123"),
+	}))))
+	if len(records) != 1 || records[0].AgentID != "nutrition-coach" || records[0].AgentVersion != "1.0.0" || records[0].AgentRunID != "run-123" {
+		t.Fatalf("agent attribution lost: %+v", records)
+	}
+}

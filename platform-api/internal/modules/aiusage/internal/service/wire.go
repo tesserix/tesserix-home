@@ -116,6 +116,9 @@ type GuardrailsPayload struct {
 type Event struct {
 	UserID          *string   `json:"user_id"`
 	ServiceName     *string   `json:"service_name"`
+	AgentID         *string   `json:"agent_id"`
+	AgentVersion    *string   `json:"agent_version"`
+	AgentRunID      *string   `json:"agent_run_id"`
 	SpanID          string    `json:"span_id"`
 	TraceID         string    `json:"trace_id"`
 	OccurredAt      time.Time `json:"occurred_at"`
@@ -227,6 +230,9 @@ func toEvents(rows []domain.Event) []Event {
 		out = append(out, Event{
 			UserID:          e.UserID,
 			ServiceName:     e.ServiceName,
+			AgentID:         e.AgentID,
+			AgentVersion:    e.AgentVersion,
+			AgentRunID:      e.AgentRunID,
 			SpanID:          e.SpanID,
 			TraceID:         e.TraceID,
 			OccurredAt:      utc(e.OccurredAt),

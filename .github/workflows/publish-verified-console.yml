@@ -1,4 +1,4 @@
-name: Publish verified Console image
+name: Publish verified Console and platform images
 
 on:
   workflow_dispatch:
@@ -13,15 +13,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  publish-console:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Cloud Build 0ac429b7-b573-4373-b09a-fa86d713982c; source 5ce6810.
-      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:bff2ce8f078238f6f88ef2c0bbc446e5be43c26668c6ab964f346df0db711d3f
-      TARGET: ghcr.io/tesserix/tesserix-console:main-5ce6810
-      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-5ce6810
+      # Cloud Build 85d2ffaf-a341-4abb-9d1b-fcdece0401ef; source 4814aea.
+      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:b255408c3a5219b7548fb611db390769500258e1612ee8aa42196636a2d5d32a
+      TARGET: ghcr.io/tesserix/tesserix-console:main-4814aea
+      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-4814aea
+    steps:
+      - name: Authenticate with the existing release identity
+        id: gcp
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: projects/849928263410/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-actions@tesseracthub-480811.iam.gserviceaccount.com
+          project_id: tesseracthub-480811
+          token_format: access_token
+          create_credentials_file: false
+      - name: Publish the verified digest and warm the Kargo mirror
+        env:
+          GCP_TOKEN: ${{ steps.gcp.outputs.access_token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GCP_TOKEN" | docker login asia-south1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          if docker manifest inspect "$TARGET" >/dev/null 2>&1; then
+            echo 'Refusing to overwrite an existing immutable release tag.' >&2
+            exit 1
+          fi
+          docker pull "$SOURCE"
+          docker tag "$SOURCE" "$TARGET"
+          docker push "$TARGET"
+          docker pull "$MIRROR"
+          test "$(docker image inspect "$SOURCE" --format '{{.Id}}')" = "$(docker image inspect "$MIRROR" --format '{{.Id}}')"
+
+  publish-platform:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Cloud Build 85d2ffaf-a341-4abb-9d1b-fcdece0401ef; source 4814aea.
+      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-platform-api@sha256:51584eed0d54a9eae7852331e3df232f26cf7c98f69cad2bc6b74171ece26074
+      TARGET: ghcr.io/tesserix/tesserix-platform-api:main-4814aea
+      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-platform-api:main-4814aea
     steps:
       - name: Authenticate with the existing release identity
         id: gcp
