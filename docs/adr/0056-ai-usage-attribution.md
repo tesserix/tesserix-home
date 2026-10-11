@@ -82,3 +82,12 @@ Production migration, rollout and authenticated production ledger verification
 are pending. Platform main publishes an image that can auto-promote, so do not
 merge the platform PR before the additive schema is in place. The ingest also
 needs an explicit immutable platform API image pin when that release is built.
+
+
+Remote PR checks add release blockers: ai-agents and token-optimizer jobs could
+not start because GitHub reports failed account payments or a spending limit.
+Platform CI also fails its existing workspace dependency audit (including
+advisories with no patched release) and its platform-auth scan using Go 1.26.8.
+The local toolchain is Go 1.27.2, so its zero-reachable result must not be treated
+as evidence that the older CI/runtime toolchain is clear. Do not disable or
+bypass these scanners. Production verification remains unperformed.
