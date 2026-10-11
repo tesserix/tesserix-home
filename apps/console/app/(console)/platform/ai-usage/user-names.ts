@@ -5,7 +5,7 @@ export async function resolveUsageUserNames(
   userIds: readonly string[],
 ): Promise<Record<string, string>> {
   const pending = new Set(userIds.filter(Boolean));
-  const names: Record<string, string> = Object.create(null);
+  const names: Record<string, string> = {};
   if (product !== "kora" || pending.size === 0) return names;
 
   const signal = AbortSignal.timeout(5_000);

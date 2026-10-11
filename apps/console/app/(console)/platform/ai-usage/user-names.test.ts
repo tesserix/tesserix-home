@@ -33,3 +33,8 @@ it("does not read the directory for empty or unattributed rows", async () => {
   expect(await resolveUsageUserNames("kora", [""])).toEqual({});
   expect(fetchEntities).not.toHaveBeenCalled();
 });
+it("returns a plain object serializable across the server/client boundary", async () => {
+  fetchEntities.mockResolvedValue(page([account("a", "Asha")]));
+  const result = await resolveUsageUserNames("kora", ["a"]);
+  expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+});
