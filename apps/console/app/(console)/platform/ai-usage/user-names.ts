@@ -15,9 +15,12 @@ export async function resolveUsageUserNames(
     try {
       const result = await fetchProductEntities(product, "users", undefined, page, 100, signal);
       for (const user of result.data) {
-        if (user.source === product && user.type === "users" && pending.has(user.id)) {
-          if (user.label.trim() && user.label !== user.id) names[user.id] = user.label;
-          pending.delete(user.id);
+        const prefix = `${product}:`;
+        if (user.source !== product || user.type !== "users" || !user.id.startsWith(prefix)) continue;
+        const userId = user.id.slice(prefix.length);
+        if (pending.has(userId)) {
+          if (user.label.trim() && user.label !== userId) names[userId] = user.label;
+          pending.delete(userId);
         }
       }
       seen += result.data.length;
