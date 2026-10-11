@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Cloud Build 0b685c10-15e8-4484-baab-846633e62c81; source fea1738.
-      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:43da6c074cab8cbb6dc54c5fac6b87c4c634c98571f4feca83fd9a12dfe175fe
-      TARGET: ghcr.io/tesserix/tesserix-console:main-fea1738
-      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-fea1738
+      # Cloud Build 0ac429b7-b573-4373-b09a-fa86d713982c; source 5ce6810.
+      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:bff2ce8f078238f6f88ef2c0bbc446e5be43c26668c6ab964f346df0db711d3f
+      TARGET: ghcr.io/tesserix/tesserix-console:main-5ce6810
+      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-5ce6810
     steps:
       - name: Authenticate with the existing release identity
         id: gcp
