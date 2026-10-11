@@ -412,3 +412,73 @@ func TestWriteRefusesARecordWithNoSpanID(t *testing.T) {
 		t.Error("want nothing reported as stored")
 	}
 }
+
+func TestWritePersistsAttributionAndReadAPIExposesIt(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	r := record(func(r *ingest.Record) { r.UserID = "test-user-123"; r.ServiceName = "kora-api" })
+	if _, err := ingest.NewWriter(pool).Write(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	var user, service string
+	if err := pool.QueryRow(ctx, `SELECT user_id, service_name FROM ai_usage_events WHERE span_id=$1`, r.SpanID).Scan(&user, &service); err != nil {
+		t.Fatal(err)
+	}
+	if user != r.UserID || service != r.ServiceName {
+		t.Fatalf("lost attribution: %q/%q", user, service)
+	}
+}
+
+func TestIncompletePriceCardDoesNotClaimACompletePrice(t *testing.T) {
+	pool := testdb.New(t)
+	priceCatalog(t, pool, ran.Add(-time.Hour), 0.042, -1, -1)
+	r := record(func(r *ingest.Record) { r.CostSource = ingest.CostUnpriced; r.CostUSD = 0 })
+	if _, err := ingest.NewWriter(pool).Write(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	got := readEvent(t, pool, r.SpanID)
+	if got.costSource != "partial" {
+		t.Fatalf("incomplete card incorrectly reported as %s", got.costSource)
+	}
+	if got.cost <= 0 {
+		t.Fatalf("known input spend lost: %v", got.cost)
+	}
+}
+
+func TestSubMicrodollarCostsSurviveEventAndRollupStorage(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := t.Context()
+	r := record(func(r *ingest.Record) { r.CostUSD = 0.00000015 })
+	if _, err := ingest.NewWriter(pool).Write(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got := readEvent(t, pool, r.SpanID)
+	var hourly float64
+	if err := pool.QueryRow(ctx, `SELECT cost_usd FROM ai_usage_hourly`).Scan(&hourly); err != nil {
+		t.Fatal(err)
+	}
+	if got.cost != r.CostUSD || hourly != r.CostUSD {
+		t.Fatalf("tiny costs lost: event=%v hourly=%v", got.cost, hourly)
+	}
+}
+
+func TestFailedRequestWithoutUsageRemainsUnpriced(t *testing.T) {
+	pool := testdb.New(t)
+	priceCatalog(t, pool, ran.Add(-time.Hour), 1, 2, 0.1)
+	r := record(func(r *ingest.Record) {
+		r.InputTokens = 0
+		r.OutputTokens = 0
+		r.CachedInputTokens = 0
+		r.CostUSD = 0
+		r.CostSource = ingest.CostUnpriced
+		r.StatusCode = 503
+		r.Outcome = ingest.OutcomeProviderError
+	})
+	if _, err := ingest.NewWriter(pool).Write(t.Context(), r); err != nil {
+		t.Fatal(err)
+	}
+	got := readEvent(t, pool, r.SpanID)
+	if got.costSource != ingest.CostUnpriced {
+		t.Fatalf("missing usage priced as %s", got.costSource)
+	}
+}

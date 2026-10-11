@@ -16,7 +16,7 @@ import { PlatformApiError } from "./platform-api-error";
 export const AI_USAGE_WINDOWS = ["24h", "7d", "30d"] as const;
 export type AiUsageWindowKey = (typeof AI_USAGE_WINDOWS)[number];
 
-export const AI_USAGE_AXES = ["product", "provider", "model", "capability", "gateway"] as const;
+export const AI_USAGE_AXES = ["product", "provider", "model", "capability", "gateway", "user", "service"] as const;
 export type AiUsageAxis = (typeof AI_USAGE_AXES)[number];
 
 export const AI_OUTCOMES = [
@@ -46,6 +46,8 @@ export interface AiUsageWindow {
 }
 
 export interface AiUsageTotals {
+  readonly unpricedRequests?: number;
+  readonly partialRequests?: number;
   readonly requests: number;
   readonly tokens: AiTokens;
   readonly costUsd: number;
@@ -101,6 +103,8 @@ export interface AiUsageGuardrails {
 }
 
 export interface AiUsageEvent {
+  readonly userId?: string | null;
+  readonly serviceName?: string | null;
   readonly spanId: string;
   readonly traceId: string;
   readonly occurredAt: string;
@@ -202,6 +206,8 @@ function parseTotals(value: unknown, path: string): AiUsageTotals {
   const t = obj(value, path);
   return {
     requests: num(t.requests, `${path}.requests`),
+    unpricedRequests: num(t.unpriced_requests ?? 0, `${path}.unpriced_requests`),
+    partialRequests: num(t.partial_requests ?? 0, `${path}.partial_requests`),
     tokens: parseTokens(t.tokens, `${path}.tokens`),
     costUsd: num(t.cost_usd, `${path}.cost_usd`),
     ok: num(t.ok_requests, `${path}.ok_requests`),
@@ -275,6 +281,8 @@ export function parseAiUsageEvents(json: unknown): AiUsageEvents {
     events: arr(root.events, "events").map((raw, i) => {
       const e = obj(raw, `events[${i}]`);
       return {
+        userId: nullableStr(e.user_id, `events[${i}].user_id`),
+        serviceName: nullableStr(e.service_name, `events[${i}].service_name`),
         spanId: str(e.span_id, `events[${i}].span_id`),
         traceId: str(e.trace_id, `events[${i}].trace_id`),
         occurredAt: str(e.occurred_at, `events[${i}].occurred_at`),
@@ -309,6 +317,7 @@ export function parseAiUsageEvents(json: unknown): AiUsageEvents {
  * hundredth of a cent.
  */
 export function costFormatter(usd: number): string {
+  if (usd > 0 && usd < 0.0001) return "<$0.0001";
   if (usd > 0 && usd < 0.01) {
     return `$${usd.toFixed(4)}`;
   }

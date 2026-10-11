@@ -72,6 +72,11 @@ func (r *Repository) Totals(ctx context.Context, since time.Time, f Filter) (dom
 	if err != nil {
 		return domain.Totals{}, fmt.Errorf("aggregate ai usage: %w", err)
 	}
+	coverageArgs := []any{since}
+	coverageQuery := `SELECT COUNT(*) FILTER (WHERE cost_source='unpriced'), COUNT(*) FILTER (WHERE cost_source='partial') FROM ai_usage_events WHERE occurred_at >= $1` + f.clauses(&coverageArgs)
+	if err := r.pool.QueryRow(ctx, coverageQuery, coverageArgs...).Scan(&t.UnpricedRequests, &t.PartialRequests); err != nil {
+		return domain.Totals{}, fmt.Errorf("ai pricing coverage: %w", err)
+	}
 	return t, nil
 }
 
@@ -123,6 +128,15 @@ func (r *Repository) Breakdown(ctx context.Context, since time.Time, d domain.Di
 		return nil, fmt.Errorf("breakdown ai usage: %q is not an axis", d)
 	}
 
+	source := "ai_usage_hourly"
+	if d == domain.ByUser || d == domain.ByService {
+		source = `(SELECT occurred_at AS bucket, product, provider,
+   COALESCE(user_id,'') AS user_id, COALESCE(service_name,'') AS service_name,
+   1 AS requests, input_tokens, output_tokens, cached_input_tokens, cost_usd,
+   CASE WHEN outcome IN ('provider_error','gateway_error') THEN 1 ELSE 0 END AS error_requests,
+   CASE WHEN outcome='guardrail_blocked' THEN 1 ELSE 0 END AS blocked_requests
+   FROM ai_usage_events) AS attributed`
+	}
 	args := []any{since}
 	query := `
 		SELECT
@@ -134,7 +148,7 @@ func (r *Repository) Breakdown(ctx context.Context, since time.Time, d domain.Di
 			COALESCE(SUM(cost_usd), 0)::float8,
 			COALESCE(SUM(error_requests), 0),
 			COALESCE(SUM(blocked_requests), 0)
-		FROM ai_usage_hourly
+		FROM ` + source + `
 		WHERE bucket >= $1` + f.clauses(&args) + `
 		GROUP BY axis
 		ORDER BY SUM(cost_usd) DESC, SUM(requests) DESC, axis`
@@ -214,7 +228,7 @@ func (r *Repository) Events(ctx context.Context, since time.Time, limit int, f E
 		       provider, request_model, response_model,
 		       input_tokens, output_tokens, cached_input_tokens,
 		       cost_usd::float8, cost_source, status_code, outcome,
-		       guardrail_action, guardrail_rule, latency_ms
+		       guardrail_action, guardrail_rule, latency_ms, user_id, service_name
 		FROM ai_usage_events
 		WHERE occurred_at >= $1` + where + `
 		ORDER BY occurred_at DESC, span_id DESC
@@ -235,7 +249,7 @@ func (r *Repository) Events(ctx context.Context, since time.Time, limit int, f E
 			&e.Provider, &e.RequestModel, &e.ResponseModel,
 			&e.Tokens.Input, &e.Tokens.Output, &e.Tokens.Cached,
 			&e.CostUSD, &e.CostSource, &e.StatusCode, &outcome,
-			&e.GuardrailAction, &e.GuardrailRule, &e.LatencyMS,
+			&e.GuardrailAction, &e.GuardrailRule, &e.LatencyMS, &e.UserID, &e.ServiceName,
 		); err != nil {
 			return nil, fmt.Errorf("events ai usage: %w", err)
 		}

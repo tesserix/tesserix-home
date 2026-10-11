@@ -15,14 +15,16 @@ type Tokens struct {
 
 // Totals is a window's aggregate.
 type Totals struct {
-	Requests    int64
-	Tokens      Tokens
-	CostUSD     float64
-	OK          int64
-	Blocked     int64
-	RateLimited int64
-	Errors      int64
-	Masked      int64
+	UnpricedRequests int64
+	PartialRequests  int64
+	Requests         int64
+	Tokens           Tokens
+	CostUSD          float64
+	OK               int64
+	Blocked          int64
+	RateLimited      int64
+	Errors           int64
+	Masked           int64
 }
 
 // SeriesPoint is one bucket of the window.
@@ -57,6 +59,8 @@ type GuardrailRow struct {
 
 // Event is one request as the gateway saw it.
 type Event struct {
+	UserID          *string
+	ServiceName     *string
 	SpanID          string
 	TraceID         string
 	OccurredAt      time.Time

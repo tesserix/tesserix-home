@@ -105,3 +105,15 @@ describe("GuardrailRules", () => {
     expect(screen.getByText("Masked")).toBeInTheDocument();
   });
 });
+
+
+describe("gateway attribution", () => {
+ it("shows the calling service and pseudonymous user", () => {
+  renderEvents([{ ...EVENT, serviceName: "kora-api", userId: "test-user-123" }]);
+  expect(screen.getByText("kora-api")).toBeInTheDocument();
+  expect(screen.getByText("test-user-123")).toBeInTheDocument();
+ });
+ it("labels a known subtotal as partial", () => {
+  expect(eventCostLabel({...EVENT, costSource: "partial"})).toBe("$0.0031 (partial)");
+ });
+});

@@ -67,6 +67,11 @@ func fromSpan(span *tracepb.Span, service string) (Record, bool) {
 	attrs := span.GetAttributes()
 	model := stringAttr(attrs, attrRequestModel)
 	provider := firstNonEmpty(stringAttr(attrs, attrProvider), stringAttr(attrs, attrLegacyProvider))
+	decisionModel := stringAttr(attrs, "tesserix.decision_model")
+	if decisionModel != "" && provider == "" {
+		model = decisionModel
+		provider = "typesafe"
+	}
 	if model == "" && provider == "" {
 		return Record{}, false
 	}
@@ -88,9 +93,11 @@ func fromSpan(span *tracepb.Span, service string) (Record, bool) {
 		TraceID:    hex.EncodeToString(span.GetTraceId()),
 		OccurredAt: time.Unix(0, int64(span.GetStartTimeUnixNano())).UTC(),
 
-		Gateway:    firstNonEmpty(stringAttr(attrs, attrGateway), service),
-		Product:    stringAttr(attrs, attrProduct),
-		Capability: stringAttr(attrs, attrCapability),
+		Gateway:     firstNonEmpty(stringAttr(attrs, attrGateway), service),
+		Product:     stringAttr(attrs, attrProduct),
+		Capability:  stringAttr(attrs, attrCapability),
+		UserID:      stringAttr(attrs, "tesserix.user_id"),
+		ServiceName: stringAttr(attrs, "tesserix.service"),
 
 		Provider:      provider,
 		RequestModel:  model,
@@ -106,6 +113,12 @@ func fromSpan(span *tracepb.Span, service string) (Record, bool) {
 		GuardrailRule:   stringAttr(attrs, attrGuardrailRule),
 
 		LatencyMS: latency(span),
+	}
+
+	if decisionModel != "" && provider == "typesafe" {
+		record.ResponseModel = decisionModel
+		record.InputTokens = intAttr(attrs, "tesserix.decision_input_tokens")
+		record.OutputTokens = intAttr(attrs, "tesserix.decision_output_tokens")
 	}
 
 	// A cached count larger than the input count would break the table's

@@ -60,7 +60,7 @@ func (w *Writer) Write(ctx context.Context, record Record) (bool, error) {
 // week-old span must be priced at the rate card that was in force when it ran,
 // or a replay would silently restate history.
 func (w *Writer) price(ctx context.Context, tx pgx.Tx, record Record) (Record, error) {
-	if record.CostSource != CostUnpriced {
+	if record.CostSource != CostUnpriced || (record.InputTokens == 0 && record.OutputTokens == 0) {
 		return record, nil
 	}
 
@@ -105,6 +105,11 @@ func (w *Writer) price(ctx context.Context, tx pgx.Tx, record Record) (Record, e
 		float64(record.CachedInputTokens)*cachedRate +
 		float64(record.OutputTokens)*prices["output"]) / 1_000_000
 	record.CostSource = CostFromCatalog
+	_, inputKnown := prices["input"]
+	_, outputKnown := prices["output"]
+	if (record.InputTokens > 0 && !inputKnown) || (record.OutputTokens > 0 && !outputKnown) {
+		record.CostSource = "partial"
+	}
 	return record, nil
 }
 
@@ -121,13 +126,13 @@ func insertEvent(ctx context.Context, tx pgx.Tx, record Record) (bool, error) {
 			provider, request_model, response_model,
 			input_tokens, output_tokens, cached_input_tokens,
 			cost_usd, cost_source, status_code, outcome,
-			guardrail_action, guardrail_rule, latency_ms
+			guardrail_action, guardrail_rule, latency_ms, user_id, service_name
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9,
 			$10, $11, $12,
 			$13, $14, $15, $16,
-			$17, $18, $19
+			$17, $18, $19, $20, $21
 		)
 		ON CONFLICT (span_id) DO NOTHING
 		RETURNING span_id`,
@@ -136,7 +141,7 @@ func insertEvent(ctx context.Context, tx pgx.Tx, record Record) (bool, error) {
 		record.Provider, record.RequestModel, nullable(record.ResponseModel),
 		record.InputTokens, record.OutputTokens, record.CachedInputTokens,
 		record.CostUSD, record.CostSource, record.StatusCode, record.Outcome,
-		nullable(record.GuardrailAction), nullable(record.GuardrailRule), latency)
+		nullable(record.GuardrailAction), nullable(record.GuardrailRule), latency, nullable(record.UserID), nullable(record.ServiceName))
 	if err != nil {
 		return false, fmt.Errorf("inserting event: %w", err)
 	}

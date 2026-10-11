@@ -61,6 +61,8 @@ func (w Window) Since(now time.Time) time.Time {
 type Dimension string
 
 const (
+	ByUser       Dimension = "user"
+	ByService    Dimension = "service"
 	ByProduct    Dimension = "product"
 	ByProvider   Dimension = "provider"
 	ByModel      Dimension = "model"
@@ -75,6 +77,10 @@ const (
 // column can be re-pointed without changing the contract.
 func (d Dimension) Column() (string, bool) {
 	switch d {
+	case ByUser:
+		return "user_id", true
+	case ByService:
+		return "service_name", true
 	case ByProduct:
 		return "product", true
 	case ByProvider:
@@ -97,7 +103,7 @@ func ParseDimension(raw string) (Dimension, error) {
 	}
 	d := Dimension(raw)
 	if _, ok := d.Column(); !ok {
-		return "", fmt.Errorf("%q is not a breakdown axis: use product, provider, model, capability or gateway", raw)
+		return "", fmt.Errorf("%q is not a breakdown axis: use product, provider, model, capability, gateway, user or service", raw)
 	}
 	return d, nil
 }

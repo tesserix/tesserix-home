@@ -367,3 +367,31 @@ func TestFromTracesPrefersTheCurrentProviderAttribute(t *testing.T) {
 		t.Errorf("provider = %q, want the current name to win over gen_ai.system", records[0].Provider)
 	}
 }
+
+func TestFromTracesPreservesUserAndCallingService(t *testing.T) {
+	records := ingest.FromTraces(export("agentgateway", span(t, llm(map[string]*commonpb.AnyValue{
+		"tesserix.user_id": str("test-user-123"),
+		"tesserix.service": str("kora-api"),
+	}))))
+	if len(records) != 1 {
+		t.Fatalf("records = %d", len(records))
+	}
+	if records[0].UserID != "test-user-123" || records[0].ServiceName != "kora-api" {
+		t.Fatalf("attribution lost: %+v", records[0])
+	}
+}
+
+func TestFromTracesCapturesGatewayDecisionUsage(t *testing.T) {
+	records := ingest.FromTraces(export("agentgateway", span(t, map[string]*commonpb.AnyValue{
+		"tesserix.product": str("kora"), "tesserix.capability": str("decide"),
+		"tesserix.decision_model":        str("jev-1.13.0"),
+		"tesserix.decision_input_tokens": i64(457), "tesserix.decision_output_tokens": i64(46),
+		"http.response.status_code": i64(200),
+	})))
+	if len(records) != 1 {
+		t.Fatalf("Jev call discarded: %d records", len(records))
+	}
+	if r := records[0]; r.Provider != "typesafe" || r.InputTokens != 457 || r.OutputTokens != 46 || r.ResponseModel != "jev-1.13.0" {
+		t.Fatalf("bad decision accounting: %+v", r)
+	}
+}
