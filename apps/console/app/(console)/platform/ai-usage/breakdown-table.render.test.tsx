@@ -61,3 +61,12 @@ describe("BreakdownTable", () => {
     expect(screen.getByText(/upstream is down/)).toBeInTheDocument();
   });
 });
+
+it("shows a resolved user name alongside the stable ID and unchanged usage", () => {
+  render(<BreakdownTable title="By user" axisLabel="User" rows={[{ ...ROW, key: "user-a" }, { ...ROW, key: "missing" }, { ...ROW, key: "" }]} names={{ "user-a": "Asha Patel" }} state={{ kind: "ready" }} emptyMessage="empty" />);
+  const row = screen.getByText("Asha Patel").closest("tr")!;
+  expect(within(row).getByText("user-a")).toBeInTheDocument();
+  expect(within(row).getByText("$0.0042")).toBeInTheDocument();
+  expect(screen.getByText("missing")).toBeInTheDocument();
+  expect(screen.getByText("Unattributed")).toBeInTheDocument();
+});

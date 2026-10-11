@@ -30,12 +30,14 @@ const fetchers = vi.hoisted(() => ({
   breakdown: vi.fn(),
   guardrails: vi.fn(),
   events: vi.fn(),
+  entities: vi.fn(),
 }));
 
 // Mocked at the module boundary rather than at `fetch`: the transport itself —
 // which params are sent, what a 422 does — is covered in lib/platform-api.test.ts,
 // and going through it here would need the operator token store as well.
 vi.mock("@/lib/platform-api", () => ({
+  fetchProductEntities: fetchers.entities,
   fetchAiUsageSummary: fetchers.summary,
   fetchAiUsageBreakdown: fetchers.breakdown,
   fetchAiUsageGuardrails: fetchers.guardrails,
@@ -104,6 +106,7 @@ const GUARDRAILS: AiUsageGuardrails = {
 const EVENTS: AiUsageEvents = { window: WINDOW, events: [] };
 
 beforeEach(() => {
+  fetchers.entities.mockResolvedValue({ data: [], pagination: { page: 1, limit: 100, total: 0 } });
   fetchers.summary.mockResolvedValue(SUMMARY);
   fetchers.breakdown.mockImplementation(async (by: string) =>
     breakdown(by, by === "provider" ? ["anthropic", "vertex"] : ["kora", "hms"]),
@@ -312,7 +315,7 @@ describe("the page", () => {
     // From the caller's side all three are a request that got no answer, so
     // the tile is one number: 4 + 3 + 3.
     await renderPage();
-    const refused = screen.getByText("Refused").closest("div");
+    const refused = screen.getByRole("heading", { name: "Refused" }).closest("div");
     expect(refused?.textContent).toContain("10");
   });
 
@@ -339,3 +342,12 @@ describe("attribution breakdowns", () => {
   expect(fetchers.breakdown).toHaveBeenCalledWith("service", expect.objectContaining({product:"kora"}));
  });
 });
+
+ it("shows resolved user consumption directly on Overview", async () => {
+  fetchers.breakdown.mockImplementation(async (by: string) => breakdown(by, by === "user" ? ["user-a"] : ["kora"]));
+  fetchers.entities.mockResolvedValue({ data: [{id: "user-a", label: "Asha Patel", source: "kora", type: "users"}], pagination: {page: 1, limit: 100, total: 1} });
+  await renderPage({product: "kora"});
+  expect(screen.getByRole("table", {name: "By user"})).toBeInTheDocument();
+  expect(screen.getByText("Asha Patel")).toBeInTheDocument();
+  expect(screen.getByText("user-a")).toBeInTheDocument();
+ });

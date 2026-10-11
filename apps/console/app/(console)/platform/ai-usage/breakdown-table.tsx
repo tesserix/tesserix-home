@@ -37,6 +37,7 @@ export interface BreakdownTableProps {
   emptyMessage: string;
   /** Label for the first column: "Product", "Model", "Capability". */
   axisLabel: string;
+  names?: Readonly<Record<string, string>>;
 }
 
 /** Blank axis value means the gateway could not attribute the request. Kept and
@@ -50,6 +51,7 @@ export function BreakdownTable({
   state,
   emptyMessage,
   axisLabel,
+  names,
 }: BreakdownTableProps) {
   return (
     <section className="flex flex-col gap-3" aria-label={title}>
@@ -95,6 +97,11 @@ export function BreakdownTable({
                   <TableCell className="px-3 py-2">
                     {row.key === "" ? (
                       <span className="italic text-muted-foreground">{UNATTRIBUTED_LABEL}</span>
+                    ) : names && Object.hasOwn(names, row.key) ? (
+                      <div>
+                        <div className="font-medium">{names[row.key]}</div>
+                        <div className="text-xs text-muted-foreground">{row.key}</div>
+                      </div>
                     ) : (
                       row.key
                     )}
