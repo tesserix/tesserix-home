@@ -1,4 +1,4 @@
-name: Publish verified Console recovery image
+name: Publish verified Console image
 
 on:
   workflow_dispatch:
@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Cloud Build 9c316743-2847-40d8-8f2a-c64d3963b60d; source tree equals e1a6ca3.
-      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:aefe1f282fdc9bc79cc42bd93f6edb1c0a938bfda5d4d1e87808c1a674a7a052
-      TARGET: ghcr.io/tesserix/tesserix-console:main-e1a6ca3
-      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-e1a6ca3
+      # Cloud Build 0b685c10-15e8-4484-baab-846633e62c81; source fea1738.
+      SOURCE: asia-south1-docker.pkg.dev/tesseracthub-480811/global/tesserix-console@sha256:43da6c074cab8cbb6dc54c5fac6b87c4c634c98571f4feca83fd9a12dfe175fe
+      TARGET: ghcr.io/tesserix/tesserix-console:main-fea1738
+      MIRROR: asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/tesserix-console:main-fea1738
     steps:
       - name: Authenticate with the existing release identity
         id: gcp
