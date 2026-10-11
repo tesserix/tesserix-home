@@ -345,7 +345,7 @@ describe("attribution breakdowns", () => {
 
  it("shows resolved user consumption directly on Overview", async () => {
   fetchers.breakdown.mockImplementation(async (by: string) => breakdown(by, by === "user" ? ["user-a"] : ["kora"]));
-  fetchers.entities.mockResolvedValue({ data: [{id: "user-a", label: "Asha Patel", source: "kora", type: "users"}], pagination: {page: 1, limit: 100, total: 1} });
+  fetchers.entities.mockResolvedValue({ data: [{id: "kora:user-a", label: "Asha Patel", source: "kora", type: "users"}], pagination: {page: 1, limit: 100, total: 1} });
   await renderPage({product: "kora"});
   expect(screen.getByRole("table", {name: "By user"})).toBeInTheDocument();
   expect(screen.getByText("Asha Patel")).toBeInTheDocument();
