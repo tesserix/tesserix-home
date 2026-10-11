@@ -45,6 +45,14 @@ describe("parseAiUsageSummary", () => {
     expect(summary.series[0].requests).toBe(42);
   });
 
+  it("preserves pricing gaps alongside the known subtotal", () => {
+    const summary = parseAiUsageSummary({ ...payload, totals: {
+      ...payload.totals, unpriced_requests: 3, partial_requests: 7,
+    } });
+    expect(summary.totals.unpricedRequests).toBe(3);
+    expect(summary.totals.partialRequests).toBe(7);
+  });
+
   it("accepts a quiet window", () => {
     const quiet = { ...payload, totals: { ...payload.totals, requests: 0 }, series: [] };
     expect(parseAiUsageSummary(quiet).series).toEqual([]);
@@ -152,6 +160,16 @@ describe("parseAiUsageEvents", () => {
     expect(page.events[0].latencyMs).toBe(412);
   });
 
+  it("preserves user and service attribution on partially priced events", () => {
+    const page = parseAiUsageEvents({ window, events: [{ ...event,
+      user_id: "11111111-1111-4111-8111-111111111111", service_name: "token-optimizer",
+      cost_source: "partial",
+    }] });
+    expect(page.events[0].userId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(page.events[0].serviceName).toBe("token-optimizer");
+    expect(page.events[0].costSource).toBe("partial");
+  });
+
   it("rejects an outcome outside the vocabulary", () => {
     expect(() => parseAiUsageEvents({ window, events: [{ ...event, outcome: "maybe" }] })).toThrow(
       PlatformApiError,
@@ -166,6 +184,7 @@ describe("formatters", () => {
     expect(costFormatter(0.0042)).toBe("$0.0042");
     expect(costFormatter(12.5)).toBe("$12.50");
     expect(costFormatter(0)).toBe("$0.00");
+    expect(costFormatter(0.00000015)).toBe("<$0.0001");
   });
 
   it("abbreviates token counts", () => {

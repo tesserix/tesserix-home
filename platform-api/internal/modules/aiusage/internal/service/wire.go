@@ -50,14 +50,16 @@ type Window struct {
 }
 
 type Totals struct {
-	Requests    int64   `json:"requests"`
-	Tokens      Tokens  `json:"tokens"`
-	CostUSD     float64 `json:"cost_usd"`
-	OK          int64   `json:"ok_requests"`
-	Blocked     int64   `json:"blocked_requests"`
-	RateLimited int64   `json:"rate_limited_requests"`
-	Errors      int64   `json:"error_requests"`
-	Masked      int64   `json:"masked_requests"`
+	UnpricedRequests int64   `json:"unpriced_requests"`
+	PartialRequests  int64   `json:"partial_requests"`
+	Requests         int64   `json:"requests"`
+	Tokens           Tokens  `json:"tokens"`
+	CostUSD          float64 `json:"cost_usd"`
+	OK               int64   `json:"ok_requests"`
+	Blocked          int64   `json:"blocked_requests"`
+	RateLimited      int64   `json:"rate_limited_requests"`
+	Errors           int64   `json:"error_requests"`
+	Masked           int64   `json:"masked_requests"`
 }
 
 type SeriesPoint struct {
@@ -112,6 +114,8 @@ type GuardrailsPayload struct {
 }
 
 type Event struct {
+	UserID          *string   `json:"user_id"`
+	ServiceName     *string   `json:"service_name"`
 	SpanID          string    `json:"span_id"`
 	TraceID         string    `json:"trace_id"`
 	OccurredAt      time.Time `json:"occurred_at"`
@@ -158,14 +162,16 @@ func toWindow(w domain.Window, from, to time.Time) Window {
 
 func toTotals(t domain.Totals) Totals {
 	return Totals{
-		Requests:    t.Requests,
-		Tokens:      toTokens(t.Tokens),
-		CostUSD:     t.CostUSD,
-		OK:          t.OK,
-		Blocked:     t.Blocked,
-		RateLimited: t.RateLimited,
-		Errors:      t.Errors,
-		Masked:      t.Masked,
+		UnpricedRequests: t.UnpricedRequests,
+		PartialRequests:  t.PartialRequests,
+		Requests:         t.Requests,
+		Tokens:           toTokens(t.Tokens),
+		CostUSD:          t.CostUSD,
+		OK:               t.OK,
+		Blocked:          t.Blocked,
+		RateLimited:      t.RateLimited,
+		Errors:           t.Errors,
+		Masked:           t.Masked,
 	}
 }
 
@@ -219,6 +225,8 @@ func toEvents(rows []domain.Event) []Event {
 	out := make([]Event, 0, len(rows))
 	for _, e := range rows {
 		out = append(out, Event{
+			UserID:          e.UserID,
+			ServiceName:     e.ServiceName,
 			SpanID:          e.SpanID,
 			TraceID:         e.TraceID,
 			OccurredAt:      utc(e.OccurredAt),

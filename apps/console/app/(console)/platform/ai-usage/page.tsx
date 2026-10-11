@@ -236,6 +236,8 @@ export default async function AiUsagePage({
     capabilityResult,
     providerResult,
     modelResult,
+    userResult,
+    serviceResult,
     guardrailResult,
     eventsResult,
     productVocabularyResult,
@@ -246,6 +248,8 @@ export default async function AiUsagePage({
     fetchAiUsageBreakdown("capability", query),
     fetchAiUsageBreakdown("provider", query),
     fetchAiUsageBreakdown("model", query),
+    fetchAiUsageBreakdown("user", query),
+    fetchAiUsageBreakdown("service", query),
     fetchAiUsageGuardrails(query),
     fetchAiUsageEvents(query),
     fetchAiUsageBreakdown("product", vocabularyQuery),
@@ -257,6 +261,8 @@ export default async function AiUsagePage({
   const capabilities = settled<AiUsageBreakdown>(capabilityResult);
   const providers = settled<AiUsageBreakdown>(providerResult);
   const models = settled<AiUsageBreakdown>(modelResult);
+  const users = settled<AiUsageBreakdown>(userResult);
+  const services = settled<AiUsageBreakdown>(serviceResult);
   const guardrails = settled<AiUsageGuardrails>(guardrailResult);
   const events = settled<AiUsageEvents>(eventsResult);
   const productVocabulary = settled<AiUsageBreakdown>(productVocabularyResult);
@@ -290,7 +296,8 @@ export default async function AiUsagePage({
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
-          label="Spend"
+          label="Estimated spend"
+          delta={totals ? `${totals.unpricedRequests ?? 0} unpriced; ${totals.partialRequests ?? 0} partially priced requests` : undefined}
           value={totals ? costFormatter(totals.costUsd) : ""}
           state={totals ? undefined : tileState}
         />
@@ -361,6 +368,16 @@ export default async function AiUsagePage({
                   state={breakdownState(capabilities.data, capabilities.error)}
                   emptyMessage={EMPTY_MESSAGES.breakdown}
                 />
+              </div>
+            ),
+          },
+          {
+            id: "attribution",
+            label: "Users and services",
+            content: (
+              <div className="flex flex-col gap-8">
+                <BreakdownTable title="By user" description="Pseudonymous user IDs within the selected product and retained request window." axisLabel="User" rows={users.data?.rows ?? []} state={breakdownState(users.data, users.error)} emptyMessage={EMPTY_MESSAGES.breakdown} />
+                <BreakdownTable title="By service" axisLabel="Service" rows={services.data?.rows ?? []} state={breakdownState(services.data, services.error)} emptyMessage={EMPTY_MESSAGES.breakdown} />
               </div>
             ),
           },

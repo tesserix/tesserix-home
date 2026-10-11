@@ -1,0 +1,199 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "agentgateway"
+            }
+          },
+          {
+            "key": "telemetry.sdk.language",
+            "value": {
+              "stringValue": "rust"
+            }
+          },
+          {
+            "key": "telemetry.sdk.version",
+            "value": {
+              "stringValue": "0.32.1"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "1.4.1"
+            }
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "value": {
+              "stringValue": "opentelemetry"
+            }
+          },
+          {
+            "key": "host.name",
+            "value": {
+              "stringValue": "default.default.svc.cluster.local"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "agentgateway"
+          },
+          "spans": [
+            {
+              "traceId": "bDd0dfJ/wwd8yiep0c0HOw==",
+              "spanId": "ki9yqwSSZo8=",
+              "name": "GET /*",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1791693976437346200",
+              "endTimeUnixNano": "1791693976443781947",
+              "attributes": [
+                {
+                  "key": "gateway",
+                  "value": {
+                    "stringValue": "default/default"
+                  }
+                },
+                {
+                  "key": "listener",
+                  "value": {
+                    "stringValue": "listener0"
+                  }
+                },
+                {
+                  "key": "route",
+                  "value": {
+                    "stringValue": "default/route0"
+                  }
+                },
+                {
+                  "key": "endpoint",
+                  "value": {
+                    "stringValue": "host.docker.internal:18097"
+                  }
+                },
+                {
+                  "key": "src.addr",
+                  "value": {
+                    "stringValue": "172.17.0.1:47810"
+                  }
+                },
+                {
+                  "key": "http.method",
+                  "value": {
+                    "stringValue": "GET"
+                  }
+                },
+                {
+                  "key": "http.host",
+                  "value": {
+                    "stringValue": "localhost"
+                  }
+                },
+                {
+                  "key": "http.path",
+                  "value": {
+                    "stringValue": "/"
+                  }
+                },
+                {
+                  "key": "http.version",
+                  "value": {
+                    "stringValue": "HTTP/1.1"
+                  }
+                },
+                {
+                  "key": "http.status",
+                  "value": {
+                    "intValue": "200"
+                  }
+                },
+                {
+                  "key": "trace.id",
+                  "value": {
+                    "stringValue": "6c377475f27fc3077cca27a9d1cd073b"
+                  }
+                },
+                {
+                  "key": "span.id",
+                  "value": {
+                    "stringValue": "922f72ab0492668f"
+                  }
+                },
+                {
+                  "key": "protocol",
+                  "value": {
+                    "stringValue": "http"
+                  }
+                },
+                {
+                  "key": "duration",
+                  "value": {
+                    "stringValue": "6ms"
+                  }
+                },
+                {
+                  "key": "url.scheme",
+                  "value": {
+                    "stringValue": "http"
+                  }
+                },
+                {
+                  "key": "network.protocol.version",
+                  "value": {
+                    "stringValue": "1.1"
+                  }
+                },
+                {
+                  "key": "tesserix.product",
+                  "value": {
+                    "stringValue": "kora"
+                  }
+                },
+                {
+                  "key": "tesserix.user_id",
+                  "value": {
+                    "stringValue": "synthetic-probe-user"
+                  }
+                },
+                {
+                  "key": "tesserix.service",
+                  "value": {
+                    "stringValue": "kora-api"
+                  }
+                },
+                {
+                  "key": "tesserix.decision_model",
+                  "value": {
+                    "stringValue": "jev-1.13.0"
+                  }
+                },
+                {
+                  "key": "tesserix.decision_output_tokens",
+                  "value": {
+                    "intValue": "45"
+                  }
+                },
+                {
+                  "key": "tesserix.decision_input_tokens",
+                  "value": {
+                    "intValue": "123"
+                  }
+                }
+              ],
+              "status": {},
+              "flags": 257
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

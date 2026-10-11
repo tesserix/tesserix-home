@@ -277,13 +277,15 @@ describe("the page", () => {
     expect(fetchers.summary).toHaveBeenCalledWith(query);
     expect(fetchers.guardrails).toHaveBeenCalledWith(query);
     expect(fetchers.events).toHaveBeenCalledWith(query);
-    // Four narrowed axes, then the two unnarrowed reads the filter bar's
+    // Six narrowed axes, then the two unnarrowed reads the filter bar's
     // vocabulary comes from.
     expect(fetchers.breakdown.mock.calls.map(([by]) => by)).toEqual([
       "product",
       "capability",
       "provider",
       "model",
+      "user",
+      "service",
       "product",
       "provider",
     ]);
@@ -328,4 +330,12 @@ describe("the page", () => {
     await renderPage();
     expect(screen.getAllByText(EMPTY_MESSAGES.overview).length).toBeGreaterThan(0);
   });
+});
+
+describe("attribution breakdowns", () => {
+ it("loads user and service totals with the selected product scope", async () => {
+  await renderPage({product:"kora"});
+  expect(fetchers.breakdown).toHaveBeenCalledWith("user", expect.objectContaining({product:"kora"}));
+  expect(fetchers.breakdown).toHaveBeenCalledWith("service", expect.objectContaining({product:"kora"}));
+ });
 });
