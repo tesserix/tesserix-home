@@ -38,7 +38,6 @@ function makeUser(overrides: Partial<KoraUserDetail> = {}): KoraUserDetail {
     ai_calls: 0,
     counts: {},
     transfers: [],
-    has_apple_token: false,
     ...overrides,
   };
 }
@@ -102,15 +101,11 @@ describe("canDelete", () => {
 
 // -----------------------------------------------------------------------
 // postDeleteWarning — must not tell the operator a delete was complete when
-// the Firebase identity survived it.
+// the Zitadel identity survived it.
 // -----------------------------------------------------------------------
 describe("postDeleteWarning", () => {
-  it("warns when the firebase identity survived the delete", () => {
-    const warning = postDeleteWarning({
-      transfers: [],
-      firebase_identity_removed: false,
-      apple_token_revoked: true,
-    });
+  it("warns when the zitadel identity survived the delete", () => {
+    const warning = postDeleteWarning({ transfers: [], identity_removed: false });
     expect(warning).not.toBeNull();
     expect(warning).toContain("can still sign in");
   });
@@ -121,7 +116,7 @@ describe("postDeleteWarning", () => {
     // the only assertion, but it would fail this test's toContain above —
     // and a constant-string implementation would fail this one.
     expect(
-      postDeleteWarning({ transfers: [], firebase_identity_removed: true, apple_token_revoked: true }),
+      postDeleteWarning({ transfers: [], identity_removed: true }),
     ).toBeNull();
   });
 });
@@ -189,13 +184,12 @@ describe("KoraUserDetailPage", () => {
     expect(text).not.toContain("not found");
   });
 
-  it("shows the per-table counts, the transfer list with the new owner, and the apple-token consequence", async () => {
+  it("shows the per-table counts and the transfer list with the new owner", async () => {
     mockGetKoraUser.mockResolvedValueOnce(
       makeUser({
         email: "target@example.com",
         counts: { foods: 4, meals: 2 },
         transfers: [{ kind: "group", id: "g-1", name: "Runners", new_owner_id: "jane-id" }],
-        has_apple_token: true,
       }),
     );
 
@@ -211,9 +205,6 @@ describe("KoraUserDetailPage", () => {
     // alone does not reveal.
     expect(text).toContain("Runners");
     expect(text).toContain("jane-id");
-    // The Apple-token consequence must be stated, not just implied by a
-    // boolean somewhere off-screen.
-    expect(text).toContain("revoked");
   });
 
   it("states that no groups transfer when there are none, rather than omitting the section", async () => {

@@ -823,7 +823,6 @@ describe("getKoraUser", () => {
     ...USER_ROW,
     counts: { logs: 3, targets: 1 },
     transfers: [{ kind: "household", id: "h1", name: "Home", new_owner_id: "u2" }],
-    has_apple_token: false,
   };
 
   it("returns the flattened AdminDetail (no nested user/row key)", async () => {
@@ -835,7 +834,6 @@ describe("getKoraUser", () => {
     expect(detail.email).toBe(USER_ROW.email);
     expect(detail.counts).toEqual({ logs: 3, targets: 1 });
     expect(detail.transfers).toHaveLength(1);
-    expect(detail.has_apple_token).toBe(false);
   });
 
   it("hits GET /users/:id under ADMIN_PREFIX", async () => {
@@ -883,8 +881,7 @@ describe("getKoraUser", () => {
 describe("deleteKoraUser", () => {
   const DELETE_RESULT = {
     transfers: [{ kind: "household", id: "h1", name: "Home", new_owner_id: "u2" }],
-    firebase_identity_removed: true,
-    apple_token_revoked: false,
+    identity_removed: true,
   };
 
   it("DELETEs /users/:id and returns the 200 body (not a bare 204)", async () => {
@@ -914,7 +911,7 @@ describe("deleteKoraUser", () => {
   // group. Rejecting it here is the worst failure on this surface: the
   // account is already destroyed and the transaction has already committed,
   // so the operator is told an irreversible deletion failed when it
-  // succeeded, never sees firebase_identity_removed, and a retry answers 404.
+  // succeeded, never sees identity_removed, and a retry answers 404.
   it("tolerates transfers:null from Go and normalises it to an empty array", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(200, { data: { ...DELETE_RESULT, transfers: null } }),
@@ -923,7 +920,22 @@ describe("deleteKoraUser", () => {
     const result = await deleteKoraUser(USER_ROW.id);
 
     expect(result.transfers).toEqual([]);
-    expect(result.firebase_identity_removed).toBe(true);
+    expect(result.identity_removed).toBe(true);
+  });
+
+  // The admin web can ship before the Zitadel API does, and the Firebase-era
+  // API still calls the field firebase_identity_removed. Rejecting that body
+  // would report a completed, irreversible delete as a failure.
+  it("reads a Firebase-era firebase_identity_removed as identity_removed", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        data: { transfers: [], firebase_identity_removed: false, apple_token_revoked: true },
+      }),
+    );
+
+    const result = await deleteKoraUser(USER_ROW.id);
+
+    expect(result.identity_removed).toBe(false);
   });
 
   it("throws when a 200 body does not have the KoraDeleteResult shape", async () => {
