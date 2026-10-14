@@ -100,7 +100,7 @@ jobs:
       #
       # THE ALLOWLIST LIVES IN package.json (`pnpm.auditConfig.ignoreGhsas`),
       # not here — pnpm reads it from there and there is no CLI equivalent. It
-      # holds fourteen ids in two chains, both BUILD-TIME ONLY and in no
+      # holds sixteen ids in four chains, all BUILD-TIME ONLY and in no
       # deployed image:
       #
       #   image-size (2 ids) — apps/console -> @tesserix/web -> @tesserix/icons
@@ -117,6 +117,19 @@ jobs:
       #     server image. Fixes exist (0.8.15 / 0.9.12) but forcing a version
       #     into Expo's tree risks breaking the mobile build for no
       #     production gain — revisit on the next Expo SDK bump.
+      #
+      #   node-forge (GHSA-86w9-cpqp-85rv) — apps/mobile -> expo -> @expo/cli
+      #     -> node-forge. The same Expo tooling as xmldom. No patched
+      #     release: the advisory covers `<= 1.4.0`, the latest.
+      #
+      #   braces (GHSA-vfj7-8cjw-p6xm) — micromatch -> braces, reached only
+      #     through the metro chain above, eslint-config-next (dev) and
+      #     Expo's tooling. No patched release: the advisory covers
+      #     `<= 3.0.3`, the latest.
+      #
+      # Patchable advisories are fixed with `pnpm.overrides` instead, never
+      # allowlisted. tinypool is pinned to 2.x under vitest 3, which asks
+      # for 1.x; no 1.x release carries the fix.
       #
       # THE GATE IGNORES ADVISORY IDS, NOT PACKAGES. A NEW advisory against
       # metro, xmldom or anything else still fails this step, which is the
