@@ -775,13 +775,11 @@ export interface KoraUserList {
 export interface KoraUserDetail extends KoraUser {
   counts: Record<string, number>;
   transfers: KoraTransfer[];
-  has_apple_token: boolean;
 }
 
 export interface KoraDeleteResult {
   transfers: KoraTransfer[];
-  firebase_identity_removed: boolean;
-  apple_token_revoked: boolean;
+  identity_removed: boolean;
 }
 
 function isKoraUserList(value: unknown): value is KoraUserList {
@@ -799,7 +797,7 @@ function isKoraUserList(value: unknown): value is KoraUserList {
  * below would reject it -- harmless-looking on the detail panel, but on DELETE
  * the account is already destroyed and the transaction already committed, and
  * the operator would be told an irreversible deletion failed when it in fact
- * succeeded (never seeing `firebase_identity_removed`, and a retry answering
+ * succeeded (never seeing `identity_removed`, and a retry answering
  * 404).
  *
  * The API side initialises the slice so this should never fire; it is kept as
@@ -811,6 +809,21 @@ function normaliseTransfers(value: unknown): unknown {
   return { ...(value as object), transfers: [] };
 }
 
+/**
+ * Reads the Firebase-era `firebase_identity_removed` as `identity_removed`.
+ *
+ * The admin web and the Kora API deploy independently, so for one rollout this
+ * page may talk to an API that still names the field after Firebase. Without
+ * this, every delete against that API would fail the guard below after the
+ * account was already destroyed. Drop it once the Zitadel API is live.
+ */
+function normaliseIdentityRemoved(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const d = value as { identity_removed?: unknown; firebase_identity_removed?: unknown };
+  if (typeof d.identity_removed === "boolean" || typeof d.firebase_identity_removed !== "boolean") return value;
+  return { ...(value as object), identity_removed: d.firebase_identity_removed };
+}
+
 function isKoraUserDetail(value: unknown): value is KoraUserDetail {
   if (!value || typeof value !== "object") return false;
   const d = value as { id?: unknown; transfers?: unknown; counts?: unknown };
@@ -819,8 +832,8 @@ function isKoraUserDetail(value: unknown): value is KoraUserDetail {
 
 function isKoraDeleteResult(value: unknown): value is KoraDeleteResult {
   if (!value || typeof value !== "object") return false;
-  const d = value as { transfers?: unknown; firebase_identity_removed?: unknown };
-  return Array.isArray(d.transfers) && typeof d.firebase_identity_removed === "boolean";
+  const d = value as { transfers?: unknown; identity_removed?: unknown };
+  return Array.isArray(d.transfers) && typeof d.identity_removed === "boolean";
 }
 
 /** `GET /v1/admin/users` — the admin user index plus its summary tallies. */
@@ -855,7 +868,7 @@ export async function getKoraUser(id: string): Promise<KoraUserDetail> {
 
 /**
  * `DELETE /v1/admin/users/:id` — irreversible, no grace period. Answers 200
- * WITH A BODY (not a bare 204): the body reports whether the Firebase
+ * WITH A BODY (not a bare 204): the body reports whether the Zitadel
  * identity survived the deletion, which matters because a surviving identity
  * means the deleted user can sign back in and reappear via EnsureUser.
  */
@@ -864,7 +877,7 @@ export async function deleteKoraUser(id: string): Promise<KoraDeleteResult> {
   const res = await koraAdmin<{ data: KoraDeleteResult }>("DELETE", `/users/${id}`);
   if (res.status !== 200) throwKoraError(res.status, res.data, "delete_user_failed");
 
-  const result = normaliseTransfers(res.data?.data);
+  const result = normaliseIdentityRemoved(normaliseTransfers(res.data?.data));
   if (!isKoraDeleteResult(result)) {
     logger.warn(`[kora-admin] DELETE /users/${id} -> 200 with an unexpected body shape`);
     throw new KoraAdminError(200, "unexpected_response_shape", "delete response did not match the expected shape");

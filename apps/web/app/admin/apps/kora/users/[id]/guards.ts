@@ -21,7 +21,7 @@ export function canDelete(email: string, typed: string): boolean {
 }
 
 /**
- * A surviving Firebase identity means the deleted person can still sign in;
+ * A surviving Zitadel identity means the deleted person can still sign in;
  * EnsureUser then provisions a fresh empty account and the user the admin
  * just deleted REAPPEARS. Returns null when the identity was actually
  * removed, so the confirmation UI shows nothing extra on the clean path —
@@ -29,10 +29,10 @@ export function canDelete(email: string, typed: string): boolean {
  * was complete when it was not.
  */
 export function postDeleteWarning(r: KoraDeleteResult): string | null {
-  if (r.firebase_identity_removed) return null;
+  if (r.identity_removed) return null;
   return (
-    "Account data was deleted, but the Firebase identity survived — this person can still sign in, " +
-    "which will create a new empty account. Remove the identity in the Firebase console."
+    "Account data was deleted, but the Zitadel identity survived — this person can still sign in, " +
+    "which will create a new empty account. Remove the user in the Zitadel console."
   );
 }
 

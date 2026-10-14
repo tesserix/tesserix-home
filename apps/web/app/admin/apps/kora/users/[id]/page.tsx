@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 // before the operator ever sees the delete button: "what does deleting this
 // person actually do?" — the counts alone don't answer that, because a count
 // says nothing about WHICH other people's groups get reassigned, and to
-// whom, or whether an Apple token gets revoked. Deleting a user silently
+// whom. Deleting a user silently
 // reassigns other people's groups; this page shows that first.
 
 /**
@@ -149,15 +149,6 @@ export default async function KoraUserDetailPage({ params }: { params: Promise<{
         ) : (
           <p className="text-sm text-muted-foreground">Deleting this user transfers nothing to anyone else.</p>
         )}
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-foreground">Apple sign-in</h2>
-        <p className="text-sm text-foreground">
-          {user.has_apple_token
-            ? "This user has an Apple token on file — it will be revoked as part of the delete."
-            : "No Apple token on file — nothing to revoke."}
-        </p>
       </section>
 
       <section className="space-y-3">
