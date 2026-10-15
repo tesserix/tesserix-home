@@ -40,6 +40,7 @@ const (
 	CapMassSend          = authcore.CapMassSend
 	CapHardDelete        = authcore.CapHardDelete
 	CapPublishCatalog    = authcore.CapPublishCatalog
+	CapRepoAdmin         = authcore.CapRepoAdmin
 	CapReadPlanCatalog   = authcore.CapReadPlanCatalog
 	CapReadPromoCatalog  = authcore.CapReadPromoCatalog
 	CapProductSupport    = authcore.CapProductSupport

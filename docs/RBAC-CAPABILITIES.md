@@ -31,6 +31,14 @@ is why #262 could ship ahead of this issue without locking anyone out — R6.1
 ("grant first") was already satisfied. It is also why the switch below matters:
 the first time a grant is narrowed is the first time the gate can bite.
 
+`repo-admin` is a 13th human capability, added for the repositories surface
+(`/platform/repos`). It gates platform-api's `POST /v1/repos/visibility` and
+`POST /v1/repos/archive`, beside `platform`. **It is not in the grants above
+yet**: until the role exists on the Platform Console project and is granted,
+the repositories page reads but offers no changes, and the API answers 403.
+Operators must sign in again after the grant, because roles are copied into
+the session at login.
+
 `read-plan-catalog` is a MACHINE capability. No route requires it, and no
 human needs it; `mark8ly-catalog-reader` uses it to pull the plan catalog.
 

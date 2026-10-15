@@ -35,4 +35,6 @@ export type IconKey =
   // A task list, for a rail entry that is work to be done rather than a
   // record or a directory. Added because the three unused keys above
   // (`activity`, `gauge`, `heart-pulse`) are all metric/health glyphs.
-  | "list-checks";
+  | "list-checks"
+  // A source repository. No existing key says "code".
+  | "git-branch";

@@ -34,6 +34,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/onboardingfunnel"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/outbox"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/repos"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/sources"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
@@ -138,6 +139,19 @@ func run(log *slog.Logger) error {
 	httpx.RegisterModule(mux, verifier, "tools", func(m *http.ServeMux) {
 		tools.Register(m, tools.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
 	})
+	// Built before registering so the routes and the window sweeper share one
+	// GitHub client. The sweeper is a no-op until an App is configured.
+	reposModule := repos.New(repos.Config{
+		GitHub: repos.GitHub{
+			AppID:          cfg.Repos.AppID,
+			InstallationID: cfg.Repos.InstallationID,
+			PrivateKeyPEM:  cfg.Repos.PrivateKey,
+			Org:            cfg.Repos.Org,
+		},
+		Pool: pool.Pool, Verifier: verifier, Log: log,
+	})
+	httpx.RegisterModule(mux, verifier, "repos", reposModule.Register)
+	go reposModule.RunSweeper(ctx)
 
 	// Estate health. The reader is built here rather than inside the module
 	// because building it can FAIL — no token outside a cluster, no CA, the

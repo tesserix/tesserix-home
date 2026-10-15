@@ -20,6 +20,7 @@ type Config struct {
 	Database        Database
 	Auth            Auth
 	ClusterRead     ClusterRead
+	Repos           Repos
 	ShutdownTimeout time.Duration
 	Federation      *federation.Registry
 	// ProductScope maps an attested subject to the product it speaks for
@@ -65,6 +66,20 @@ type ClusterRead struct {
 	TokenPath     string
 	CAPath        string
 	NamespacePath string
+}
+
+// Repos is the GitHub App the repos module authenticates as.
+//
+// REPOS_-prefixed rather than GITHUB_APP_*, which secrets-api already reads for
+// a DIFFERENT App installed on one repository. Two services reading one
+// spelling for two credentials is how one ends up holding the other's.
+//
+// All empty is legal: the module answers 501 until an App is installed.
+type Repos struct {
+	AppID          string
+	InstallationID string
+	PrivateKey     string
+	Org            string
 }
 
 // Database describes the connection to tesserix-postgres.
@@ -164,6 +179,12 @@ func Load() (Config, error) {
 			TokenPath:     env("PLATFORM_API_CLUSTER_TOKEN_PATH", ""),
 			CAPath:        env("PLATFORM_API_CLUSTER_CA_PATH", ""),
 			NamespacePath: env("PLATFORM_API_CLUSTER_NAMESPACE_PATH", ""),
+		},
+		Repos: Repos{
+			AppID:          env("REPOS_GITHUB_APP_ID", ""),
+			InstallationID: env("REPOS_GITHUB_APP_INSTALLATION_ID", ""),
+			PrivateKey:     env("REPOS_GITHUB_APP_PRIVATE_KEY", ""),
+			Org:            env("REPOS_GITHUB_ORG", "tesserix"),
 		},
 	}
 

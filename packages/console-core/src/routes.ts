@@ -677,6 +677,14 @@ export const ROUTES = {
   //
   // No `web` predecessor, matching the two secrets routes above.
   "platform.newSecret": { mobile: "/platform/secrets/new", capability: "platform" },
+  // The org's GitHub repositories: visibility, archive state and security
+  // signals. Console-only, like `platform.tools` — no `mobile`, because
+  // expo-router has no screen for it, and no `web`, because apps/web never had
+  // one. `platform` to read; the two writes ALSO need `repo-admin`, asserted by
+  // the action and by platform-api (`modules/repos`), not here: this field
+  // gates the page, and an operator who may not flip a repo may still read
+  // which ones carry critical alerts.
+  "platform.repos": { console: "/platform/repos", capability: "platform" },
 
   // Everything waiting on a human, across every product implementing §3.2,
   // from platform-api's inbox module (#352).
