@@ -67,6 +67,8 @@ type fakeGitHub struct {
 	// dependabotStatus, when non-zero, is the org alert read's answer.
 	dependabotStatus int
 	patches          []string
+	// alertReads counts org Dependabot alert reads, the slow one.
+	alertReads int
 }
 
 func newFakeGitHub() *fakeGitHub {
@@ -115,6 +117,7 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		write(200, []any{f.repoJSON("web", f.repos["web"]), f.repoJSON("secrets", f.repos["secrets"])})
 		return
 	case path == "/orgs/tesserix/dependabot/alerts":
+		f.alertReads++
 		if f.dependabotStatus != 0 {
 			write(f.dependabotStatus, map[string]any{"message": "Resource not accessible by integration"})
 			return
@@ -541,5 +544,36 @@ func TestArchiveAndUnarchiveAreDistinctAuditedActs(t *testing.T) {
 	}
 	if rows := auditRows(t, a); strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Errorf("audit rows = %v, want %v", rows, want)
+	}
+}
+
+// The alert read pages through every open alert in the org — over twenty
+// seconds in production — so it is cached, and a second read does not repeat
+// it. Visibility is NOT cached: a repository changed since shows its new state.
+func TestTheSlowSignalsAreCachedButVisibilityIsLive(t *testing.T) {
+	a := serve(t)
+	first := reposByName(t, a.do(http.MethodGet, "/v1/repos", "").data(t))
+	if first["secrets"]["visibility"] != "private" {
+		t.Fatalf("secrets = %v, want private", first["secrets"]["visibility"])
+	}
+
+	a.gh.mu.Lock()
+	a.gh.repos["secrets"].visibility = "public"
+	a.gh.mu.Unlock()
+
+	second := reposByName(t, a.do(http.MethodGet, "/v1/repos", "").data(t))
+	if second["secrets"]["visibility"] != "public" {
+		t.Errorf("secrets = %v after it was made public, want public", second["secrets"]["visibility"])
+	}
+	// Made public after the signals were read, so it has not been scanned:
+	// null, not a zero that claims it is clean.
+	if second["secrets"]["secret_scanning_alerts"] != nil {
+		t.Errorf("secrets scanning = %v, want null until the next refresh", second["secrets"]["secret_scanning_alerts"])
+	}
+	if got := second["web"]["dependabot_alerts"].(map[string]any)["high"]; got != float64(2) {
+		t.Errorf("web high alerts from the cache = %v, want 2", got)
+	}
+	if a.gh.alertReads != 1 {
+		t.Errorf("the org's alerts were read %d times for two listings, want 1", a.gh.alertReads)
 	}
 }

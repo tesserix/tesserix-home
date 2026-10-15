@@ -23,7 +23,7 @@ import (
 var ErrNotConfigured = errors.New("repos: no GitHub App is configured")
 
 // perRepoConcurrency bounds the per-repository reads. Two calls a repository
-// and ~70 repositories; eight at a time keeps a page load to a few seconds
+// and ~70 repositories; eight at a time keeps a refresh to a few seconds
 // without GitHub's secondary rate limit noticing.
 const perRepoConcurrency = 8
 
@@ -93,11 +93,51 @@ type Service struct {
 	gh  *github.Client
 	db  Beginner
 	log *slog.Logger
+
+	mu        sync.Mutex // guards cached
+	cached    *signals
+	refreshMu sync.Mutex // one refresh at a time
 }
 
 // New builds the service. gh is nil when no App is configured.
 func New(gh *github.Client, db Beginner, log *slog.Logger) *Service {
 	return &Service{gh: gh, db: db, log: log}
+}
+
+// signalsMaxAge is how old the cached signals may be before a read waits for
+// fresh ones. RunSignalRefresh re-reads them well inside it, so a read only
+// waits on a replica that has not finished its first refresh.
+const signalsMaxAge = 15 * time.Minute
+
+// SignalsRefresh is how often RunSignalRefresh re-reads the signals.
+const SignalsRefresh = 5 * time.Minute
+
+// signalsReadTimeout bounds one refresh. It is detached from the request that
+// may have started it: an operator navigating away must not cache a half-read.
+const signalsReadTimeout = 2 * time.Minute
+
+// signals are the slow reads, cached. The org's open Dependabot alerts come a
+// hundred to a page, one page after another, and with two thousand of them
+// that alone took over twenty seconds; branch protection and the Dependabot
+// switch are two more calls per repository. Sitting in front of a page, that
+// left the sidebar link looking dead.
+//
+// Visibility and archived state are deliberately NOT here. They come from the
+// repository list on every read — one fast call — because a change made a
+// moment ago, on whichever replica, is the one thing the page must show.
+//
+// Every map holds only what was measured. A repository absent from one, such as
+// one created since the last refresh, reads as null: not measured, never zero.
+type signals struct {
+	at                time.Time
+	branchProtected   map[string]bool
+	dependabotEnabled map[string]bool
+	// Nil when the org-level read failed, which gaps then explains.
+	dependabotCounts map[string]map[string]int
+	// Keyed by the repositories that were PUBLIC when read, zero included. A
+	// repository made public since has not been scanned yet, so it is absent.
+	scanCounts map[string]int
+	gaps       []Gap
 }
 
 // List reads every repository and its signals.
@@ -113,15 +153,112 @@ func (s *Service) List(ctx context.Context) (Listing, error) {
 	if err != nil {
 		return Listing{}, fmt.Errorf("repos: listing the org's repositories: %w", err)
 	}
+	sig := s.currentSignals(ctx)
 
-	out := Listing{Org: s.gh.Org(), Repos: make([]Repo, len(repos)), Gaps: []Gap{}}
+	out := Listing{Org: s.gh.Org(), Repos: make([]Repo, len(repos)), Gaps: append([]Gap{}, sig.gaps...)}
 	for i, r := range repos {
-		out.Repos[i] = Repo{
+		repo := Repo{
 			Name: r.Name, URL: r.HTMLURL, Description: deref(r.Description),
 			Visibility: r.Visibility, Archived: r.Archived, Fork: r.Fork,
 			DefaultBranch: r.DefaultBranch, Language: deref(r.Language),
 			PushedAt: r.PushedAt, Stars: r.Stars,
 		}
+		if protected, ok := sig.branchProtected[r.Name]; ok {
+			repo.BranchProtected = &protected
+		}
+		if enabled, ok := sig.dependabotEnabled[r.Name]; ok {
+			repo.DependabotEnabled = &enabled
+			// Counts only where Dependabot is known to be on. Off means
+			// nothing is looking; unknown means we could not ask.
+			if enabled && sig.dependabotCounts != nil {
+				repo.DependabotAlerts = map[string]int{}
+				for _, sev := range Severities {
+					repo.DependabotAlerts[sev] = sig.dependabotCounts[r.Name][sev]
+				}
+			}
+		}
+		// Public only: GitHub Free scans public repositories and nothing else,
+		// so a private repository's zero would be a false all-clear.
+		if n, ok := sig.scanCounts[r.Name]; ok && r.Visibility == "public" {
+			repo.SecretScanningAlerts = &n
+		}
+		out.Repos[i] = repo
+	}
+
+	if err := s.attachPolicies(ctx, out.Repos); err != nil {
+		s.log.ErrorContext(ctx, "repos: reading visibility policies", "error", err)
+		out.Gaps = append(out.Gaps, Gap{Signal: "public_policy", Message: "the recorded public windows could not be read"})
+	}
+
+	sort.Slice(out.Repos, func(i, j int) bool { return out.Repos[i].Name < out.Repos[j].Name })
+	return out, nil
+}
+
+// RefreshSignals re-reads the cached signals now.
+func (s *Service) RefreshSignals(ctx context.Context) {
+	if s.gh == nil {
+		return
+	}
+	s.refresh(ctx, 0)
+}
+
+// currentSignals is the cache when it is fresh enough, and a refresh when not.
+func (s *Service) currentSignals(ctx context.Context) *signals {
+	if sig := s.cachedSignals(signalsMaxAge); sig != nil {
+		return sig
+	}
+	return s.refresh(ctx, signalsMaxAge)
+}
+
+func (s *Service) cachedSignals(maxAge time.Duration) *signals {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cached != nil && time.Since(s.cached.at) < maxAge {
+		return s.cached
+	}
+	return nil
+}
+
+// refresh reads the signals, one refresh at a time. A caller that waited on
+// another's refresh takes its result rather than reading again; maxAge 0
+// always reads. A refresh that cannot list the repositories keeps whatever
+// was cached, since stale signals beat none.
+func (s *Service) refresh(ctx context.Context, maxAge time.Duration) *signals {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if maxAge > 0 {
+		if sig := s.cachedSignals(maxAge); sig != nil {
+			return sig
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signalsReadTimeout)
+	defer cancel()
+	sig, err := s.readSignals(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		s.log.ErrorContext(ctx, "repos: refreshing the security signals", "error", err)
+		if s.cached != nil {
+			return s.cached
+		}
+		return &signals{gaps: []Gap{{Signal: "signals", Message: gapMessage(err)}}}
+	}
+	s.cached = sig
+	return sig
+}
+
+// readSignals reads every slow signal for the org.
+func (s *Service) readSignals(ctx context.Context) (*signals, error) {
+	started := time.Now()
+	repos, err := s.gh.Repos(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("repos: listing the org's repositories: %w", err)
+	}
+	sig := &signals{
+		at:                started,
+		branchProtected:   map[string]bool{},
+		dependabotEnabled: map[string]bool{},
+		gaps:              []Gap{},
 	}
 
 	var (
@@ -133,64 +270,42 @@ func (s *Service) List(ctx context.Context) (Listing, error) {
 	wg.Add(2)
 	go func() { defer wg.Done(); dependabot, dependabotErr = s.gh.DependabotAlerts(ctx) }()
 	go func() { defer wg.Done(); scans, scansErr = s.gh.SecretScanningAlerts(ctx) }()
-	s.readPerRepo(ctx, out.Repos)
+	s.readPerRepo(ctx, repos, sig)
 	wg.Wait()
 
 	if dependabotErr != nil {
 		s.log.ErrorContext(ctx, "repos: reading dependabot alerts", "error", dependabotErr)
-		out.Gaps = append(out.Gaps, Gap{Signal: "dependabot_alerts", Message: gapMessage(dependabotErr)})
+		sig.gaps = append(sig.gaps, Gap{Signal: "dependabot_alerts", Message: gapMessage(dependabotErr)})
 	} else {
-		counts := map[string]map[string]int{}
+		sig.dependabotCounts = map[string]map[string]int{}
 		for _, a := range dependabot {
 			if a.SecurityAdvisory == nil {
 				continue
 			}
-			if counts[a.Repository.Name] == nil {
-				counts[a.Repository.Name] = map[string]int{}
+			if sig.dependabotCounts[a.Repository.Name] == nil {
+				sig.dependabotCounts[a.Repository.Name] = map[string]int{}
 			}
-			counts[a.Repository.Name][a.SecurityAdvisory.Severity]++
-		}
-		for i := range out.Repos {
-			r := &out.Repos[i]
-			// Counts only where Dependabot is known to be on. Off means
-			// nothing is looking; unknown means we could not ask.
-			if r.DependabotEnabled == nil || !*r.DependabotEnabled {
-				continue
-			}
-			r.DependabotAlerts = map[string]int{}
-			for _, sev := range Severities {
-				r.DependabotAlerts[sev] = counts[r.Name][sev]
-			}
+			sig.dependabotCounts[a.Repository.Name][a.SecurityAdvisory.Severity]++
 		}
 	}
 
 	if scansErr != nil {
 		s.log.ErrorContext(ctx, "repos: reading secret scanning alerts", "error", scansErr)
-		out.Gaps = append(out.Gaps, Gap{Signal: "secret_scanning_alerts", Message: gapMessage(scansErr)})
+		sig.gaps = append(sig.gaps, Gap{Signal: "secret_scanning_alerts", Message: gapMessage(scansErr)})
 	} else {
-		counts := map[string]int{}
-		for _, a := range scans {
-			counts[a.Repository.Name]++
-		}
-		for i := range out.Repos {
-			r := &out.Repos[i]
-			// Public only: GitHub Free scans public repositories and nothing
-			// else, so a private repository's zero would be a false all-clear.
-			if r.Visibility != "public" {
-				continue
+		sig.scanCounts = map[string]int{}
+		for _, r := range repos {
+			if r.Visibility == "public" {
+				sig.scanCounts[r.Name] = 0
 			}
-			n := counts[r.Name]
-			r.SecretScanningAlerts = &n
+		}
+		for _, a := range scans {
+			if _, ok := sig.scanCounts[a.Repository.Name]; ok {
+				sig.scanCounts[a.Repository.Name]++
+			}
 		}
 	}
-
-	if err := s.attachPolicies(ctx, out.Repos); err != nil {
-		s.log.ErrorContext(ctx, "repos: reading visibility policies", "error", err)
-		out.Gaps = append(out.Gaps, Gap{Signal: "public_policy", Message: "the recorded public windows could not be read"})
-	}
-
-	sort.Slice(out.Repos, func(i, j int) bool { return out.Repos[i].Name < out.Repos[j].Name })
-	return out, nil
+	return sig, nil
 }
 
 // attachPolicies reads every recorded policy for the org onto its public
@@ -233,18 +348,23 @@ func (s *Service) attachPolicies(ctx context.Context, repos []Repo) error {
 
 // readPerRepo fills branch protection and the Dependabot switch, which GitHub
 // only answers one repository at a time.
-func (s *Service) readPerRepo(ctx context.Context, repos []Repo) {
+func (s *Service) readPerRepo(ctx context.Context, repos []github.Repo, sig *signals) {
 	sem := make(chan struct{}, perRepoConcurrency)
-	var wg sync.WaitGroup
-	for i := range repos {
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
+	for _, r := range repos {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(r *Repo) {
+		go func(r github.Repo) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			if r.DefaultBranch != "" {
 				if protected, err := s.gh.BranchProtected(ctx, r.Name, r.DefaultBranch); err == nil {
-					r.BranchProtected = &protected
+					mu.Lock()
+					sig.branchProtected[r.Name] = protected
+					mu.Unlock()
 				} else if status, _ := github.StatusOf(err); status != http.StatusNotFound {
 					// 404 is an empty repository, whose default branch does not
 					// exist yet. Anything else is worth a line.
@@ -252,11 +372,13 @@ func (s *Service) readPerRepo(ctx context.Context, repos []Repo) {
 				}
 			}
 			if enabled, err := s.gh.DependabotEnabled(ctx, r.Name); err == nil {
-				r.DependabotEnabled = &enabled
+				mu.Lock()
+				sig.dependabotEnabled[r.Name] = enabled
+				mu.Unlock()
 			} else {
 				s.log.WarnContext(ctx, "repos: reading the dependabot switch", "repo", r.Name, "error", err)
 			}
-		}(&repos[i])
+		}(r)
 	}
 	wg.Wait()
 }

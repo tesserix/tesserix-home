@@ -152,6 +152,7 @@ func run(log *slog.Logger) error {
 	})
 	httpx.RegisterModule(mux, verifier, "repos", reposModule.Register)
 	go reposModule.RunSweeper(ctx)
+	go reposModule.RunSignalRefresh(ctx)
 
 	// Estate health. The reader is built here rather than inside the module
 	// because building it can FAIL — no token outside a cluster, no CA, the
