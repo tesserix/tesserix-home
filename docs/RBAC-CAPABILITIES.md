@@ -17,7 +17,7 @@ is stale.
 
 | Login | Capabilities held |
 |---|---|
-| `mahesh.sangawar@gmail.com` | all 12 human capabilities |
+| `mahesh.sangawar@gmail.com` | all 12 human capabilities, plus `repo-admin` |
 | `samyak.rout@gmail.com` | all 12 human capabilities |
 | `unidevidp@gmail.com` | all 12, plus `read-plan-catalog` |
 | `mark8ly-catalog-reader` *(machine)* | `read-plan-catalog`, `read-promo-catalog` |
@@ -33,9 +33,10 @@ the first time a grant is narrowed is the first time the gate can bite.
 
 `repo-admin` is a 13th human capability, added for the repositories surface
 (`/platform/repos`). It gates platform-api's `POST /v1/repos/visibility` and
-`POST /v1/repos/archive`, beside `platform`. **It is not in the grants above
-yet**: until the role exists on the Platform Console project and is granted,
-the repositories page reads but offers no changes, and the API answers 403.
+`POST /v1/repos/archive`, beside `platform`. **Created on the Platform Console
+project and granted to `mahesh.sangawar@gmail.com` on 2026-10-15**; it is not
+in the "all 12" above, and no other operator holds it. Without it the
+repositories page reads but offers no changes, and the API answers 403.
 Operators must sign in again after the grant, because roles are copied into
 the session at login.
 
