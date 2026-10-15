@@ -15,6 +15,10 @@ import {
   DropdownMenuTrigger,
   Input,
   Label,
+  ToastProvider,
+  ToastViewport,
+  useToast,
+  type ToastOptions,
 } from "@tesserix/web";
 import { AlertTriangle, MoreHorizontal } from "lucide-react";
 import { ConsoleDataTable, type Column, type SortSpec } from "@/components/kit/console-data-table";
@@ -371,31 +375,36 @@ export function patchFor(change: RepoChange, result: RepoChangeResult, now: Date
   return { visibility: result.visibility ?? "public", publicPolicy };
 }
 
-function Results({ results, onDismiss }: { results: RepoChangeResult[]; onDismiss: () => void }) {
+/**
+ * The toast a finished change raises. A clean change says what happened and
+ * goes away; one with failures stays until it is closed, because each failure
+ * names the repository and GitHub's reason — the operator's next step — and a
+ * toast that vanished in four seconds would take that with it.
+ */
+export function resultToast(label: string, results: readonly RepoChangeResult[]): ToastOptions {
   const failed = results.filter((result) => !result.ok);
-  const changed = results.filter((result) => result.ok && result.changed).length;
+  const changed = results.filter((result) => result.ok && result.changed);
   const unchanged = results.filter((result) => result.ok && !result.changed).length;
-  return (
-    <Callout variant={failed.length > 0 ? "warning" : "success"} role="status">
-      <CalloutTitle>
-        {changed} changed
-        {unchanged > 0 ? `, ${unchanged} already in that state` : ""}
-        {failed.length > 0 ? `, ${failed.length} not changed` : ""}
-      </CalloutTitle>
-      {failed.length > 0 ? (
-        <ul className="mt-2 space-y-1 text-sm">
-          {failed.map((result) => (
-            <li key={result.name}>
-              <span className="font-medium">{result.name}</span> — {result.message}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <Button variant="ghost" size="sm" className="mt-2" onClick={onDismiss}>
-        Dismiss
-      </Button>
-    </Callout>
-  );
+  const already = unchanged > 0 ? `${unchanged} already in that state.` : undefined;
+  if (failed.length === 0) {
+    const subject = results.length === 1 ? results[0].name : `${changed.length} repositories`;
+    return { variant: "success", title: `${label}: ${subject}`, description: already, duration: 5000 };
+  }
+  return {
+    variant: "warning",
+    title: `${changed.length} changed, ${failed.length} not changed`,
+    description: (
+      <ul className="space-y-1">
+        {failed.map((result) => (
+          <li key={result.name}>
+            <span className="font-medium">{result.name}</span> — {result.message}
+          </li>
+        ))}
+        {already ? <li>{already}</li> : null}
+      </ul>
+    ),
+    duration: 0,
+  };
 }
 
 /** A visibility badge that, for an operator who can act on it, opens the row's
@@ -430,16 +439,26 @@ interface Pending {
   readonly names: readonly string[];
 }
 
-export function RepoTable({
-  listing,
-  error,
-  canChange,
-}: {
+interface RepoTableProps {
   listing: RepoListing | null;
   error: SurfaceError | null;
   canChange: boolean;
-}) {
+}
+
+/** The table, with the toasts a change raises. The console has no app-wide
+ *  toast provider, so this surface carries its own. */
+export function RepoTable(props: RepoTableProps) {
+  return (
+    <ToastProvider>
+      <RepoTableBody {...props} />
+      <ToastViewport position="bottom-right" />
+    </ToastProvider>
+  );
+}
+
+function RepoTableBody({ listing, error, canChange }: RepoTableProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const filters = useUrlFilters(REPO_FILTERS);
   const values = filters.values;
   const sortParams = useUrlFilters(SORT_PARAMS);
@@ -452,7 +471,6 @@ export function RepoTable({
   const [choice, setChoice] = useState<PublicChoice>(PUBLIC_WINDOWS[0].hours);
   const [typed, setTyped] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
-  const [results, setResults] = useState<RepoChangeResult[] | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   // What a change did, until the page re-reads. A new listing is the truth
   // and replaces them.
@@ -509,7 +527,7 @@ export function RepoTable({
         setFailure(outcome.message);
         return;
       }
-      setResults(outcome.results);
+      toast(resultToast(label, outcome.results));
       const landed = outcome.results.filter((r) => r.ok);
       setPatches((previous) => {
         const next = new Map(previous);
@@ -702,8 +720,6 @@ export function RepoTable({
           </ul>
         </Callout>
       ) : null}
-
-      {results ? <Results results={results} onDismiss={() => setResults(null)} /> : null}
 
       <FilterBar
         descriptors={REPO_FILTERS}

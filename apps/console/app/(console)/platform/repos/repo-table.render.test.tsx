@@ -149,6 +149,7 @@ describe("RepoTable", () => {
     await waitFor(() => expect(screen.queryByText("unreviewed")).toBeNull());
     expect(screen.getAllByText("permanent")).toHaveLength(2);
     expect(screen.getByText("updated")).toBeTruthy();
+    expect(screen.getByText("Mark permanent: site")).toBeTruthy();
   });
 
   it("says a private repository on GitHub Free has no protection, rather than a dash", () => {
