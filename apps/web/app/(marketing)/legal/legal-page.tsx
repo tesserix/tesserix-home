@@ -24,6 +24,13 @@ export const LAST_UPDATED = "11 August 2026";
  */
 export const OUTREACH_NOTICE_LAST_UPDATED = "1 October 2026";
 
+/**
+ * Kora's own notice (/privacy/kora and /privacy/kora/delete-account) is dated
+ * separately for the same reason as the outreach notice: it was added on its
+ * own, and the general policy did not change with it.
+ */
+export const KORA_PRIVACY_LAST_UPDATED = "15 October 2026";
+
 interface LegalPageProps {
   eyebrow: string;
   title: string;
