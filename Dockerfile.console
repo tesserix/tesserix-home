@@ -31,6 +31,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # hardcoding it here, which is why the root `pnpm build` never reproduced the
 # failure — only this Dockerfile pins an order. Worth moving to turbo the next
 # time this file is touched.
+# The deployment this build belongs to — CI passes the image tag. Next.js
+# stamps it on every page and compares it on each navigation and server action,
+# so a tab loaded before a rollout reloads itself instead of calling a server
+# action the new build no longer has ("Failed to find Server Action", which the
+# operator saw as "This page couldn't load"). Empty for a local build: Next then
+# has no deployment id and behaves as before.
+ARG NEXT_DEPLOYMENT_ID=""
+ENV NEXT_DEPLOYMENT_ID=$NEXT_DEPLOYMENT_ID
 RUN pnpm --filter @tesserix/platform-auth build && pnpm --filter @tesserix/console-core build && pnpm --filter console build
 
 # The plan-catalog parity CronJob's entry point (#326 P1a), bundled by esbuild
