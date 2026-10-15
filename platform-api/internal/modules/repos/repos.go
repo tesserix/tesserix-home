@@ -117,3 +117,19 @@ func (m *Module) RunSweeper(ctx context.Context) {
 		}
 	}
 }
+
+// RunSignalRefresh keeps the security signals warm until ctx ends, starting
+// with a read at boot, so the repositories page never waits on GitHub's alert
+// pagination. Every replica runs it, for its own cache.
+func (m *Module) RunSignalRefresh(ctx context.Context) {
+	ticker := time.NewTicker(service.SignalsRefresh)
+	defer ticker.Stop()
+	for {
+		m.svc.RefreshSignals(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
