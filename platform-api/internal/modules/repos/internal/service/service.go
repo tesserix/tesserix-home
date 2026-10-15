@@ -49,7 +49,12 @@ type Repo struct {
 	PushedAt      *time.Time `json:"pushed_at"`
 	Stars         int        `json:"stars"`
 
-	BranchProtected      *bool          `json:"branch_protected"`
+	BranchProtected *bool `json:"branch_protected"`
+	// BranchProtectionUnavailable is a private repository on GitHub Free,
+	// which has no branch protection to read: GitHub answers 403. Said apart
+	// from a null BranchProtected, which is a read that failed.
+	BranchProtectionUnavailable bool `json:"branch_protection_unavailable"`
+
 	DependabotEnabled    *bool          `json:"dependabot_enabled"`
 	DependabotAlerts     map[string]int `json:"dependabot_alerts"`
 	SecretScanningAlerts *int           `json:"secret_scanning_alerts"`
@@ -129,9 +134,12 @@ const signalsReadTimeout = 2 * time.Minute
 // Every map holds only what was measured. A repository absent from one, such as
 // one created since the last refresh, reads as null: not measured, never zero.
 type signals struct {
-	at                time.Time
-	branchProtected   map[string]bool
-	dependabotEnabled map[string]bool
+	at              time.Time
+	branchProtected map[string]bool
+	// Private repositories GitHub refused a protection read for: the plan,
+	// not a failure. Applied only while the repository is still private.
+	protectionUnavailable map[string]bool
+	dependabotEnabled     map[string]bool
 	// Nil when the org-level read failed, which gaps then explains.
 	dependabotCounts map[string]map[string]int
 	// Keyed by the repositories that were PUBLIC when read, zero included. A
@@ -165,6 +173,8 @@ func (s *Service) List(ctx context.Context) (Listing, error) {
 		}
 		if protected, ok := sig.branchProtected[r.Name]; ok {
 			repo.BranchProtected = &protected
+		} else if sig.protectionUnavailable[r.Name] && r.Visibility == "private" {
+			repo.BranchProtectionUnavailable = true
 		}
 		if enabled, ok := sig.dependabotEnabled[r.Name]; ok {
 			repo.DependabotEnabled = &enabled
@@ -255,10 +265,11 @@ func (s *Service) readSignals(ctx context.Context) (*signals, error) {
 		return nil, fmt.Errorf("repos: listing the org's repositories: %w", err)
 	}
 	sig := &signals{
-		at:                started,
-		branchProtected:   map[string]bool{},
-		dependabotEnabled: map[string]bool{},
-		gaps:              []Gap{},
+		at:                    started,
+		branchProtected:       map[string]bool{},
+		protectionUnavailable: map[string]bool{},
+		dependabotEnabled:     map[string]bool{},
+		gaps:                  []Gap{},
 	}
 
 	var (
@@ -365,7 +376,15 @@ func (s *Service) readPerRepo(ctx context.Context, repos []github.Repo, sig *sig
 					mu.Lock()
 					sig.branchProtected[r.Name] = protected
 					mu.Unlock()
-				} else if status, _ := github.StatusOf(err); status != http.StatusNotFound {
+				} else if status, _ := github.StatusOf(err); status == http.StatusForbidden && r.Visibility == "private" {
+					// GitHub Free has no branch protection on a private
+					// repository and answers every read with 403. Expected, so
+					// not logged: it would be every private repository, every
+					// refresh.
+					mu.Lock()
+					sig.protectionUnavailable[r.Name] = true
+					mu.Unlock()
+				} else if status != http.StatusNotFound {
 					// 404 is an empty repository, whose default branch does not
 					// exist yet. Anything else is worth a line.
 					s.log.WarnContext(ctx, "repos: reading branch protection", "repo", r.Name, "error", err)

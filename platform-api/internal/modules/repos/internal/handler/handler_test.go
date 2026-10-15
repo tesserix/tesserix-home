@@ -140,8 +140,17 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case len(parts) == 3 && parts[1] == "branches":
-		write(200, map[string]any{"protected": repo.protected})
+	case len(parts) == 4 && parts[1] == "branches" && parts[3] == "protection":
+		// GitHub Free: no branch protection on a private repository.
+		if repo.visibility == "private" {
+			write(403, map[string]any{"message": "Upgrade to GitHub Pro or make this repository public to enable this feature."})
+			return
+		}
+		if !repo.protected {
+			write(404, map[string]any{"message": "Branch not protected"})
+			return
+		}
+		write(200, map[string]any{})
 	case len(parts) == 2 && parts[1] == "vulnerability-alerts":
 		if repo.dependabot {
 			w.WriteHeader(204)
@@ -575,5 +584,20 @@ func TestTheSlowSignalsAreCachedButVisibilityIsLive(t *testing.T) {
 	}
 	if a.gh.alertReads != 1 {
 		t.Errorf("the org's alerts were read %d times for two listings, want 1", a.gh.alertReads)
+	}
+}
+
+// GitHub Free has no branch protection on a private repository, and refuses the
+// read. That is the plan, not a failed read, and it is said as such.
+func TestAPrivateRepositorysProtectionIsUnavailableNotUnknown(t *testing.T) {
+	rows := reposByName(t, serve(t).do(http.MethodGet, "/v1/repos", "").data(t))
+	if rows["secrets"]["branch_protection_unavailable"] != true {
+		t.Errorf("private secrets: branch_protection_unavailable = %v, want true", rows["secrets"]["branch_protection_unavailable"])
+	}
+	if rows["secrets"]["branch_protected"] != nil {
+		t.Errorf("private secrets: branch_protected = %v, want null", rows["secrets"]["branch_protected"])
+	}
+	if rows["web"]["branch_protection_unavailable"] != false {
+		t.Errorf("public web: branch_protection_unavailable = %v, want false", rows["web"]["branch_protection_unavailable"])
 	}
 }

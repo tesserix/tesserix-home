@@ -26,6 +26,10 @@ export interface Repo {
   readonly pushedAt: string | null;
   readonly stars: number;
   readonly branchProtected: boolean | null;
+  /** A private repository on GitHub Free, which has no branch protection at
+   *  all. Not the same claim as a null `branchProtected`, which is a read that
+   *  failed. */
+  readonly branchProtectionUnavailable: boolean;
   readonly dependabotEnabled: boolean | null;
   readonly dependabotAlerts: Readonly<Record<Severity, number>> | null;
   readonly secretScanningAlerts: number | null;
@@ -119,6 +123,7 @@ function parseRepo(value: unknown, path: string): Repo {
     pushedAt: nullable(row.pushed_at, `${path}.pushed_at`, str),
     stars: count(row.stars, `${path}.stars`),
     branchProtected: nullable(row.branch_protected, `${path}.branch_protected`, bool),
+    branchProtectionUnavailable: bool(row.branch_protection_unavailable ?? false, `${path}.branch_protection_unavailable`),
     dependabotEnabled: nullable(row.dependabot_enabled, `${path}.dependabot_enabled`, bool),
     dependabotAlerts: nullable(row.dependabot_alerts, `${path}.dependabot_alerts`, parseAlerts),
     secretScanningAlerts: nullable(row.secret_scanning_alerts, `${path}.secret_scanning_alerts`, count),
@@ -182,6 +187,9 @@ export interface RepoChangeResult {
   readonly ok: boolean;
   /** False for a repository that was already in the requested state. */
   readonly changed: boolean;
+  /** The repository's state as GitHub reported it after the change. */
+  readonly visibility?: string;
+  readonly archived?: boolean;
   readonly message?: string;
 }
 
@@ -193,6 +201,8 @@ export function parseRepoChangeResults(json: unknown): RepoChangeResult[] {
       name: str(row.name, `results[${i}].name`),
       ok: bool(row.ok, `results[${i}].ok`),
       changed: bool(row.changed, `results[${i}].changed`),
+      visibility: typeof row.visibility === "string" && row.visibility ? row.visibility : undefined,
+      archived: typeof row.archived === "boolean" ? row.archived : undefined,
       message: typeof row.message === "string" && row.message ? row.message : undefined,
     };
   });

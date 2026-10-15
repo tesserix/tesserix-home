@@ -359,12 +359,20 @@ func (c *Client) SecretScanningAlerts(ctx context.Context) ([]Alert, error) {
 }
 
 // BranchProtected reports whether a branch is protected.
+//
+// Read from the protection endpoint, which the App's Administration permission
+// covers, not from the branch itself: reading a private repository's branch
+// needs Contents, which would hand this App every line of private code to
+// learn one boolean. GitHub answers 404 "Branch not protected" for no, 404 for
+// a branch that does not exist (an empty repository), and 403 for a private
+// repository on GitHub Free, which has no protection at all.
 func (c *Client) BranchProtected(ctx context.Context, repo, branch string) (bool, error) {
-	var out struct {
-		Protected bool `json:"protected"`
+	_, err := c.do(ctx, http.MethodGet, c.repoPath(repo)+"/branches/"+url.PathEscape(branch)+"/protection", nil, nil)
+	var status *StatusError
+	if errors.As(err, &status) && status.Status == http.StatusNotFound && status.Message == "Branch not protected" {
+		return false, nil
 	}
-	_, err := c.do(ctx, http.MethodGet, c.repoPath(repo)+"/branches/"+url.PathEscape(branch), nil, &out)
-	return out.Protected, err
+	return err == nil, err
 }
 
 // DependabotEnabled reports whether Dependabot alerts are on for a repository.
