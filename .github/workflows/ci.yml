@@ -313,6 +313,7 @@ jobs:
           docker build \
             --platform linux/amd64 \
             -f Dockerfile.console \
+            --build-arg NEXT_DEPLOYMENT_ID=${{ steps.meta.outputs.tag }} \
             -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
             -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:latest \
             .
