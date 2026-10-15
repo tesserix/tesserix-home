@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./actions", () => ({ changeReposAction: vi.fn() }));
 
 import type { Repo } from "@/lib/repos";
-import { actionLabel, changeFor, filterRepos, patchFor, rowActions, sortFromParams, sortRepos, toolbarActions } from "./repo-table";
+import { actionLabel, changeFor, filterRepos, patchFor, resultToast, rowActions, sortFromParams, sortRepos, toolbarActions } from "./repo-table";
 
 function repo(name: string, overrides: Partial<Repo> = {}): Repo {
   return {
@@ -216,5 +216,36 @@ describe("patchFor", () => {
       publicPolicy: null,
     });
     expect(patchFor({ kind: "archive", archived: true }, { ...ok, archived: true }, now)).toEqual({ archived: true });
+  });
+});
+
+describe("resultToast", () => {
+  it("names the one repository a clean change landed on, and goes away", () => {
+    expect(resultToast("Mark permanent", [{ name: "design-system", ok: true, changed: true }])).toEqual({
+      variant: "success",
+      title: "Mark permanent: design-system",
+      description: undefined,
+      duration: 5000,
+    });
+  });
+
+  it("counts a clean batch and says how many were already there", () => {
+    const toast = resultToast("Make private", [
+      { name: "a", ok: true, changed: true },
+      { name: "b", ok: true, changed: true },
+      { name: "c", ok: true, changed: false },
+    ]);
+    expect(toast.title).toBe("Make private: 2 repositories");
+    expect(toast.description).toBe("1 already in that state.");
+  });
+
+  it("stays until closed when anything failed, so the reasons are not lost", () => {
+    const toast = resultToast("Make public", [
+      { name: "a", ok: true, changed: true },
+      { name: "b", ok: false, changed: false, message: "archived repositories are read-only" },
+    ]);
+    expect(toast.variant).toBe("warning");
+    expect(toast.title).toBe("1 changed, 1 not changed");
+    expect(toast.duration).toBe(0);
   });
 });
