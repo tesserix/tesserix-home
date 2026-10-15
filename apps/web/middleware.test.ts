@@ -24,6 +24,16 @@ describe("isPublicPath — the legal pages", () => {
     expect(isPublicPath("/privacy/outreach")).toBe(true);
   });
 
+  // Kora's App Store and Google Play listings link these two. Store reviewers
+  // open them signed out, and Play's Data safety form rejects a deletion URL
+  // that needs an account to read.
+  it.each(["/privacy/kora", "/privacy/kora/delete-account"])(
+    "%s is reachable without a session",
+    (path) => {
+      expect(isPublicPath(path)).toBe(true);
+    },
+  );
+
   // The guard against fixing this by making the prefix rule too generous:
   // "/privacy" must not make "/privacy-internal" public, and the console
   // surfaces must stay gated.
