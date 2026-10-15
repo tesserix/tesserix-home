@@ -118,6 +118,10 @@ describe("the capability set is a contract with Zitadel", () => {
       "mass-send",
       "hard-delete",
       "publish-catalog",
+      // The repositories surface's write verb. A HUMAN capability, so the
+      // note above applies in full: until `repo-admin` exists on the Platform
+      // Console project and is granted, nobody can flip or archive a repo.
+      "repo-admin",
       "read-plan-catalog",
       // #521. A MACHINE capability, which is why adding it here does not lock
       // an operator out the way the note above warns about: no operator holds
@@ -208,6 +212,16 @@ describe("the surface/verb split (#261)", () => {
     // `hard-delete`, and holding `hard-delete` must not confer `crm`.
     expect(hasCapability(["crm"], "hard-delete")).toBe(false);
     expect(hasCapability(["hard-delete"], "crm")).toBe(false);
+  });
+});
+
+describe("repo-admin capability", () => {
+  it("is a risk verb that `platform` does not confer", () => {
+    // Reading the repository list is `platform`; publishing source is not.
+    expect(RISK_CAPABILITIES).toContain("repo-admin");
+    expect(hasCapability(["platform"], "repo-admin")).toBe(false);
+    expect(hasCapability(["rotate-credentials"], "repo-admin")).toBe(false);
+    expect(hasCapability(["platform", "repo-admin"], "repo-admin")).toBe(true);
   });
 });
 

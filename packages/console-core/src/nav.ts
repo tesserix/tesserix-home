@@ -316,6 +316,10 @@ export const platformNav: readonly NavEntry[] = [
       // that is usually empty and exists to be drained — so this fits the
       // group rather than being an exception to it.
       { name: "Secrets reviews", route: "platform.secretsReviews", icon: "key-round" },
+      // Beside the secrets surfaces: a public repository is a published
+      // history, and the question this answers — what is exposed, and what is
+      // unpatched — is the same governance question from the code side.
+      { name: "Repositories", route: "platform.repos", icon: "git-branch" },
       { name: "Settings", route: "platform.settings", icon: "settings" },
       // Managing the internal tools directory (#318 follow-up). Beside
       // Settings: both are configuration surfaces for the platform itself,

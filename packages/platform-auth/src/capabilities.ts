@@ -114,6 +114,21 @@ export const CAPABILITIES = [
    * deployed it — with a CapabilityError that names no cause.
    */
   "publish-catalog",
+  /**
+   * Change a GitHub repository's visibility or archived state, across the
+   * whole `tesserix` organisation.
+   *
+   * NOT `rotate-credentials`. Making a repository public publishes its entire
+   * git history — every secret ever committed to it, whether or not it has
+   * since been deleted — and making one private on GitHub Free drops its
+   * branch protection. Neither is a credential rotation, and an operator who
+   * may rotate a key should not thereby be able to publish source.
+   *
+   * DEPLOY PRECONDITION, same shape as `publish-catalog`: the role must exist
+   * on the Platform Console project AND be assigned before this ships, or the
+   * repository actions are dead for every operator.
+   */
+  "repo-admin",
 
   // ---------------------------------------------------------------------
   // MACHINE — held by a service identity, not an operator.
@@ -284,6 +299,7 @@ export const RISK_CAPABILITIES = [
   "mass-send",
   "hard-delete",
   "publish-catalog",
+  "repo-admin",
 ] as const satisfies readonly Capability[];
 
 /**

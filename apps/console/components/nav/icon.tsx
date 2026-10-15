@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Cloud, Database, Gauge, Globe, HeartPulse, Inbox,
+  Activity, BarChart3, Cloud, Database, Gauge, GitBranch, Globe, HeartPulse, Inbox,
   KeyRound, LayoutDashboard, LifeBuoy, ListChecks, Mail, Megaphone, MessageSquare,
   ScrollText, Settings, Shield, Users,
 } from "lucide-react";
@@ -24,6 +24,7 @@ const REGISTRY: Record<IconKey, React.ComponentType<{ className?: string }>> = {
   "shield": Shield,
   "key-round": KeyRound,
   "list-checks": ListChecks,
+  "git-branch": GitBranch,
   "users": Users,
 };
 

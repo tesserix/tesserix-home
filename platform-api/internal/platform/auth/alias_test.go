@@ -38,6 +38,7 @@ func TestAliasesAreTheSameValuesNotCopies(t *testing.T) {
 		{"CapMassSend", auth.CapMassSend, authcore.CapMassSend},
 		{"CapHardDelete", auth.CapHardDelete, authcore.CapHardDelete},
 		{"CapPublishCatalog", auth.CapPublishCatalog, authcore.CapPublishCatalog},
+		{"CapRepoAdmin", auth.CapRepoAdmin, authcore.CapRepoAdmin},
 		{"CapReadPlanCatalog", auth.CapReadPlanCatalog, authcore.CapReadPlanCatalog},
 		// CapReadPromoCatalog was added to platform-auth (#521) without ever
 		// reaching this layer — the capability count check above passes on

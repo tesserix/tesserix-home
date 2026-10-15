@@ -842,6 +842,21 @@ export async function fetchLifecycleReasonCodes(
   );
 }
 
+/**
+ * The org's GitHub repositories and their security signals.
+ *
+ * No apps/web fallback, because apps/web never had this surface. With no
+ * origin configured it raises the same 501 the API raises with no GitHub App,
+ * so both read as "not switched on" rather than as a failure.
+ */
+export async function fetchRepos(): Promise<import("./repos").RepoListing> {
+  const { parseRepoListing } = await import("./repos");
+  if (!platformApiOrigin()) {
+    throw new PlatformApiError("repos: PLATFORM_API_ORIGIN is not set", 501);
+  }
+  return parseRepoListing(await platformRequest("repos", "/v1/repos"));
+}
+
 /** The page size the billing surfaces ask each product for. */
 export const BILLING_LIMIT = 100;
 

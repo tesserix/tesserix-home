@@ -56,6 +56,12 @@ const (
 	// Different blast radius, different grant. See capabilities.ts, which is
 	// the authority this mirrors.
 	CapPublishCatalog Capability = "publish-catalog"
+	// CapRepoAdmin changes a GitHub repository's visibility or archived state
+	// across the organisation. NOT CapRotateCredentials: making a repository
+	// public publishes its whole history, which is a different blast radius
+	// from rotating a key. See capabilities.ts, which is the authority this
+	// mirrors.
+	CapRepoAdmin Capability = "repo-admin"
 
 	// CapReadPlanCatalog reads the PUBLISHED plan catalog. Held by a Zitadel
 	// service user (a machine), never an operator — a machine enters no
@@ -124,7 +130,7 @@ var Capabilities = []Capability{
 	CapRead,
 	CapCRM, CapSupport, CapBilling, CapPlatform,
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
-	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
+	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog, CapRepoAdmin,
 	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport,
 	CapReadAnnouncements, CapReadEntitlements,
 }
@@ -135,7 +141,7 @@ var Surfaces = []Capability{CapCRM, CapSupport, CapBilling, CapPlatform}
 // Verbs say what a principal may do.
 var Verbs = []Capability{
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
-	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
+	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog, CapRepoAdmin,
 }
 
 // Machines are capabilities held by a service identity, never an operator.
