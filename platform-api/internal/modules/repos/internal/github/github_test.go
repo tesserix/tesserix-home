@@ -79,3 +79,38 @@ func TestAPaginationLinkOffTheAPIIsRefused(t *testing.T) {
 		t.Fatal("the foreign host was called")
 	}
 }
+
+// The console's Secrets value field is single-line, so a key pasted into it
+// arrives with its newlines dropped or turned into spaces. It must still load.
+func TestAKeyFlattenedToOneLineStillParses(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, block := range map[string]*pem.Block{
+		"pkcs1": {Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)},
+		"pkcs8": {Type: "PRIVATE KEY", Bytes: pkcs8},
+	} {
+		text := string(pem.EncodeToMemory(block))
+		for form, flat := range map[string]string{
+			"dropped": strings.ReplaceAll(text, "\n", ""),
+			"spaced":  strings.ReplaceAll(strings.TrimSpace(text), "\n", " "),
+		} {
+			got, err := parseKey(flat)
+			if err != nil {
+				t.Errorf("%s %s: %v", name, form, err)
+				continue
+			}
+			if !got.Equal(key) {
+				t.Errorf("%s %s: parsed a different key", name, form)
+			}
+		}
+	}
+	if _, err := parseKey("-----BEGIN RSA PRIVATE KEY-----abc-----END PRIVATE KEY-----"); err == nil {
+		t.Error("mismatched armour was accepted")
+	}
+}

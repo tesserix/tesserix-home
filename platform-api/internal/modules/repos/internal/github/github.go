@@ -113,10 +113,18 @@ func New(cfg Config, httpClient *http.Client) (*Client, error) {
 // Org is the organisation this client reads.
 func (c *Client) Org() string { return c.cfg.Org }
 
+// pemArmor matches a PEM block whose line breaks were lost: the console's
+// Secrets value field is a single-line input, and a browser drops the newlines
+// of a key pasted into one.
+var pemArmor = regexp.MustCompile(`-----BEGIN ([A-Z ]+)-----(.*?)-----END ([A-Z ]+)-----`)
+
 // parseKey reads a GitHub App key, which GitHub issues as PKCS#1 but which a
 // re-exported key may carry as PKCS#8.
 func parseKey(pemText string) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode([]byte(pemText))
+	if block == nil {
+		block = rewrapPEM(pemText)
+	}
 	if block == nil {
 		return nil, errors.New("github: the app private key is not PEM")
 	}
@@ -132,6 +140,21 @@ func parseKey(pemText string) (*rsa.PrivateKey, error) {
 		return nil, errors.New("github: the app private key is not RSA")
 	}
 	return key, nil
+}
+
+// rewrapPEM recovers a PEM block flattened to one line, its newlines removed
+// or turned into spaces. The base64 body carries no whitespace of its own, so
+// dropping all of it restores the bytes exactly.
+func rewrapPEM(text string) *pem.Block {
+	m := pemArmor.FindStringSubmatch(text)
+	if m == nil || m[1] != m[3] {
+		return nil
+	}
+	der, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(m[2]), ""))
+	if err != nil {
+		return nil
+	}
+	return &pem.Block{Type: m[1], Bytes: der}
 }
 
 // assertion is the App JWT. Backdated a minute for clock skew, and inside the
