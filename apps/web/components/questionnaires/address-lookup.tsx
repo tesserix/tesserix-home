@@ -110,7 +110,7 @@ export function AddressLookup({ country, onSelect }: Props) {
             if (suggestions[active]) choose(suggestions[active]);
           }
         }}
-        className="w-full rounded-xl border border-stone-300 bg-white p-3.5 disabled:opacity-60"
+        className="min-h-12 w-full min-w-0 text-base rounded-xl border border-stone-300 bg-white p-3.5 disabled:opacity-60"
       />
       {suggestions.length > 0 && (
         <ul
@@ -131,7 +131,7 @@ export function AddressLookup({ country, onSelect }: Props) {
                 type="button"
                 tabIndex={-1}
                 onClick={() => choose(address)}
-                className="w-full p-3 text-left text-sm hover:bg-emerald-50"
+                className="min-h-12 w-full p-3 text-left text-base hover:bg-emerald-50"
               >
                 {address.description}
               </button>

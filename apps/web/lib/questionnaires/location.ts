@@ -1,5 +1,7 @@
 import "server-only";
 import { z } from "zod";
+import { get } from "node:http";
+import { Readable } from "node:stream";
 import { createHmac } from "node:crypto";
 import { reserveQuestionnaireLookup } from "@tesserix/questionnaires/server";
 import {
@@ -23,7 +25,10 @@ function serviceUrls() {
   };
 }
 async function boundedJson(response: Response, max = 65536): Promise<unknown> {
-  if (!response.ok || !response.body) throw new Error("Location unavailable");
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new Error("Location unavailable");
+  }
   const reader = response.body.getReader();
   let size = 0;
   const chunks: Uint8Array[] = [];
@@ -82,11 +87,24 @@ export async function fetchAddresses(
   const url = new URL("/api/locations/autocomplete", serviceUrls().addresses);
   url.searchParams.set("q", q);
   url.searchParams.set("country", country);
-  const response = await fetch(url, {
-    headers: { Host: "mark8ly.com" },
-    cache: "no-store",
-    redirect: "error",
-    signal: AbortSignal.any([signal, AbortSignal.timeout(4500)]),
+  // Node fetch drops Host overrides; this fixed internal service requires its platform host.
+  const response = await new Promise<Response>((resolve, reject) => {
+    const request = get(
+      url,
+      {
+        headers: { Host: "mark8ly.com" },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(4500)]),
+      },
+      (upstream) => {
+        if (upstream.statusCode !== 200) {
+          upstream.destroy();
+          reject(new Error("Location unavailable"));
+          return;
+        }
+        resolve(new Response(Readable.toWeb(upstream) as ReadableStream));
+      },
+    );
+    request.on("error", reject);
   });
   const payload = z
     .object({ data: z.array(z.unknown()).max(30) })

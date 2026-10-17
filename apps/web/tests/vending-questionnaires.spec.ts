@@ -38,7 +38,7 @@ test("customer submits product interest and can safely replay the receipt", asyn
   await next(page);
   await page.getByRole("checkbox", { name: "Water", exact: true }).check();
   await page
-    .getByRole("checkbox", { name: "Protein Bars", exact: true })
+    .getByRole("checkbox", { name: "Snack / protein bars", exact: true })
     .check();
   await page
     .getByRole("combobox", { name: "Which would be your first choice?" })
@@ -218,3 +218,65 @@ for (const form of ["vending-customers", "vending-business"])
       page.getByRole("textbox", { name: "City / suburb", exact: true }),
     ).toHaveValue("Manual City");
   });
+
+test("Bhubaneswar presets stay editable and step changes focus the new section", async ({
+  page,
+}) => {
+  await page.goto("/vending-customers?market=bhubaneswar");
+  await expect(
+    page.getByRole("combobox", { name: "Country", exact: true }),
+  ).toHaveValue("IN");
+  await expect(
+    page.getByRole("textbox", {
+      name: "State / region (optional)",
+      exact: true,
+    }),
+  ).toHaveValue("Odisha");
+  await expect(
+    page.getByRole("textbox", { name: "City / suburb", exact: true }),
+  ).toHaveValue("Bhubaneswar");
+  await page
+    .getByRole("combobox", { name: "What type of location is this?" })
+    .selectOption("gym");
+  await next(page);
+  await expect(
+    page.getByRole("heading", { name: "Habits", exact: true }),
+  ).toBeFocused();
+  await page
+    .getByRole("combobox", {
+      name: "How often do you visit this type of location?",
+    })
+    .selectOption("weekly");
+  await page
+    .getByRole("combobox", { name: /If suitable products/ })
+    .selectOption("weekly");
+  await next(page);
+  await page
+    .getByRole("checkbox", { name: "Savoury Snacks", exact: true })
+    .check();
+  await page.getByText(/Savoury Snacks · .* ideas/).click();
+  await page
+    .getByRole("checkbox", {
+      name: "Mudhi / puffed-rice snack mix",
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("combobox", { name: "Which would be your first choice?" })
+    .selectOption("savoury-snacks");
+  await next(page);
+  await expect(
+    page.getByRole("heading", { name: "Price and experience", exact: true }),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Please acknowledge" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("checkbox", { name: "UPI / QR", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});

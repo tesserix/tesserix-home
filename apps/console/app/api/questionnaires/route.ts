@@ -16,15 +16,20 @@ export async function GET(request: Request) {
   const venue = q.get("venue") ?? "";
   const country = q.get("country") ?? "";
   const campaign = q.get("campaign") ?? "";
+  const region = q.get("region")?.trim() ?? "";
   const after = q.get("after") ?? "0";
   if (
     !isFormId(form) ||
     (venue && !(VENUES as readonly string[]).includes(venue)) ||
     (country && !/^[A-Z]{2}$/.test(country)) ||
     campaign.length > 200 ||
+    region.length > 200 ||
     !/^[0-9]{1,18}$/.test(after) ||
     [...q.keys()].some(
-      (k) => !["form", "venue", "country", "campaign", "after"].includes(k),
+      (k) =>
+        !["form", "venue", "country", "campaign", "region", "after"].includes(
+          k,
+        ),
     )
   )
     return Response.json(
@@ -33,7 +38,11 @@ export async function GET(request: Request) {
     );
   try {
     return Response.json(
-      await readQuestionnaireReport(form, { venue, country, campaign }, after),
+      await readQuestionnaireReport(
+        form,
+        { venue, country, campaign, region },
+        after,
+      ),
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {

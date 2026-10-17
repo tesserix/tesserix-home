@@ -7,6 +7,9 @@ Public links:
 
 Console: https://console.tesserix.app/platform/questionnaires
 
+See [regional research and hospital approval](vending-market-research.md) for the
+Bhubaneswar sharing links, evidence, jurisdiction limits and pre-installation checklist.
+
 ## Circulate the forms
 
 Send the customer link to prospective users and the business link to a venue's
@@ -37,7 +40,7 @@ real security/access credentials or ask respondents for sensitive medical inform
 Search is debounced by 400ms, stale requests are cancelled, results are scoped to the
 selected country, and upstream requests have a 4.5s deadline. Changing country clears
 previous address fields. The fixed server-side proxy calls the existing Mark8ly storefront
-address endpoint and never forwards cookies or bearer credentials. Its Photon provider
+address endpoint with a fixed platform Host header (Node HTTP transport preserves it) and never forwards cookies or bearer credentials. Its Photon provider
 can return an empty list on upstream failure, so empty results always offer manual entry.
 The catalog is cached for a day and has a snapshot fallback; address search failure
 never prevents manually completing the form. Address searches are optional, transient
@@ -60,7 +63,7 @@ which can be supplied by read-only port forwards. Production ignores this settin
 
 1. Sign into the console with an authorised operator account and platform capability.
 2. Open Questionnaires in the platform navigation.
-3. Select customer or business responses. Filter by venue type, country and campaign.
+3. Select customer or business responses. Filter by venue type, country, state/region and campaign.
 4. Inspect response details; follow up on unknown business assumptions before a proposal.
 5. Compare interest and first-choice votes. Low sample sizes say "Collect more responses".
 6. Compare stated maximum prices within each currency. Blank and zero are different.
@@ -70,7 +73,7 @@ which can be supplied by read-only port forwards. Production ignores this settin
 
 The read-only JSON report uses `/api/questionnaires?form=vending-customers` on the
 console, the same session/operator/capability boundary and a maximum 30-response page.
-Pass its `nextCursor` as `after` for older responses. `venue`, `country` and `campaign`
+Pass its `nextCursor` as `after` for older responses. `venue`, `country`, `region` and `campaign`
 are optional bounded filters. No machine or public read API is exposed.
 
 ## Develop and add future forms
@@ -102,3 +105,24 @@ consumer alone. No credentials belong in Git, screenshots or public test output.
 See [ADR-0007](../adr/0007-vending-questionnaires.md) for evidence, capacity, security,
 known survey limitations and rollback. See tesserix-k8s `docs/questionnaires.md` for
 provisioning and scratch database verification.
+
+## Mobile completion
+
+The same public links are responsive web forms. No app install is required. Controls
+use native country/answer pickers, single-column choices on phones, at least 48px
+answer rows/actions, 16px text inputs, decimal/email/telephone keyboards and a bottom
+navigation bar with safe-area padding. Each step returns focus/scroll to its heading;
+validation keeps answers and identifies the relevant field. Optional food details are
+collapsed by category. No GPS access is required. Keep the page open until a receipt
+appears; navigation/closing does not save a draft. We deliberately do not persist
+contact/address answers to local browser storage.
+
+The catalogue adds optional detail fields to version 1 without adding defaults to old
+payloads, preserving replay of earlier receipt requests. Detail counts/region filters
+read existing versioned JSON, so this extension requires no database migration.
+
+Scratch integration: set QUESTIONNAIRES_DB_LOCAL=true, host=127.0.0.1 and the documented
+DB variables for a disposable local administrator connection; run
+`pnpm --filter @tesserix/questionnaires test:integration`. The test creates uniquely
+labelled synthetic records, tests region/category/item/price isolation for both forms,
+then removes only its own local fixtures. Never run it against production.

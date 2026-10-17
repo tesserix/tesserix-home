@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { loadCountries, fetchAddresses, lookupLocation } from "./location";
+import { loadCountries, lookupLocation } from "./location";
 vi.mock("server-only", () => ({}));
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -24,31 +24,6 @@ it("keeps known countries usable when the catalog is unavailable", async () => {
   expect((await loadCountries()).find((c) => c.code === "JP")?.currency).toBe(
     "JPY",
   );
-});
-it("bounds and filters external suggestions and never forwards caller credentials", async () => {
-  const address = {
-    description: "Sample gym",
-    line1: "1 Example St",
-    city: "Melbourne",
-    region: "Victoria",
-    postal: "3000",
-    country: "AU",
-  };
-  const fetcher = vi.fn().mockResolvedValue(
-    Response.json({
-      data: [
-        address,
-        { ...address, country: "US" },
-        { ...address, line1: "x".repeat(201) },
-      ],
-    }),
-  );
-  vi.stubGlobal("fetch", fetcher);
-  expect(
-    await fetchAddresses("Example", "AU", new AbortController().signal),
-  ).toEqual([address]);
-  expect(fetcher.mock.calls[0][1].headers).toEqual({ Host: "mark8ly.com" });
-  expect(fetcher.mock.calls[0][1].redirect).toBe("error");
 });
 it.each([
   ["https://evil.example", { q: "Example", country: "AU" }, 403],

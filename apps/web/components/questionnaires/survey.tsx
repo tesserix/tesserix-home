@@ -3,12 +3,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AddressLookup } from "./address-lookup";
 import { questionnaireClientId } from "./client-id";
 import { type Country } from "@tesserix/questionnaires/locations";
+import { ProductDetails } from "./product-details";
+import { HospitalGuidance } from "./hospital-guidance";
 import { QuestionnaireBrand } from "./brand";
 import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   forms,
+  marketPreset,
+  VARIANTS,
   label,
   submissionSchema,
   type FormId,
@@ -27,6 +31,14 @@ function SurveyForm({ form, countries }: Props) {
   const definition = forms[form];
   const sections = [...new Set(definition.fields.map((f) => f.section))];
   const [step, setStep] = useState(0);
+  const stepHeading = useRef<HTMLHeadingElement>(null);
+  const previousStep = useRef(0);
+  useEffect(() => {
+    if (step === previousStep.current) return;
+    previousStep.current = step;
+    stepHeading.current?.focus({ preventScroll: true });
+    stepHeading.current?.scrollIntoView({ block: "start" });
+  }, [step]);
   const [receipt, setReceipt] = useState("");
   const [failure, setFailure] = useState("");
   const requestKey = useRef("");
@@ -56,7 +68,11 @@ function SurveyForm({ form, countries }: Props) {
     },
   });
   useEffect(() => {
-    const campaign = new URL(window.location.href).searchParams.get("campaign");
+    const query = new URL(window.location.href).searchParams;
+    const preset = marketPreset(query.get("market"));
+    if (preset)
+      for (const [key, value] of Object.entries(preset)) setValue(key, value);
+    const campaign = query.get("campaign");
     if (campaign && campaign.length <= 200) setValue("campaign", campaign);
   }, [setValue]);
   async function submit(values: Record<string, unknown>) {
@@ -92,6 +108,20 @@ function SurveyForm({ form, countries }: Props) {
     }
   }
   const country = String(useWatch({ control, name: "country" }) ?? "");
+  const region = String(useWatch({ control, name: "region" }) ?? "");
+  const venueType = String(useWatch({ control, name: "venueType" }) ?? "");
+  const familyKey =
+    form === "vending-customers" ? "products" : "requestedProducts";
+  const families = (useWatch({ control, name: familyKey }) ?? []) as string[];
+  const variants = (useWatch({ control, name: "productVariants" }) ??
+    []) as string[];
+  useEffect(() => {
+    const next = variants.filter((id) =>
+      VARIANTS.some((v) => v.id === id && families.includes(v.family)),
+    );
+    if (next.length !== variants.length)
+      setValue("productVariants", next, { shouldValidate: true });
+  }, [families, variants, setValue]);
   if (receipt)
     return (
       <SurveyShell>
@@ -120,14 +150,18 @@ function SurveyForm({ form, countries }: Props) {
         </div>
       </SurveyShell>
     );
-  const fields = definition.fields.filter((f) => f.section === sections[step]);
+  const fields = definition.fields.filter(
+    (f) =>
+      f.section === sections[step] &&
+      (!f.venues || f.venues.includes(venueType)),
+  );
   return (
     <SurveyShell>
-      <div className="mb-10 space-y-4">
+      <div className="mb-7 space-y-3 sm:mb-10 sm:space-y-4">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-800">
           {definition.audience}
         </p>
-        <h1 className="max-w-2xl text-4xl font-semibold tracking-tight sm:text-5xl">
+        <h1 className="max-w-2xl text-3xl font-semibold tracking-tight sm:text-5xl">
           {definition.title}
         </h1>
         <p className="max-w-xl text-lg text-stone-600">{definition.subtitle}</p>
@@ -139,7 +173,13 @@ function SurveyForm({ form, countries }: Props) {
       </div>
       <div className="mb-8">
         <div className="mb-3 flex justify-between text-sm">
-          <span>{sections[step]}</span>
+          <h2
+            ref={stepHeading}
+            tabIndex={-1}
+            className="scroll-mt-6 font-semibold focus:outline-none"
+          >
+            {sections[step]}
+          </h2>
           <span>
             Step {step + 1} of {sections.length}
           </span>
@@ -158,9 +198,24 @@ function SurveyForm({ form, countries }: Props) {
           />
         </div>
       </div>
+      {venueType === "hospital" && step === 0 && (
+        <div className="mb-6">
+          <HospitalGuidance compact />
+        </div>
+      )}
       <form
         noValidate
         onSubmit={(event) => {
+          if (step < sections.length - 1) {
+            event.preventDefault();
+            void trigger(
+              fields.map((field) => field.key),
+              { shouldFocus: true },
+            ).then((valid) => {
+              if (valid) setStep(step + 1);
+            });
+            return;
+          }
           void handleSubmit(submit, (invalid) => {
             const first = definition.fields.find((f) => invalid[f.key]);
             if (first) {
@@ -183,7 +238,7 @@ function SurveyForm({ form, countries }: Props) {
           </label>
         </div>
         {fields.map((f) => (
-          <fieldset key={f.key} className="space-y-2">
+          <fieldset key={f.key} className="min-w-0 space-y-2">
             <legend className="mb-2 font-medium">
               {f.label}
               {f.required && (
@@ -222,7 +277,7 @@ function SurveyForm({ form, countries }: Props) {
                       setValue(key, "");
                   },
                 })}
-                className="w-full rounded-xl border border-stone-300 bg-white p-3.5"
+                className="min-h-12 w-full min-w-0 rounded-xl border border-stone-300 bg-white p-3.5 text-base"
               >
                 <option value="">Choose a country</option>
                 {countries.map((c) => (
@@ -231,20 +286,35 @@ function SurveyForm({ form, countries }: Props) {
                   </option>
                 ))}
               </select>
+            ) : f.key === "productVariants" ? (
+              <ProductDetails
+                country={country}
+                region={region}
+                families={families}
+                value={variants}
+                onChange={(value) =>
+                  setValue("productVariants", value, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                  })
+                }
+              />
             ) : f.type === "multi" ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {f.options?.map((option) => (
                   <label
                     key={option}
-                    className="flex cursor-pointer items-center gap-3 rounded-xl border border-stone-200 bg-white p-3.5 text-sm has-checked:border-emerald-700 has-checked:bg-emerald-50"
+                    className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-stone-200 bg-white p-3.5 text-sm has-checked:border-emerald-700 has-checked:bg-emerald-50"
                   >
                     <input
                       type="checkbox"
                       value={option}
                       {...register(f.key)}
-                      className="h-4 w-4 accent-emerald-800"
+                      className="h-5 w-5 shrink-0 accent-emerald-800"
                     />
-                    {label(option)}
+                    {option === "local-qr" && country === "IN"
+                      ? "UPI / QR"
+                      : label(option)}
                   </label>
                 ))}
               </div>
@@ -255,8 +325,18 @@ function SurveyForm({ form, countries }: Props) {
                 aria-describedby={
                   errors[f.key] ? `${f.key}-error` : `${f.key}-hint`
                 }
-                {...register(f.key)}
-                className="w-full rounded-xl border border-stone-300 bg-white p-3.5"
+                {...register(f.key, {
+                  onChange:
+                    f.key === "venueType"
+                      ? () => {
+                          for (const field of definition.fields.filter(
+                            (field) => field.venues?.includes("hospital"),
+                          ))
+                            setValue(field.key, undefined);
+                        }
+                      : undefined,
+                })}
+                className="min-h-12 w-full min-w-0 rounded-xl border border-stone-300 bg-white p-3.5 text-base"
               >
                 <option value="">
                   Choose an answer{!f.required ? " (optional)" : ""}
@@ -277,7 +357,7 @@ function SurveyForm({ form, countries }: Props) {
                 rows={3}
                 maxLength={1500}
                 {...register(f.key)}
-                className="w-full rounded-xl border border-stone-300 bg-white p-3.5"
+                className="min-h-12 w-full min-w-0 rounded-xl border border-stone-300 bg-white p-3.5 text-base"
               />
             ) : (
               <input
@@ -287,6 +367,24 @@ function SurveyForm({ form, countries }: Props) {
                   errors[f.key] ? `${f.key}-error` : `${f.key}-hint`
                 }
                 type={f.type}
+                inputMode={
+                  f.type === "number"
+                    ? "decimal"
+                    : f.key === "contactPhone"
+                      ? "tel"
+                      : undefined
+                }
+                autoComplete={
+                  f.key === "contactEmail"
+                    ? "email"
+                    : f.key === "contactName"
+                      ? "name"
+                      : f.key === "contactPhone"
+                        ? "tel"
+                        : f.key === "businessName"
+                          ? "organization"
+                          : "off"
+                }
                 min={f.type === "number" ? 0 : undefined}
                 max={f.max}
                 step={f.type === "number" ? "0.01" : undefined}
@@ -299,7 +397,7 @@ function SurveyForm({ form, countries }: Props) {
                       ? { setValueAs: (v) => String(v).toUpperCase() }
                       : {},
                 )}
-                className="w-full rounded-xl border border-stone-300 bg-white p-3.5"
+                className="min-h-12 w-full min-w-0 rounded-xl border border-stone-300 bg-white p-3.5 text-base"
               />
             )}
             {f.key === "country" && (
@@ -339,11 +437,11 @@ function SurveyForm({ form, countries }: Props) {
         ))}
         {step === sections.length - 1 && (
           <div className="space-y-3 rounded-2xl bg-emerald-50 p-5">
-            <label className="flex items-start gap-3 text-sm">
+            <label className="flex min-h-12 cursor-pointer items-start gap-3 py-2 text-sm">
               <input
                 type="checkbox"
                 {...register("consent")}
-                className="mt-1 h-4 w-4 accent-emerald-800"
+                className="mt-1 h-5 w-5 shrink-0 accent-emerald-800"
               />
               <span>
                 I agree to Tesserix using my responses for vending research
@@ -377,12 +475,13 @@ function SurveyForm({ form, countries }: Props) {
             {failure}
           </p>
         )}
-        <div className="flex items-center justify-between border-t border-stone-200 pt-6">
+        <div className="sticky bottom-0 -mx-4 flex items-center justify-between gap-3 border-t border-stone-200 bg-white/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:static sm:mx-0 sm:bg-transparent sm:px-0 sm:pt-6 sm:pb-0">
           {step > 0 ? (
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => setStep(step - 1)}
-              className="rounded-full border border-stone-300 px-6 py-3"
+              className="min-h-12 rounded-full border border-stone-300 px-5 py-3 disabled:opacity-50"
             >
               Back
             </button>
@@ -391,11 +490,8 @@ function SurveyForm({ form, countries }: Props) {
           )}
           {step < sections.length - 1 ? (
             <button
-              type="button"
-              onClick={async () => {
-                if (await trigger(fields.map((f) => f.key))) setStep(step + 1);
-              }}
-              className="rounded-full bg-emerald-900 px-7 py-3 font-medium text-white"
+              type="submit"
+              className="min-h-12 rounded-full bg-emerald-900 px-5 py-3 font-medium text-white"
             >
               Continue →
             </button>
@@ -403,7 +499,7 @@ function SurveyForm({ form, countries }: Props) {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="rounded-full bg-emerald-900 px-7 py-3 font-medium text-white disabled:opacity-50"
+              className="min-h-12 rounded-full bg-emerald-900 px-5 py-3 font-medium text-white disabled:opacity-50"
             >
               {isSubmitting ? "Saving…" : "Submit response"}
             </button>
@@ -417,13 +513,13 @@ function SurveyShell({ children }: { children: React.ReactNode }) {
   return (
     <main
       id="main-content"
-      className="min-h-screen bg-[#f6f5ef] px-5 py-8 text-stone-900 sm:py-12"
+      className="min-h-svh bg-[#f6f5ef] px-3 py-5 text-stone-900 sm:px-5 sm:py-12"
     >
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-10">
+      <div className="mx-auto w-full min-w-0 max-w-3xl">
+        <div className="mb-6 sm:mb-10">
           <QuestionnaireBrand />
         </div>
-        <div className="rounded-3xl border border-white bg-white/80 p-6 shadow-sm sm:p-10">
+        <div className="min-w-0 rounded-2xl border border-white bg-white/80 p-4 shadow-sm sm:rounded-3xl sm:p-10">
           {children}
         </div>
         <footer className="mt-8 flex flex-wrap justify-between gap-4 text-xs text-stone-500">
