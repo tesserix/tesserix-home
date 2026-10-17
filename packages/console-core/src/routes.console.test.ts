@@ -65,6 +65,7 @@ describe("consolePath", () => {
         id === "mark8ly.tenants" ||
         id === "mark8ly.users" ||
         id === "mark8ly.emailTemplates" ||
+        id === "platform.provisioning" ||
         id === "platform.onboarding" ||
         id === "platform.onboardingSessions" ||
         id === "platform.profile" ||
@@ -200,6 +201,7 @@ describe("console-native surfaces record no apps/web path", () => {
       "platform.inbox",
       "platform.billing",
       "platform.billingCatalog",
+      "platform.provisioning",
       "platform.tenants",
       "platform.onboarding",
       "platform.onboardingSessions",
@@ -394,7 +396,8 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
       isMostSpecificActiveRoute(
         "/platform/onboarding/sessions",
         "platform.onboarding",
-        ["platform.onboarding", "platform.onboardingSessions"],
+        ["platform.onboarding",
+      "platform.provisioning", "platform.onboardingSessions"],
         "console",
       ),
     ).toBe(false);
