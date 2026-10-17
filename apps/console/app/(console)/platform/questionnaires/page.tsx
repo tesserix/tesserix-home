@@ -1,13 +1,12 @@
+import { ProductShortlist } from "@/components/questionnaires/product-shortlist";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   FORM_IDS,
-  PRODUCTS,
   VENUES,
   forms,
   isFormId,
   label,
-  demandDecision,
 } from "@tesserix/questionnaires";
 import { readQuestionnaireReport } from "@tesserix/questionnaires/server";
 import { requireQuestionnaireViewer } from "@/lib/questionnaires/access";
@@ -61,7 +60,6 @@ export default async function Page({
     );
   }
   const params = new URLSearchParams({ form, venue, country, campaign });
-  const voting = new Map(report.products.map((p) => [p.product, p]));
   return (
     <div className="space-y-8">
       <header className="space-y-2">
@@ -163,52 +161,10 @@ export default async function Page({
               rules, not sales predictions. Check margin, expiry, storage,
               supplier minimums and actual pilot sales before purchasing stock.
             </p>
-            <div className="overflow-x-auto rounded-xl border">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    {[
-                      "Product",
-                      "Interested",
-                      "Share of responses",
-                      "First choice",
-                      "Suggested next step",
-                    ].map((t) => (
-                      <th key={t} className="p-3">
-                        {t}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...PRODUCTS]
-                    .sort(
-                      (a, b) =>
-                        (voting.get(b)?.votes ?? 0) -
-                        (voting.get(a)?.votes ?? 0),
-                    )
-                    .map((product) => {
-                      const p = voting.get(product);
-                      const votes = p?.votes ?? 0;
-                      return (
-                        <tr key={product} className="border-t">
-                          <td className="p-3">{label(product)}</td>
-                          <td className="p-3">{votes}</td>
-                          <td className="p-3">
-                            {report.total
-                              ? `${Math.round((votes / report.total) * 100)}%`
-                              : "—"}
-                          </td>
-                          <td className="p-3">{p?.first_choices ?? 0}</td>
-                          <td className="p-3">
-                            {demandDecision(votes, report.total)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+            <ProductShortlist
+              products={report.products}
+              totalResponses={report.total}
+            />
           </section>
           <section className="space-y-3">
             <h2 className="text-xl font-semibold">Price sensitivity</h2>
