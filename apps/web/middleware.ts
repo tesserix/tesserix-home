@@ -1,3 +1,4 @@
+import { isPublicQuestionnairePath } from "@tesserix/questionnaires";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -122,6 +123,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   if (pathname.startsWith("/_next")) {
     return NextResponse.next();
   }
+
+  if (isPublicQuestionnairePath(pathname)) return NextResponse.next();
 
   const csrf = evaluateCsrf(request);
   if (csrf.blocked) {

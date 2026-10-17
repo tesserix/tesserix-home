@@ -16,6 +16,7 @@ COPY packages/crm-country/package.json packages/crm-country/package.json
 # package.json entries point at dist/, so it must be part of the workspace here
 # AND built below, or `next build` fails with module-not-found.
 COPY packages/platform-auth/package.json packages/platform-auth/package.json
+COPY packages/questionnaires/package.json packages/questionnaires/package.json
 
 # Install only what the web app needs (skips the React Native toolchain).
 # @tesserix/* deps live on GitHub Packages which always requires auth. The

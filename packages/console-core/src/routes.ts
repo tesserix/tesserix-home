@@ -765,6 +765,7 @@ export const ROUTES = {
   //
   // `platform`, not `billing`: knowing a tenant exists is an Operate concern.
   // Only what they pay is a Revenue one.
+  "platform.questionnaires": { console: "/platform/questionnaires", capability: "platform" },
   "platform.provisioning": { console: "/platform/provisioning", capability: "platform" },
   "platform.tenants": { mobile: "/platform/tenants", capability: "platform" },
 

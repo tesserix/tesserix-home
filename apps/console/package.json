@@ -37,7 +37,8 @@
     "react-dom": "19.2.3",
     "server-only": "^0.0.1",
     "stripe": "^22.5.0",
-    "swr": "^2.4.1"
+    "swr": "^2.4.1",
+    "@tesserix/questionnaires": "workspace:*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",

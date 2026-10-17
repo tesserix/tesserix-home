@@ -230,6 +230,7 @@ export const platformNav: readonly NavEntry[] = [
       // it is the estate-wide view of who is on the platform, not one
       // product's. (A new key costs one registry entry — see icons.ts.)
       { name: "Tenants", route: "platform.tenants", icon: "globe" },
+      { name: "Questionnaires", route: "platform.questionnaires", icon: "users" },
       { name: "Identity onboarding", route: "platform.provisioning", icon: "users" },
       { name: "Tickets", route: "platform.tickets", icon: "life-buoy" },
       // No "Support analytics" entry: it is a tab on Tickets now (#133), so a
