@@ -1,3 +1,4 @@
+import { QuestionnaireBrand } from "@/components/questionnaires/brand";
 export const metadata = {
   title: "Questionnaire collection notice",
   robots: { index: false, follow: false },
@@ -5,6 +6,9 @@ export const metadata = {
 export default function Page() {
   return (
     <main id="main-content" className="mx-auto max-w-2xl space-y-6 px-6 py-16">
+      <div>
+        <QuestionnaireBrand />
+      </div>
       <a href="/questionnaire" className="underline">
         ← Research surveys
       </a>

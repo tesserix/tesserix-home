@@ -36,6 +36,8 @@ export function ProductShortlist({
   ];
   return (
     <ConsoleDataTable
+      state={{ kind: "ready" }}
+      emptyMessage="No product choices yet."
       columns={columns}
       rows={rows}
       rowKey={(r) => r.product}

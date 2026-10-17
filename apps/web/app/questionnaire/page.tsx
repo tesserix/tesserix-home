@@ -1,3 +1,4 @@
+import { QuestionnaireBrand } from "@/components/questionnaires/brand";
 import Link from "next/link";
 import { FORM_IDS, forms } from "@tesserix/questionnaires";
 export const metadata = {
@@ -12,9 +13,7 @@ export default function Page() {
       className="min-h-screen bg-stone-50 px-6 py-20 text-stone-900"
     >
       <div className="mx-auto max-w-3xl space-y-8">
-        <p className="text-sm font-semibold uppercase tracking-widest text-emerald-800">
-          Tesserix / Research
-        </p>
+        <QuestionnaireBrand />
         <h1 className="text-5xl font-semibold">Help shape what comes next.</h1>
         <p className="text-lg text-stone-600">
           We are exploring convenient vending for gyms, shopping centres and

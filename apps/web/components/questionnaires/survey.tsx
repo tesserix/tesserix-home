@@ -1,4 +1,5 @@
 "use client";
+import { QuestionnaireBrand } from "./brand";
 import { useEffect, useRef, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -354,12 +355,9 @@ function SurveyShell({ children }: { children: React.ReactNode }) {
       className="min-h-screen bg-[#f6f5ef] px-5 py-8 text-stone-900 sm:py-12"
     >
       <div className="mx-auto max-w-3xl">
-        <a
-          href="/questionnaire"
-          className="mb-12 inline-block text-xl font-semibold tracking-tight"
-        >
-          tesserix<span className="text-emerald-700"> / research</span>
-        </a>
+        <div className="mb-10">
+          <QuestionnaireBrand />
+        </div>
         <div className="rounded-3xl border border-white bg-white/80 p-6 shadow-sm sm:p-10">
           {children}
         </div>
