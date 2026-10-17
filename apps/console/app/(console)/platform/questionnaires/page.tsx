@@ -1,4 +1,5 @@
 import { formatMinorPrice } from "@tesserix/questionnaires";
+import { VariantShortlist } from "@/components/questionnaires/variant-shortlist";
 import { ProductShortlist } from "@/components/questionnaires/product-shortlist";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -38,6 +39,8 @@ export default async function Page({
       : "";
   const campaign =
     typeof query.campaign === "string" ? query.campaign.slice(0, 200) : "";
+  const region =
+    typeof query.region === "string" ? query.region.trim().slice(0, 200) : "";
   const after =
     typeof query.after === "string" && /^[0-9]{1,18}$/.test(query.after)
       ? query.after
@@ -46,7 +49,7 @@ export default async function Page({
   try {
     report = await readQuestionnaireReport(
       form,
-      { venue, country, campaign },
+      { venue, country, campaign, region },
       after,
     );
   } catch {
@@ -60,7 +63,13 @@ export default async function Page({
       </section>
     );
   }
-  const params = new URLSearchParams({ form, venue, country, campaign });
+  const params = new URLSearchParams({
+    form,
+    venue,
+    country,
+    campaign,
+    region,
+  });
   return (
     <div className="space-y-8">
       <header className="space-y-2">
@@ -85,6 +94,16 @@ export default async function Page({
             >
               questionnaire.tesserix.app/{id}
             </a>
+            <p>
+              <a
+                href={`https://questionnaire.tesserix.app/${id}?market=bhubaneswar`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm underline"
+              >
+                Bhubaneswar / Odisha preset →
+              </a>
+            </p>
             <p>
               <Link
                 href={`?form=${id}`}
@@ -125,6 +144,16 @@ export default async function Page({
             pattern="[A-Z]{2}"
             placeholder="AU"
             className="block w-28 rounded-lg border bg-background p-2"
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          State / region
+          <input
+            name="region"
+            defaultValue={region}
+            maxLength={200}
+            placeholder="Odisha"
+            className="block rounded-lg border bg-background p-2"
           />
         </label>
         <label className="space-y-1 text-sm">
@@ -200,6 +229,18 @@ export default async function Page({
           </section>
         </>
       )}
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">
+          Specific food and drink preferences
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {report.variantResponses} of {report.total} submissions provided
+          optional item details. Missing details in older or unanswered surveys
+          do not mean rejection. These are research preferences, not approval to
+          stock, hospital diet advice or purchase quantities.
+        </p>
+        <VariantShortlist products={report.variants} />
+      </section>
       {form === "vending-business" && (
         <aside className="rounded-xl border p-5 text-sm">
           Before shortlisting a site, confirm measured footfall at the proposed

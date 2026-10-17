@@ -143,7 +143,12 @@ export async function submitQuestionnaire(
     );
   }
 }
-export type SurveyFilter = { venue: string; country: string; campaign: string };
+export type SurveyFilter = {
+  venue: string;
+  country: string;
+  campaign: string;
+  region?: string;
+};
 export async function readQuestionnaireReport(
   form: FormId,
   filter: SurveyFilter,
@@ -154,22 +159,28 @@ export async function readQuestionnaireReport(
     form === "vending-customers"
       ? sql`vending_customers.responses`
       : sql`vending_business.responses`;
-  const where = sql`(${filter.venue}='' or venue_type=${filter.venue}) and (${filter.country}='' or country=${filter.country}) and (${filter.campaign}='' or campaign=${filter.campaign})`;
-  const [counts, latest, products, prices] = await Promise.all([
-    db.execute(sql`select count(*)::int as total from ${table} where ${where}`),
+  const region = filter.region?.trim() ?? "";
+  const where = sql`(${filter.venue}='' or r.venue_type=${filter.venue}) and (${filter.country}='' or r.country=${filter.country}) and (${filter.campaign}='' or r.campaign=${filter.campaign}) and (${region}='' or lower(btrim(r.answers->>'region'))=lower(${region}))`;
+  const [counts, latest, products, prices, variants] = await Promise.all([
     db.execute(
-      sql`select id::text,created_at,answers from ${table} where ${where} and (${after}::bigint=0 or id<${after}::bigint) order by id desc limit 31`,
+      sql`select count(*)::int as total, count(*) filter(where jsonb_typeof(r.answers->'productVariants')='array' and r.answers->'productVariants'<>'[]'::jsonb)::int as variant_responses from ${table} r where ${where}`,
+    ),
+    db.execute(
+      sql`select r.id::text,r.created_at,r.answers from ${table} r where ${where} and (${after}::bigint=0 or r.id<${after}::bigint) order by r.id desc limit 31`,
     ),
     form === "vending-customers"
       ? db.execute(
-          sql`select p.product,count(*)::int as votes,count(*) filter(where r.answers->>'topProduct'=p.product)::int as first_choices from vending_customers.product_preferences p join vending_customers.responses r on r.id=p.response_id where (${filter.venue}='' or r.venue_type=${filter.venue}) and (${filter.country}='' or r.country=${filter.country}) and (${filter.campaign}='' or r.campaign=${filter.campaign}) group by p.product order by votes desc,p.product`,
+          sql`select p.product,count(*)::int as votes,count(*) filter(where r.answers->>'topProduct'=p.product)::int as first_choices from vending_customers.product_preferences p join vending_customers.responses r on r.id=p.response_id where ${where} group by p.product order by votes desc,p.product`,
         )
       : Promise.resolve({ rows: [] }),
     form === "vending-customers"
       ? db.execute(
-          sql`select currency,count(snack_price_minor)::int as snack_samples,percentile_disc(0.5) within group(order by snack_price_minor) filter(where snack_price_minor is not null) as snack_median_minor,count(drink_price_minor)::int as drink_samples,percentile_disc(0.5) within group(order by drink_price_minor) filter(where drink_price_minor is not null) as drink_median_minor,count(*) filter(where answers->>'purchaseFrequency'='never')::int as never_buy from vending_customers.responses where ${where} group by currency order by currency`,
+          sql`select r.currency,count(r.snack_price_minor)::int as snack_samples,percentile_disc(0.5) within group(order by r.snack_price_minor) filter(where r.snack_price_minor is not null) as snack_median_minor,count(r.drink_price_minor)::int as drink_samples,percentile_disc(0.5) within group(order by r.drink_price_minor) filter(where r.drink_price_minor is not null) as drink_median_minor,count(*) filter(where r.answers->>'purchaseFrequency'='never')::int as never_buy from vending_customers.responses r where ${where} group by r.currency order by r.currency`,
         )
       : Promise.resolve({ rows: [] }),
+    db.execute(
+      sql`select v.product,count(distinct r.id)::int as votes from ${table} r cross join lateral jsonb_array_elements_text(case when jsonb_typeof(r.answers->'productVariants')='array' then r.answers->'productVariants' else '[]'::jsonb end) v(product) where ${where} group by v.product order by votes desc,v.product`,
+    ),
   ]);
   const rows = latest.rows as {
     id: string;
@@ -178,6 +189,8 @@ export async function readQuestionnaireReport(
   }[];
   return {
     total: Number(counts.rows[0].total),
+    variantResponses: Number(counts.rows[0].variant_responses),
+    variants: variants.rows as { product: string; votes: number }[],
     responses: rows.slice(0, 30),
     nextCursor: rows.length > 30 ? rows[29].id : "",
     products: products.rows as {

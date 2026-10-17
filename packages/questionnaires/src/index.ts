@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { VARIANTS, VARIANT_IDS, VARIANT_LABELS } from "./catalog";
+export { VARIANTS, suggestedVariants, marketPreset } from "./catalog";
 
 export const FORM_IDS = ["vending-customers", "vending-business"] as const;
 export type FormId = (typeof FORM_IDS)[number];
@@ -11,6 +13,7 @@ export type Field = {
   required?: boolean;
   max?: number;
   hint?: string;
+  venues?: readonly string[];
 };
 export const PRODUCTS = [
   "water",
@@ -30,6 +33,7 @@ export const PRODUCTS = [
   "chocolate",
   "confectionery",
 ] as const;
+export type Product = (typeof PRODUCTS)[number];
 export const VENUES = [
   "gym",
   "shopping-centre",
@@ -59,6 +63,14 @@ export const CURRENCIES = [
   "THB",
 ] as const;
 export const label = (value: string) =>
+  VARIANT_LABELS.get(value) ??
+  (
+    {
+      "protein-bars": "Snack / protein bars",
+      "coffee-tea": "Coffee and tea",
+      "local-qr": "Local QR payment",
+    } as Record<string, string>
+  )[value] ??
   value
     .split("-")
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -169,7 +181,10 @@ const amount = (
   section,
   type: "number",
   max,
-  hint: "Optional estimate in the currency selected above. Leave blank if unknown.",
+  hint:
+    key === "revenueSharePercent"
+      ? "Optional percentage from 0 to 100; this is not a currency amount."
+      : "Optional estimate in the currency selected above. Leave blank if unknown.",
 });
 export const customerFields: Field[] = [
   ...location,
@@ -211,6 +226,39 @@ export const customerFields: Field[] = [
     false,
     5,
   ),
+  {
+    key: "productVariants",
+    label: "Which specific items would you choose? (optional)",
+    type: "multi",
+    section: "Product choices",
+    options: VARIANT_IDS,
+    max: 12,
+    hint: "Choose up to 12 details within your selected categories. Suggestions follow the venue country and state; you can explore all cuisines. These are preferences, not a promise of availability.",
+  },
+  {
+    key: "flavourPreferences",
+    label: "Which tastes would you prefer? (optional)",
+    type: "multi",
+    section: "Product choices",
+    options: [
+      "mild",
+      "medium-spice",
+      "spicy",
+      "sweet",
+      "less-sweet",
+      "savoury",
+      "unsalted",
+      "none",
+    ],
+    hint: "Select your own preferences; location does not determine taste. None means no specific preference.",
+  },
+  {
+    key: "drinkTemperatures",
+    label: "Which drink temperatures would suit you? (optional)",
+    type: "multi",
+    section: "Product choices",
+    options: ["chilled", "room-temperature", "hot", "none"],
+  },
   select(
     "topProduct",
     "Which would be your first choice?",
@@ -311,6 +359,23 @@ export const businessFields: Field[] = [
     ],
     true,
   ),
+  {
+    key: "requestedProducts",
+    label: "Which product categories would suit your venue? (optional)",
+    type: "multi",
+    section: "Demand",
+    options: PRODUCTS,
+    max: 5,
+  },
+  {
+    key: "productVariants",
+    label: "Which specific items would suit your venue? (optional)",
+    type: "multi",
+    section: "Demand",
+    options: VARIANT_IDS,
+    max: 12,
+    hint: "Choose up to 12 details. Country and state suggestions are editable; all cuisines can be explored. Stocking requires supplier, food-safety and site approval.",
+  },
   select(
     "footfall",
     "Estimated visits past the proposed position per day",
@@ -410,6 +475,79 @@ export const businessFields: Field[] = [
     "Delivery route, loading bay, stairs / lift, doorway clearance, anchoring and permits",
     "Site and utilities",
   ),
+  {
+    key: "hospitalSaleArea",
+    label: "Where would the hospital machine be placed?",
+    type: "select",
+    section: "Site and utilities",
+    venues: ["hospital"],
+    options: [
+      "public-lobby",
+      "staff-area",
+      "outpatient-common-area",
+      "clinically-controlled-area",
+      "unknown",
+    ],
+  },
+  {
+    key: "hospitalAudiences",
+    label: "Who is the hospital retail provision intended for?",
+    type: "multi",
+    section: "Site and utilities",
+    venues: ["hospital"],
+    options: [
+      "staff",
+      "visitors-carers",
+      "general-public",
+      "separate-clinical-diet-service",
+      "unknown",
+    ],
+    hint: "Describe the service, not any individual patient or condition. Clinical patient food requires a separate approval pathway.",
+  },
+  {
+    key: "hospitalApprovals",
+    label: "Which hospital teams have approved the proposal?",
+    type: "multi",
+    section: "Site and utilities",
+    venues: ["hospital"],
+    options: [
+      "food-service-dietitian",
+      "infection-control",
+      "facilities",
+      "procurement",
+      "none",
+    ],
+    hint: "None means approvals have not yet been obtained. A questionnaire response is not approval to install or sell.",
+  },
+  {
+    key: "hospitalRestrictions",
+    label:
+      "Which items require restriction or review under the hospital policy?",
+    type: "multi",
+    section: "Site and utilities",
+    venues: ["hospital"],
+    options: [
+      "high-sugar-drinks",
+      "high-salt-snacks",
+      "high-saturated-fat-foods",
+      "energy-drinks-caffeine",
+      "nuts-allergens",
+      "fresh-chilled-foods",
+      "hot-drinks",
+      "glass-containers",
+      "other",
+      "unknown",
+    ],
+  },
+  {
+    key: "hospitalPolicy",
+    label:
+      "Policy reference, required nutrition criteria or responsible department (optional)",
+    type: "textarea",
+    section: "Site and utilities",
+    venues: ["hospital"],
+    hint: "Do not include patient information, internal access credentials or private security details.",
+  },
   select(
     "commercialModel",
     "Preferred commercial arrangement",
@@ -542,17 +680,27 @@ export function submissionSchema(form: FormId) {
     website: z.literal(""),
   };
   for (const f of forms[form].fields) {
-    if (f.type === "multi")
-      shape[f.key] = z
+    if (f.type === "multi") {
+      const choices = z
         .array(z.enum(f.options as [string, ...string[]]))
         .max(f.max ?? 10)
         .refine((v) => new Set(v).size === v.length, "Choose each option once")
         .refine(
           (v) => !v.includes("none") || v.length === 1,
           "None cannot be combined with other choices",
-        )
-        .default([]);
-    else if (f.type === "number")
+        );
+      shape[f.key] = [
+        "productVariants",
+        "requestedProducts",
+        "flavourPreferences",
+        "drinkTemperatures",
+        "hospitalAudiences",
+        "hospitalApprovals",
+        "hospitalRestrictions",
+      ].includes(f.key)
+        ? choices.optional()
+        : choices.default([]);
+    } else if (f.type === "number")
       shape[f.key] = z
         .number()
         .finite()
@@ -586,6 +734,32 @@ export function submissionSchema(form: FormId) {
     }
   }
   return z.strictObject(shape).superRefine((v, ctx) => {
+    if (form === "vending-business" && v.venueType !== "hospital") {
+      for (const field of businessFields.filter((f) =>
+        f.venues?.includes("hospital"),
+      )) {
+        const value = v[field.key];
+        if (Array.isArray(value) ? value.length : !!value)
+          ctx.addIssue({
+            code: "custom",
+            path: [field.key],
+            message: "Hospital-specific answers require a hospital venue",
+          });
+      }
+    }
+    const families = (v[
+      form === "vending-customers" ? "products" : "requestedProducts"
+    ] ?? []) as string[];
+    for (const variant of (v.productVariants ?? []) as string[]) {
+      const item = VARIANTS.find((i) => i.id === variant);
+      if (item && !families.includes(item.family))
+        ctx.addIssue({
+          code: "custom",
+          path: ["productVariants"],
+          message:
+            "Choose the matching product category before selecting its details",
+        });
+    }
     for (const f of forms[form].fields.filter(
       (f) => f.type === "number" && f.key !== "revenueSharePercent",
     )) {
