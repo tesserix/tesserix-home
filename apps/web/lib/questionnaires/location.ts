@@ -95,12 +95,14 @@ export async function fetchAddresses(
         headers: { Host: "mark8ly.com" },
         signal: AbortSignal.any([signal, AbortSignal.timeout(4500)]),
       },
-      (upstream) =>
-        resolve(
-          new Response(Readable.toWeb(upstream) as ReadableStream, {
-            status: upstream.statusCode ?? 502,
-          }),
-        ),
+      (upstream) => {
+        if (upstream.statusCode !== 200) {
+          upstream.destroy();
+          reject(new Error("Location unavailable"));
+          return;
+        }
+        resolve(new Response(Readable.toWeb(upstream) as ReadableStream));
+      },
     );
     request.on("error", reject);
   });

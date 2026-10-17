@@ -50,6 +50,8 @@ it("preserves the approved storefront host over the internal connection", async 
   }
 });
 it.each([
+  [204, "", "Location unavailable"],
+  [304, "", "Location unavailable"],
   [302, '{"data":[]}', "Location unavailable"],
   [200, "x".repeat(65537), "Location response too large"],
   [200, "not json", "Unexpected token"],
