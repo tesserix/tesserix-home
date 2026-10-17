@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateSubmission } from "./index";
+import { validateSubmission, demandDecision, minorUnits } from "./index";
 describe("customer questionnaire", () => {
   it("accepts a negative demand response without inventing a product preference", () => {
     const result = validateSubmission("vending-customers", {
@@ -93,4 +93,10 @@ it("accepts a business declining a pilot without collecting a person’s contact
       website: "",
     }).success,
   ).toBe(true);
+});
+
+describe('demand planning safeguards',()=>{
+ it('requires thirty responses even when every response selected a product',()=>{expect(demandDecision(29,29)).toBe('Collect more responses')});
+ it.each([[9,'Consider a small pilot'],[3,'Test a limited range'],[2,'Deprioritise for this audience'],[0,'Deprioritise for this audience']])('classifies %i votes out of thirty transparently',(votes,decision)=>{expect(demandDecision(Number(votes),30)).toBe(decision)});
+ it('distinguishes a zero price from a missing answer and preserves decimal minor units',()=>{expect(minorUnits(0)).toBe(0);expect(minorUnits(undefined)).toBeNull();expect(minorUnits(3.57)).toBe(357)});
 });
