@@ -396,8 +396,7 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
       isMostSpecificActiveRoute(
         "/platform/onboarding/sessions",
         "platform.onboarding",
-        ["platform.onboarding",
-      "platform.provisioning", "platform.onboardingSessions"],
+        ["platform.onboarding", "platform.onboardingSessions"],
         "console",
       ),
     ).toBe(false);
