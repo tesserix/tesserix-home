@@ -75,3 +75,8 @@ npm run test:e2e
 ## License
 
 Proprietary - Tesserix
+
+## Vending research
+
+Public, account-free questionnaires and operator reporting are documented in
+[the vending questionnaire guide](docs/guides/vending-questionnaires.md).

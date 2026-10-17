@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import path from "node:path";
 
 const nextConfig: NextConfig = {
+  transpilePackages: ['@tesserix/questionnaires'],
   output: "standalone",
 
   // Trace files from the monorepo root so the standalone bundle includes the

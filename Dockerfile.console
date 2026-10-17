@@ -10,6 +10,7 @@ COPY apps/console/package.json apps/console/package.json
 COPY packages/console-core/package.json packages/console-core/package.json
 COPY packages/crm-country/package.json packages/crm-country/package.json
 COPY packages/platform-auth/package.json packages/platform-auth/package.json
+COPY packages/questionnaires/package.json packages/questionnaires/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 

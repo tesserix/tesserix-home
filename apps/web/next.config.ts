@@ -15,7 +15,7 @@ const nextConfig: NextConfig = {
   // @tesserix/otto-widget ships raw TypeScript source (no dist/) — Next.js
   // must transpile it from node_modules or the build fails with
   // "Unknown module type" on its src/index.ts.
-  transpilePackages: ['@tesserix/otto-widget'],
+  transpilePackages: ['@tesserix/questionnaires', '@tesserix/otto-widget'],
 
   async redirects() {
     return [
