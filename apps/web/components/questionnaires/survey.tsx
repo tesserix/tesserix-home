@@ -1,7 +1,11 @@
 "use client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { AddressLookup } from "./address-lookup";
+import { questionnaireClientId } from "./client-id";
+import { type Country } from "@tesserix/questionnaires/locations";
 import { QuestionnaireBrand } from "./brand";
 import { useEffect, useRef, useState } from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   forms,
@@ -10,7 +14,16 @@ import {
   type FormId,
 } from "@tesserix/questionnaires";
 
-export function Survey({ form }: { form: FormId }) {
+type Props = { form: FormId; countries: Country[] };
+export function Survey(props: Props) {
+  const [queryClient] = useState(() => new QueryClient());
+  return (
+    <QueryClientProvider client={queryClient}>
+      <SurveyForm {...props} />
+    </QueryClientProvider>
+  );
+}
+function SurveyForm({ form, countries }: Props) {
   const definition = forms[form];
   const sections = [...new Set(definition.fields.map((f) => f.section))];
   const [step, setStep] = useState(0);
@@ -20,6 +33,7 @@ export function Survey({ form }: { form: FormId }) {
   const clientKey = useRef("");
   const {
     register,
+    control,
     handleSubmit,
     trigger,
     setError,
@@ -48,15 +62,7 @@ export function Survey({ form }: { form: FormId }) {
   async function submit(values: Record<string, unknown>) {
     setFailure("");
     requestKey.current ||= crypto.randomUUID();
-    if (!clientKey.current) {
-      try {
-        clientKey.current =
-          sessionStorage.getItem("questionnaire-client") || crypto.randomUUID();
-        sessionStorage.setItem("questionnaire-client", clientKey.current);
-      } catch {
-        clientKey.current = crypto.randomUUID();
-      }
-    }
+    clientKey.current ||= questionnaireClientId();
     try {
       const response = await fetch(`/api/questionnaires/${form}`, {
         method: "POST",
@@ -85,6 +91,7 @@ export function Survey({ form }: { form: FormId }) {
       );
     }
   }
+  const country = String(useWatch({ control, name: "country" }) ?? "");
   if (receipt)
     return (
       <SurveyShell>
@@ -190,7 +197,41 @@ export function Survey({ form }: { form: FormId }) {
                 {f.hint}
               </p>
             )}
-            {f.type === "multi" ? (
+            {f.key === "country" ? (
+              <select
+                aria-label={f.label}
+                aria-invalid={!!errors.country}
+                aria-describedby={
+                  errors.country ? "country-error" : "country-hint"
+                }
+                {...register("country", {
+                  onChange: (event) => {
+                    const selected = countries.find(
+                      (c) => c.code === event.target.value,
+                    );
+                    if (selected)
+                      setValue("currency", selected.currency, {
+                        shouldValidate: true,
+                      });
+                    for (const key of [
+                      "addressLine1",
+                      "region",
+                      "city",
+                      "postcode",
+                    ])
+                      setValue(key, "");
+                  },
+                })}
+                className="w-full rounded-xl border border-stone-300 bg-white p-3.5"
+              >
+                <option value="">Choose a country</option>
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            ) : f.type === "multi" ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {f.options?.map((option) => (
                   <label
@@ -259,6 +300,30 @@ export function Survey({ form }: { form: FormId }) {
                       : {},
                 )}
                 className="w-full rounded-xl border border-stone-300 bg-white p-3.5"
+              />
+            )}
+            {f.key === "country" && (
+              <AddressLookup
+                key={country}
+                country={country}
+                onSelect={(address) => {
+                  const selected = countries.find(
+                    (c) => c.code === address.country,
+                  );
+                  if (!selected) return;
+                  for (const [key, value] of Object.entries({
+                    country: address.country,
+                    currency: selected.currency,
+                    addressLine1: address.line1,
+                    region: address.region,
+                    city: address.city,
+                    postcode: address.postal,
+                  }))
+                    setValue(key, value, {
+                      shouldValidate: true,
+                      shouldDirty: true,
+                    });
+                }}
               />
             )}
             {errors[f.key] && (

@@ -46,5 +46,5 @@ describe("isPublicPath — the legal pages", () => {
 });
 
 describe('anonymous research forms',()=>{
- it.each(['/vending-customers','/vending-customers/','/vending-business','/vending-business/','/api/questionnaires/vending-customers','/api/questionnaires/vending-business'])('does not redirect %s to login',async path=>{const {NextRequest}=await import('next/server');const {middleware}=await import('./middleware');const r=await middleware(new NextRequest(`https://questionnaire.tesserix.app${path}`));expect(r.headers.get('location')).toBeNull();expect(r.headers.get('x-middleware-next')).toBe('1')});
+ it.each(['/vending-customers','/vending-customers/','/vending-business','/vending-business/','/api/questionnaires/vending-customers','/api/questionnaires/vending-business','/api/questionnaires/location'])('does not redirect %s to login',async path=>{const {NextRequest}=await import('next/server');const {middleware}=await import('./middleware');const r=await middleware(new NextRequest(`https://questionnaire.tesserix.app${path}`));expect(r.headers.get('location')).toBeNull();expect(r.headers.get('x-middleware-next')).toBe('1')});
 });

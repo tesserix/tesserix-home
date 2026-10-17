@@ -14,7 +14,7 @@ export function QuestionnaireBrand() {
         height={40}
         priority
         unoptimized
-        className="h-10 w-auto"
+        style={{ height: "40px", width: "auto" }}
       />
       <span className="border-l border-stone-300 pl-3 text-xs font-semibold uppercase tracking-widest text-emerald-800">
         Research

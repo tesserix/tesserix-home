@@ -22,6 +22,40 @@ for marketing, orders stock, commits a lease, or approves an installation. Revie
 questions with a small pilot audience before broad distribution. Do not circulate
 real security/access credentials or ask respondents for sensitive medical information.
 
+## Country, address and currency
+
+1. Choose the venue country. The existing Mark8ly public country catalog supplies the
+   country name and local currency; currently it covers 20 countries and 16 currencies.
+2. Optionally search for a public venue or street. Select a suggestion with a click,
+   or use the arrow keys and Enter. Street, city, region and postcode populate together.
+3. Check the result and correct any field manually. A missing result is not an address
+   validation failure. No GPS permission, account, login or one-time password is needed.
+4. Currency automatically follows the chosen country. Change it explicitly if an
+   estimate is quoted in another currency. We never convert an already-entered amount;
+   recheck price answers after changing country or currency.
+
+Search is debounced by 400ms, stale requests are cancelled, results are scoped to the
+selected country, and upstream requests have a 4.5s deadline. Changing country clears
+previous address fields. The fixed server-side proxy calls the existing Mark8ly storefront
+address endpoint and never forwards cookies or bearer credentials. Its Photon provider
+can return an empty list on upstream failure, so empty results always offer manual entry.
+The catalog is cached for a day and has a snapshot fallback; address search failure
+never prevents manually completing the form. Address searches are optional, transient
+requests; only a submitted address is part of the retained response. Read the collection
+notice before entering any address. Do not use home addresses or private access details.
+
+The anonymous lookup POST is `/api/questionnaires/location`, with a bounded body and
+an explicit origin check. Shared PostgreSQL admission permits at most 300 searches/minute
+globally and 30/minute per hashed browser/network/day bucket across all app replicas.
+The proxy fails closed to manual entry if admission is unavailable. Browser IDs do not
+verify unique people; the global limit remains effective if a caller rotates identifiers.
+JPY uses whole-unit amounts and the other supported currencies use two decimal places.
+Reports interpret stored minor units by currency and never mix or convert currencies.
+
+For local integration only, `QUESTIONNAIRES_LOCATION_LOCAL=true` in Next development
+uses localhost ports 18206 (existing platform-api) and 18207 (existing storefront),
+which can be supplied by read-only port forwards. Production ignores this setting.
+
 ## Review responses
 
 1. Sign into the console with an authorised operator account and platform capability.

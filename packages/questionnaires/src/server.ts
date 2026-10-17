@@ -114,7 +114,7 @@ export async function submitQuestionnaire(
       .digest("hex");
     const p = parsed.data;
     const result = await questionnaireDb().execute(
-      sql`select questionnaires_api.submit(${formValue},${key}::uuid,${JSON.stringify(p)}::jsonb,${fingerprint},${minorUnits(p.maxSnackPrice)},${minorUnits(p.maxDrinkPrice)}) as receipt`,
+      sql`select questionnaires_api.submit(${formValue},${key}::uuid,${JSON.stringify(p)}::jsonb,${fingerprint},${minorUnits(p.maxSnackPrice, String(p.currency))},${minorUnits(p.maxDrinkPrice, String(p.currency))}) as receipt`,
     );
     return Response.json(
       { receipt: result.rows[0].receipt },
@@ -194,4 +194,10 @@ export async function readQuestionnaireReport(
       never_buy: number;
     }[],
   };
+}
+
+export async function reserveQuestionnaireLookup(fingerprint: string) {
+  await questionnaireDb().execute(
+    sql`select questionnaires_api.reserve_lookup(${fingerprint})`,
+  );
 }

@@ -49,6 +49,14 @@ export const CURRENCIES = [
   "EUR",
   "SGD",
   "AED",
+  "BRL",
+  "CAD",
+  "IDR",
+  "JPY",
+  "MYR",
+  "PHP",
+  "SAR",
+  "THB",
 ] as const;
 export const label = (value: string) =>
   value
@@ -66,11 +74,24 @@ const location: Field[] = [
   },
   {
     key: "country",
-    label: "Country code",
+    label: "Country",
     type: "text",
     section: "Location",
     required: true,
-    hint: "Two letters, for example AU, IN or NZ.",
+    hint: "Choose the country of the venue. Currency is matched automatically; you can change it.",
+  },
+  {
+    key: "addressLine1",
+    label: "Venue street address (optional)",
+    type: "text",
+    section: "Location",
+    hint: "Use a public venue address, not your home address. You can enter or correct all address fields manually.",
+  },
+  {
+    key: "region",
+    label: "State / region (optional)",
+    type: "text",
+    section: "Location",
   },
   {
     key: "city",
@@ -105,6 +126,7 @@ const location: Field[] = [
     section: "Location",
     options: CURRENCIES,
     required: true,
+    hint: "Matched to country. Changing currency does not convert any amounts you already entered; please recheck price answers.",
   },
 ];
 const select = (
@@ -564,6 +586,24 @@ export function submissionSchema(form: FormId) {
     }
   }
   return z.strictObject(shape).superRefine((v, ctx) => {
+    for (const f of forms[form].fields.filter(
+      (f) => f.type === "number" && f.key !== "revenueSharePercent",
+    )) {
+      const amount = v[f.key];
+      if (
+        typeof amount === "number" &&
+        Math.abs(
+          amount * 10 ** currencyDigits(String(v.currency)) -
+            Math.round(amount * 10 ** currencyDigits(String(v.currency))),
+        ) > 1e-6
+      )
+        ctx.addIssue({
+          code: "custom",
+          path: [f.key],
+          message:
+            "Use the number of decimal places supported by this currency",
+        });
+    }
     if (form === "vending-business" && v.commercialModel !== "not-interested") {
       for (const key of ["contactName", "contactEmail"])
         if (!v[key])
@@ -600,8 +640,15 @@ export const validateSubmission = (form: FormId, value: unknown) =>
   submissionSchema(form).safeParse(value);
 export const isFormId = (value: string): value is FormId =>
   (FORM_IDS as readonly string[]).includes(value);
-export const minorUnits = (value: unknown): number | null =>
-  typeof value === "number" ? Math.round(value * 100) : null;
+export const currencyDigits = (currency: string): number =>
+  new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
+    .maximumFractionDigits ?? 2;
+export const minorUnits = (value: unknown, currency = "AUD"): number | null =>
+  typeof value === "number"
+    ? Math.round(value * 10 ** currencyDigits(currency))
+    : null;
+export const formatMinorPrice = (value: number, currency: string): string =>
+  (value / 10 ** currencyDigits(currency)).toFixed(currencyDigits(currency));
 export function demandDecision(votes: number, total: number): string {
   if (total < 30) return "Collect more responses";
   const share = votes / total;
@@ -621,6 +668,6 @@ export function isResearchPath(path: string): boolean {
 }
 
 export const isPublicQuestionnairePath = (path: string): boolean =>
-  /^\/(vending-customers|vending-business|questionnaire|questionnaire\/privacy|api\/questionnaires\/(vending-customers|vending-business))\/?$/.test(
+  /^\/(vending-customers|vending-business|questionnaire|questionnaire\/privacy|api\/questionnaires\/(vending-customers|vending-business|location))\/?$/.test(
     path,
   );

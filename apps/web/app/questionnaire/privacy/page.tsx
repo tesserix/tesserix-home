@@ -37,13 +37,12 @@ export default function Page() {
       </p>
       <h2 className="text-xl font-semibold">Access, storage and follow-up</h2>
       <p>
-        Responses are stored in our Australian-hosted database and are
-        accessible to authorised Tesserix console operators. They are used for
-        research and venue follow-up, not automatic marketing enrolment.
-        Infrastructure providers process data to host and protect the service.
-        Responses are retained while needed for feasibility assessment and
-        related pilot planning, with contact data reviewed for removal when no
-        longer needed.
+        Responses are stored in our database hosted in India and are accessible
+        to authorised Tesserix console operators. They are used for research and
+        venue follow-up, not automatic marketing enrolment. Infrastructure
+        providers process data to host and protect the service. Responses are
+        retained while needed for feasibility assessment and related pilot
+        planning, with contact data reviewed for removal when no longer needed.
       </p>
       <p>
         We use short-lived, hashed network and random browser identifiers for
@@ -51,6 +50,17 @@ export default function Page() {
         access logs under their own retention policies. A customer response
         cannot be assumed to identify one unique person, so survey totals are
         not verified unique-person counts.
+      </p>
+      <h2 className="text-xl font-semibold">Optional address search</h2>
+      <p>
+        When you use venue address search, the text you type and selected
+        country are sent through our existing Mark8ly location proxy to its
+        address provider (Photon / OpenStreetMap). Provider processing may occur
+        outside your country. We do not request your device location. Use a
+        public venue address, not a home address. You can skip search and enter
+        or correct the details manually. Search text is sent in a request body
+        to our questionnaire endpoint; the location proxy and provider may
+        retain their own request logs.
       </p>
       <h2 className="text-xl font-semibold">Your choices</h2>
       <p>

@@ -50,10 +50,26 @@ describe("survey boundaries", () => {
     { maxSnackPrice: -1 },
     { maxSnackPrice: 1.234 },
     { paymentMethods: [] },
+    { currency: "XYZ" },
+    { country: "JP", currency: "JPY", maxSnackPrice: 350.5 },
   ])("rejects invalid or contradictory input %j", (patch) => {
     expect(
       validateSubmission("vending-customers", { ...valid, ...patch }).success,
     ).toBe(false);
+  });
+  it("accepts international currency and manually corrected venue addresses", () => {
+    const result = validateSubmission("vending-customers", {
+      ...valid,
+      country: "CA",
+      currency: "CAD",
+      addressLine1: "1 Example Street",
+      region: "Ontario",
+      postcode: "A1A 1A1",
+      maxSnackPrice: 3.57,
+    });
+    expect(result.success).toBe(true);
+    if (result.success)
+      expect(result.data.addressLine1).toBe("1 Example Street");
   });
   it("accepts unicode venue names and declines to require personal customer details", () => {
     const r = validateSubmission("vending-customers", {
@@ -95,8 +111,29 @@ it("accepts a business declining a pilot without collecting a person’s contact
   ).toBe(true);
 });
 
-describe('demand planning safeguards',()=>{
- it('requires thirty responses even when every response selected a product',()=>{expect(demandDecision(29,29)).toBe('Collect more responses')});
- it.each([[9,'Consider a small pilot'],[3,'Test a limited range'],[2,'Deprioritise for this audience'],[0,'Deprioritise for this audience']])('classifies %i votes out of thirty transparently',(votes,decision)=>{expect(demandDecision(Number(votes),30)).toBe(decision)});
- it('distinguishes a zero price from a missing answer and preserves decimal minor units',()=>{expect(minorUnits(0)).toBe(0);expect(minorUnits(undefined)).toBeNull();expect(minorUnits(3.57)).toBe(357)});
+describe("demand planning safeguards", () => {
+  it("requires thirty responses even when every response selected a product", () => {
+    expect(demandDecision(29, 29)).toBe("Collect more responses");
+  });
+  it.each([
+    [9, "Consider a small pilot"],
+    [3, "Test a limited range"],
+    [2, "Deprioritise for this audience"],
+    [0, "Deprioritise for this audience"],
+  ])("classifies %i votes out of thirty transparently", (votes, decision) => {
+    expect(demandDecision(Number(votes), 30)).toBe(decision);
+  });
+  it("distinguishes a zero price from a missing answer and preserves decimal minor units", () => {
+    expect(minorUnits(0)).toBe(0);
+    expect(minorUnits(undefined)).toBeNull();
+    expect(minorUnits(3.57)).toBe(357);
+  });
+});
+
+it("uses the currency minor units rather than treating yen as cents", async () => {
+  const { formatMinorPrice } = await import("./index");
+  expect(minorUnits(350, "JPY")).toBe(350);
+  expect(minorUnits(3.57, "CAD")).toBe(357);
+  expect(formatMinorPrice(350, "JPY")).toBe("350");
+  expect(formatMinorPrice(357, "CAD")).toBe("3.57");
 });

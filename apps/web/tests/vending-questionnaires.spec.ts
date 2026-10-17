@@ -7,8 +7,8 @@ async function location(page: Page) {
     .getByRole("combobox", { name: "What type of location is this?" })
     .selectOption("gym");
   await page
-    .getByRole("textbox", { name: "Country code", exact: true })
-    .fill("AU");
+    .getByRole("combobox", { name: "Country", exact: true })
+    .selectOption("AU");
   await page
     .getByRole("textbox", { name: "City / suburb", exact: true })
     .fill("SYSTEM VERIFICATION");
@@ -132,3 +132,89 @@ test("business submits a feasibility enquiry without accepting a contract", asyn
     fullPage: true,
   });
 });
+
+for (const form of ["vending-customers", "vending-business"])
+  test(`matches currencies, fills addresses and supports manual fallback for ${form}`, async ({
+    page,
+  }) => {
+    await page.route("**/api/questionnaires/location", async (route) => {
+      const body = route.request().postDataJSON();
+      expect(route.request().headers()["cookie"]).toBeUndefined();
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              description: "Synthetic public venue",
+              line1: "1 Example Street",
+              city: "Example City",
+              region: "Example Region",
+              postal: "12345",
+              country: body.country,
+            },
+          ],
+        },
+      });
+    });
+    await page.goto(`/${form}`);
+    const country = page.getByRole("combobox", {
+      name: "Country",
+      exact: true,
+    });
+    const currency = page.getByRole("combobox", {
+      name: "Currency for any prices you provide",
+    });
+    await country.selectOption("CA");
+    await expect(currency).toHaveValue("CAD");
+    const search = page.getByRole("combobox", {
+      name: "Find the venue address (optional)",
+    });
+    await search.fill("Example venue");
+    await expect(
+      page.getByRole("option", { name: "Synthetic public venue", exact: true }),
+    ).toBeVisible();
+    await search.press("ArrowDown");
+    await search.press("Enter");
+    await expect(
+      page.getByRole("textbox", {
+        name: "Venue street address (optional)",
+        exact: true,
+      }),
+    ).toHaveValue("1 Example Street");
+    await expect(
+      page.getByRole("textbox", { name: "City / suburb", exact: true }),
+    ).toHaveValue("Example City");
+    await expect(
+      page.getByRole("textbox", {
+        name: "State / region (optional)",
+        exact: true,
+      }),
+    ).toHaveValue("Example Region");
+    await expect(
+      page.getByRole("textbox", { name: "Postcode / ZIP", exact: true }),
+    ).toHaveValue("12345");
+    await country.selectOption("JP");
+    await expect(currency).toHaveValue("JPY");
+    await expect(
+      page.getByRole("textbox", { name: "City / suburb", exact: true }),
+    ).toHaveValue("");
+    await expect(search).toHaveValue("");
+    await expect(
+      page.getByRole("option", { name: "Synthetic public venue", exact: true }),
+    ).toHaveCount(0);
+    await page.route("**/api/questionnaires/location", (route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: { code: "lookup_unavailable" } },
+      }),
+    );
+    await search.fill("Another venue");
+    await expect(page.getByRole("status")).toContainText(
+      "enter all address details manually",
+    );
+    await page
+      .getByRole("textbox", { name: "City / suburb", exact: true })
+      .fill("Manual City");
+    await expect(
+      page.getByRole("textbox", { name: "City / suburb", exact: true }),
+    ).toHaveValue("Manual City");
+  });

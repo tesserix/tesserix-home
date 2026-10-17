@@ -110,3 +110,22 @@ Australian references inform this initial questionnaire, not legal approval in e
 location. Currency and country fields support international research; local food,
 electrical, accessibility, tenancy and privacy requirements must be checked before
 an installation. A survey cannot establish regulatory compliance or site readiness.
+
+## Optional location integration
+
+Reuse the existing read-only Mark8ly country catalog and storefront address proxy;
+a new geocoding service, API key or subscription is unnecessary. Address lookup is an
+optional aid, not validation of site ownership or delivery suitability. A 400ms debounce,
+eight suggestions and 1KiB request / 64KiB upstream limits bound each operation. Assume
+5 lookup requests per completed response (approximately 50k/year initially), with a
+300/minute global cap and 30/minute client cap. Lookup latency budget is 4.5s plus
+short database admission; failure falls back to manual completion. There are no automatic
+retries. A country catalog outage uses a checked snapshot of its 20 current countries.
+
+The questionnaire accepts only a query and two-letter country, never an upstream URL.
+It sends no user credentials across the product boundary and keeps response data private.
+Admission completes before calling upstream, outside a database transaction. A failed or
+cancelled lookup consumes a search allowance but never creates a questionnaire response.
+Search text may appear in the existing provider's own logs; the collection notice states
+that boundary and offshore processing. No browser geolocation or home address is requested.
+Currency remains explicitly editable; changing country never converts existing estimates.

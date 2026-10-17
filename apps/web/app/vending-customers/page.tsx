@@ -8,6 +8,7 @@ export const metadata = {
   },
   robots: { index: false, follow: false },
 };
-export default function Page() {
-  return <Survey form="vending-customers" />;
+import { loadCountries } from "@/lib/questionnaires/location";
+export default async function Page() {
+  return <Survey form="vending-customers" countries={await loadCountries()} />;
 }

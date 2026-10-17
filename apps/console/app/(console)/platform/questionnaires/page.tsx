@@ -1,3 +1,4 @@
+import { formatMinorPrice } from "@tesserix/questionnaires";
 import { ProductShortlist } from "@/components/questionnaires/product-shortlist";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -181,11 +182,17 @@ export default async function Page({
                   <strong>{p.currency}</strong> · Snack median:{" "}
                   {p.snack_median_minor === null
                     ? "—"
-                    : (Number(p.snack_median_minor) / 100).toFixed(2)}{" "}
+                    : formatMinorPrice(
+                        Number(p.snack_median_minor),
+                        p.currency,
+                      )}{" "}
                   ({p.snack_samples} answers) · Drink median:{" "}
                   {p.drink_median_minor === null
                     ? "—"
-                    : (Number(p.drink_median_minor) / 100).toFixed(2)}{" "}
+                    : formatMinorPrice(
+                        Number(p.drink_median_minor),
+                        p.currency,
+                      )}{" "}
                   ({p.drink_samples} answers) · Would never buy: {p.never_buy}
                 </div>
               ))
