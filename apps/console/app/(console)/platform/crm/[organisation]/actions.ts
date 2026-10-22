@@ -12,6 +12,7 @@ import {
   MissingProductError,
   AlreadyLinkedError,
   SuppressedContactError,
+  ResearchOnlyContactError,
   VoidedOpportunityError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
@@ -269,7 +270,7 @@ export interface AddActivityInput {
  * operator-facing fact with a clear next step, not a caught database error.
  */
 function mapSuppressedContact(cause: unknown): { ok: false; message: string } | undefined {
-  if (cause instanceof SuppressedContactError) {
+  if (cause instanceof SuppressedContactError || cause instanceof ResearchOnlyContactError) {
     return { ok: false, message: cause.message };
   }
   return undefined;
@@ -872,7 +873,7 @@ export async function updateOrganisationAction(
  */
 export type PreviewTemplateResult =
   | { ok: true; text: string; subject?: string }
-  | { ok: false; reason: "suppressed"; message: string }
+  | { ok: false; reason: "suppressed" | "research-only"; message: string }
   | { ok: false; reason: "missing-fields"; missing: string[]; message: string }
   | { ok: false; reason: "unknown-fields"; unknown: string[]; message: string }
   | { ok: false; reason: "not-found" | "erased"; message: string };
@@ -1028,6 +1029,9 @@ async function renderForLead(input: PreviewTemplateInput): Promise<PreviewTempla
   try {
     await assertNoSuppressedContact(input.organisationId, tesserixQuery);
   } catch (cause) {
+    if (cause instanceof ResearchOnlyContactError) {
+      return { ok: false, reason: "research-only", message: cause.message };
+    }
     if (!(cause instanceof SuppressedContactError)) throw cause;
     // Not `cause.message`: that one ends "remove the suppression before
     // logging outreach", which is the instruction for the WRITE path. Here
@@ -1163,6 +1167,7 @@ export interface CopyAndLogDmInput {
  */
 function mapOutreachRefusal(cause: unknown): { ok: false; message: string } | undefined {
   if (
+    cause instanceof ResearchOnlyContactError ||
     cause instanceof SuppressedContactError ||
     cause instanceof TemplateRenderRefusedError ||
     cause instanceof TemplateUnavailableError ||

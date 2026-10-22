@@ -109,7 +109,7 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 
 const { getCurrentSession } = await import("@tesserix/platform-auth");
 const { recordTemplatedDm } = await import("./crm-outreach");
-const { SuppressedContactError, addSuppression } = await import("./crm-repo");
+const { ResearchOnlyContactError, logActivity, SuppressedContactError, addSuppression } = await import("./crm-repo");
 const { eraseContact } = await import("./crm-erasure");
 const { ERASURE_HASH_KEY_ENV } = await import("./crm-erasure-hash");
 // The REAL action, not the repo. Assertion (5) is about who decides `body`,
@@ -838,5 +838,48 @@ describe("eraseContact — the outreach it cannot finish", () => {
 
     await eraseAndAssertItRan();
     await expectNoSentinelInAuditLog();
+  });
+});
+
+
+describe("research-only contacts", () => {
+  async function markResearchOnly() {
+    await db.query("UPDATE crm_contacts SET lawful_basis = 'not_assessed' WHERE id = $1", [contactId]);
+  }
+
+  it("blocks preview, edited copy-and-log, and a direct commit after a stale preview", async () => {
+    await renderAndAssertItLeaks();
+    await markResearchOnly();
+    expect(await previewTemplate({ organisationId: orgId, contactId, templateId })).toMatchObject({
+      ok: false, reason: "research-only",
+    });
+    expect(await copyAndLogDm({ organisationId: orgId, contactId, templateId, submittedText: OPERATOR_TEXT })).toMatchObject({ ok: false, message: expect.stringMatching(/research-only recipient/) });
+    await expect(recordTemplatedDm({
+      organisationId: orgId, contactId, templateId, bodyIfEdited: OPERATOR_TEXT, actor: ACTOR_EMAIL,
+    })).rejects.toBeInstanceOf(ResearchOnlyContactError);
+    expect(await activities()).toHaveLength(0);
+    const result = await db.query("SELECT stage, last_contacted_at FROM crm_opportunities WHERE id = $1", [opportunityId]);
+    expect(result.rows[0]).toMatchObject({ stage: "new", last_contacted_at: null });
+  });
+
+  it.each(["dm_sent", "email_sent", "call"] as const)("blocks manual %s but permits research notes", async (kind) => {
+    await markResearchOnly();
+    await expect(logActivity({ organisationId: orgId, kind, actor: ACTOR_EMAIL })).rejects.toBeInstanceOf(ResearchOnlyContactError);
+    await logActivity({ organisationId: orgId, kind: "note", actor: ACTOR_EMAIL, body: "Research only" });
+    expect(await activities()).toHaveLength(1);
+  });
+
+  it("does not bypass an unassessed recipient by choosing an assessed peer", async () => {
+    await db.query("INSERT INTO crm_contacts (organisation_id, name, lawful_basis) VALUES ($1, 'Unassessed peer', 'not_assessed')", [orgId]);
+    expect(await previewTemplate({ organisationId: orgId, contactId, templateId })).toMatchObject({ ok: false, reason: "research-only" });
+  });
+
+  it.each(["legitimate_interests", "consent", "contract", "dpdp_public_data_exempt"])("retains assessed %s behavior and suppression wins", async (basis) => {
+    await db.query("UPDATE crm_contacts SET lawful_basis = $2 WHERE id = $1", [contactId, basis]);
+    expect((await previewTemplate({ organisationId: orgId, contactId, templateId })).ok).toBe(true);
+    await addSuppression({ instagramHandle: "adabakes", reason: "opted out", actor: ACTOR_EMAIL });
+    expect(await previewTemplate({ organisationId: orgId, contactId, templateId })).toMatchObject({ ok: false, reason: "suppressed" });
+    await markResearchOnly();
+    await expect(logActivity({ organisationId: orgId, kind: "dm_sent", actor: ACTOR_EMAIL })).rejects.toBeInstanceOf(SuppressedContactError);
   });
 });

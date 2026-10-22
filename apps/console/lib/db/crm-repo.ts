@@ -51,6 +51,7 @@ export {
   setNextAction,
   type LogActivityInput,
   SuppressedContactError,
+  ResearchOnlyContactError,
   logActivity,
   assertNoSuppressedContact,
 } from "./crm-write-repo";

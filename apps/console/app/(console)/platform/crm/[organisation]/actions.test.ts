@@ -740,6 +740,14 @@ describe("addContactAction", () => {
     expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
   });
 
+  it("accepts research-only without substituting an assessed basis", async () => {
+    signIn(["crm"]);
+    vi.mocked(createContact).mockResolvedValue({ contactId: "contact-1" });
+    const result = await addContactAction({ organisationId: ORG_ID, email: "research@example.test", lawfulBasis: "not_assessed" });
+    expect(result.ok).toBe(true);
+    expect(createContact).toHaveBeenCalledWith(expect.objectContaining({ lawfulBasis: "not_assessed", email: "research@example.test" }));
+  });
+
   it("trims every field server-side", async () => {
     signIn(["crm"]);
     vi.mocked(createContact).mockResolvedValue({ contactId: "contact-1" });

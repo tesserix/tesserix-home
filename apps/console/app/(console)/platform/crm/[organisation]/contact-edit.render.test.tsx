@@ -26,7 +26,7 @@ vi.mock("./actions", () => ({
   setPrimaryContactAction: vi.fn(),
 }));
 
-import { setPrimaryContactAction, updateContactAction } from "./actions";
+import { addContactAction, setPrimaryContactAction, updateContactAction } from "./actions";
 import { ContactsTab } from "./organisation-detail-view";
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
@@ -289,5 +289,22 @@ describe("changing which contact is primary", () => {
     await user.click(screen.getByRole("button", { name: "Make primary" }));
 
     await waitFor(() => expect(setPrimaryContactAction).toHaveBeenCalledWith(ORG_ID, SECONDARY.id));
+  });
+});
+
+
+describe("research-only contact creation", () => {
+  it("saves researched details without asserting consent and explains the outreach block", async () => {
+    vi.mocked(addContactAction).mockResolvedValue({ ok: true });
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderTab([PRIMARY]);
+    await user.type(screen.getByLabelText("Name"), "Research agency");
+    await user.click(screen.getByRole("combobox", { name: /lawful basis/i }));
+    await user.click(await screen.findByRole("option", { name: "Not assessed / research-only" }));
+    expect(screen.getByText(/no lawful basis or consent is asserted/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add contact" }));
+    await waitFor(() => expect(addContactAction).toHaveBeenCalledWith(expect.objectContaining({
+      organisationId: ORG_ID, name: "Research agency", lawfulBasis: "not_assessed",
+    })));
   });
 });

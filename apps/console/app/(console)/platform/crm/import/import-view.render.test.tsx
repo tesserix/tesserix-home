@@ -125,7 +125,7 @@ describe("ImportView lawful basis", () => {
     expect(basis).toBe("legitimate_interests");
   });
 
-  it("offers no option that records 'we do not know' going forward", async () => {
+  it("offers research-only alongside assessed bases, but never the legacy marker", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     await previewAFile(user);
 
@@ -136,6 +136,7 @@ describe("ImportView lawful basis", () => {
     // dropdown an operator records a compliance determination from, so adding
     // a basis should have to be acknowledged here rather than passing quietly.
     expect(options).toEqual([
+      "Not assessed / research-only",
       "Legitimate interests",
       "Consent",
       "Contract",
