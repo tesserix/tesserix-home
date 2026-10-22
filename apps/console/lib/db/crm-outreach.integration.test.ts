@@ -226,7 +226,7 @@ beforeEach(async () => {
       SENTINEL,
       JSON.stringify({ full_name: "Ada", profile_pic_url: "https://cdn.example/ada.jpg" }),
       "instagram_scrape",
-      "legitimate_interest",
+      "legitimate_interests",
     ],
   );
   contactId = contactRows.rows[0].id;
@@ -869,9 +869,29 @@ describe("research-only contacts", () => {
     expect(await activities()).toHaveLength(1);
   });
 
-  it("does not bypass an unassessed recipient by choosing an assessed peer", async () => {
-    await db.query("INSERT INTO crm_contacts (organisation_id, name, lawful_basis) VALUES ($1, 'Unassessed peer', 'not_assessed')", [orgId]);
-    expect(await previewTemplate({ organisationId: orgId, contactId, templateId })).toMatchObject({ ok: false, reason: "research-only" });
+  it("allows an assessed recipient beside a research-only peer, but keeps suppression organisation-wide", async () => {
+    const peer = await db.query<{ id: string }>("INSERT INTO crm_contacts (organisation_id, name, instagram_handle, lawful_basis) VALUES ($1, 'Unassessed peer', 'research_peer', 'not_assessed') RETURNING id", [orgId]);
+    const peerId = peer.rows[0].id;
+    expect((await previewTemplate({ organisationId: orgId, contactId, templateId })).ok).toBe(true);
+    expect(await previewTemplate({ organisationId: orgId, contactId: peerId, templateId })).toMatchObject({ ok: false, reason: "research-only" });
+    await recordTemplatedDm({ organisationId: orgId, contactId, templateId, bodyIfEdited: OPERATOR_TEXT, actor: ACTOR_EMAIL });
+    expect((await activities()).some((row) => row.kind === "dm_sent")).toBe(true);
+    await expect(recordTemplatedDm({ organisationId: orgId, contactId: peerId, templateId, bodyIfEdited: OPERATOR_TEXT, actor: ACTOR_EMAIL })).rejects.toBeInstanceOf(ResearchOnlyContactError);
+    await expect(logActivity({ organisationId: orgId, kind: "dm_sent", actor: ACTOR_EMAIL })).rejects.toBeInstanceOf(ResearchOnlyContactError);
+    await addSuppression({ instagramHandle: "research_peer", reason: "opted out", actor: ACTOR_EMAIL });
+    expect(await previewTemplate({ organisationId: orgId, contactId, templateId })).toMatchObject({ ok: false, reason: "suppressed" });
+    await expect(recordTemplatedDm({ organisationId: orgId, contactId, templateId, bodyIfEdited: OPERATOR_TEXT, actor: ACTOR_EMAIL })).rejects.toBeInstanceOf(SuppressedContactError);
+  });
+
+  it("preserves prior activities and permits notes and inbound replies after assessment is removed", async () => {
+    await logActivity({ organisationId: orgId, kind: "email_sent", actor: ACTOR_EMAIL, body: "Prior assessed outreach" });
+    const before = await activities();
+    await markResearchOnly();
+    expect(await activities()).toEqual(before);
+    for (const kind of ["note", "email_received", "dm_received"] as const) {
+      await logActivity({ organisationId: orgId, kind, actor: ACTOR_EMAIL, body: "Historical context or inbound reply" });
+    }
+    expect(await activities()).toHaveLength(before.length + 3);
   });
 
   it.each(["legitimate_interests", "consent", "contract", "dpdp_public_data_exempt"])("retains assessed %s behavior and suppression wins", async (basis) => {

@@ -149,7 +149,7 @@ describe("previewTemplate refuses a suppressed lead before anything is rendered"
   it("checks the suppression list for the organisation it was asked about", async () => {
     await previewTemplate(INPUT);
 
-    expect(assertNoSuppressedContact).toHaveBeenCalledWith(ORG_ID, expect.anything());
+    expect(assertNoSuppressedContact).toHaveBeenCalledWith(ORG_ID, expect.anything(), INPUT.contactId);
   });
 });
 

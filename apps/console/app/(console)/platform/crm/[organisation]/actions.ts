@@ -1027,7 +1027,7 @@ async function renderForLead(input: PreviewTemplateInput): Promise<PreviewTempla
   // Step 1. Before the template is even loaded: nothing about a suppressed
   // organisation is worth a second query.
   try {
-    await assertNoSuppressedContact(input.organisationId, tesserixQuery);
+    await assertNoSuppressedContact(input.organisationId, tesserixQuery, input.contactId);
   } catch (cause) {
     if (cause instanceof ResearchOnlyContactError) {
       return { ok: false, reason: "research-only", message: cause.message };

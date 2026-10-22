@@ -144,7 +144,7 @@ describe("recordTemplatedDm — the suppression re-check", () => {
   it("is passed the transaction's own query, not the pooled one", async () => {
     await recordTemplatedDm(input());
 
-    expect(assertNoSuppressedContact).toHaveBeenCalledWith(ORG_ID, tx.query);
+    expect(assertNoSuppressedContact).toHaveBeenCalledWith(ORG_ID, tx.query, CONTACT_ID);
   });
 
   it("writes nothing when the organisation is suppressed", async () => {
