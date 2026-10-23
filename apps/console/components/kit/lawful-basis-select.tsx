@@ -54,7 +54,7 @@ export function LawfulBasisSelect({
   return (
     <Select name={name} value={value} onValueChange={onValueChange} disabled={disabled}>
       <SelectTrigger id={id} size="default">
-        <SelectValue placeholder="Choose a lawful basis…" />
+        <SelectValue placeholder="Choose a basis or research-only…" />
       </SelectTrigger>
       <SelectContent>
         {keepRecordedLabel ? (

@@ -218,12 +218,13 @@ export async function recordTemplatedDm(
     // concurrently: an operator who has the text on their clipboard is exactly
     // the case where a stale "no" is expensive.
     //
-    // `assertNoSuppressedContact` — organisation-scoped, the same function the
+    // Suppression remains organisation-scoped; research-only is checked for
+    // this recipient. `assertNoSuppressedContact` is the same function the
     // preview calls — rather than a per-contact `isSuppressed`. A narrower
     // check here than at preview would let a lead pass the preview and throw
     // here, AFTER the clipboard write, which is the one moment the two ends
     // disagreeing costs the most.
-    await assertNoSuppressedContact(organisationId, query);
+    await assertNoSuppressedContact(organisationId, query, contactId);
 
     // ── 2. THE TEMPLATE AND THE CONTACT, BOTH SCOPED ───────────────────────
     //

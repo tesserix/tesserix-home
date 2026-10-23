@@ -21,6 +21,7 @@
 
 /** A lawful basis, as stored in `crm_contacts.lawful_basis`. */
 export type LawfulBasis =
+  | "not_assessed"
   | "legitimate_interests"
   | "consent"
   | "contract"
@@ -37,12 +38,21 @@ export interface LawfulBasisOption {
   description: string;
 }
 
+/** Research-only is an assessment state, never a claim of consent. */
+export const RESEARCH_ONLY_LAWFUL_BASIS = "not_assessed" as const;
+
 /**
- * The bases an operator may choose for a contact being created or corrected
+ * The bases and assessment states an operator may choose for a contact being created or corrected
  * now. `not_recorded_pre_migration` is deliberately absent — see
  * `LEGACY_LAWFUL_BASIS`.
  */
 export const SELECTABLE_LAWFUL_BASES: readonly LawfulBasisOption[] = [
+  {
+    value: RESEARCH_ONLY_LAWFUL_BASIS,
+    label: "Not assessed / research-only",
+    description:
+      "Research record only; no lawful basis or consent is asserted. Outreach is blocked until each recipient has been reviewed and approved and an assessed basis is recorded on their contact.",
+  },
   {
     value: "legitimate_interests",
     label: "Legitimate interests",
@@ -109,9 +119,8 @@ export const DPDP_PUBLIC_DATA_EXEMPT = "dpdp_public_data_exempt" as const;
  * never recorded, kept valid so those rows stay readable and so
  * `crm-erasure.ts` — which leaves all three provenance columns intact by
  * design — has nothing to reconcile. It is excluded from
- * `SELECTABLE_LAWFUL_BASES` because offering it would let an operator record
- * "we do not know" as a forward-looking choice, which is the failure #248
- * exists to close, not a case to preserve.
+ * `SELECTABLE_LAWFUL_BASES` because it describes historical migration state.
+ * New unassessed research uses `not_assessed`, which blocks outreach.
  */
 export const LEGACY_LAWFUL_BASIS = "not_recorded_pre_migration" as const;
 
@@ -150,7 +159,7 @@ export function unknownLawfulBasisMessage(value: string): string {
 /** The refusal when a write path supplied none at all. A contact with no
  *  basis is the exact defect #248 reports, so it is refused rather than
  *  defaulted: a silent default makes the column decorative. */
-export const LAWFUL_BASIS_REQUIRED_MESSAGE = "Choose a lawful basis for holding this contact's details.";
+export const LAWFUL_BASIS_REQUIRED_MESSAGE = "Choose a lawful basis or Not assessed / research-only.";
 
 /**
  * How a lawful basis reads on screen. Falls back to the raw value rather

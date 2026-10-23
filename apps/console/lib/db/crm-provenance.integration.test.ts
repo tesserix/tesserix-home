@@ -304,3 +304,14 @@ describe("organisationDetail reads provenance back", () => {
     expect(contact.sourcedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 });
+
+
+it("stores research-only and audits recipient-specific assessment", async () => {
+  const { organisationId } = await createOrganisation({ name: "Research agency" });
+  const { contactId } = await createContact({ organisationId, email: "research@example.test", source: "manual", lawfulBasis: "not_assessed" });
+  expect((await provenanceFor(organisationId))[0].lawful_basis).toBe("not_assessed");
+  await updateContact({ contactId, email: "research@example.test", lawfulBasis: "consent", actor: "reviewer@example.test" });
+  expect((await provenanceFor(organisationId))[0].lawful_basis).toBe("consent");
+  const audit = await db.query("SELECT metadata FROM crm_activities WHERE organisation_id = $1 AND metadata::text LIKE '%not_assessed%'", [organisationId]);
+  expect(audit.rows).toHaveLength(1);
+});

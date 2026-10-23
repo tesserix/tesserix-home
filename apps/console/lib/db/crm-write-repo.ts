@@ -14,6 +14,7 @@ import {
   type CrmStage,
 } from "../crm";
 import { CLOCK_ELIGIBLE_SQL, nextActionAssignment } from "./crm-sql";
+import { RESEARCH_ONLY_LAWFUL_BASIS } from "../crm-provenance";
 import { isSuppressed } from "./crm-suppressions-repo";
 
 /**
@@ -417,6 +418,14 @@ export class SuppressedContactError extends Error {
   }
 }
 
+/** Research records are storable, but cannot authorise outbound contact. */
+export class ResearchOnlyContactError extends Error {
+  constructor() {
+    super("Outreach is blocked: review and approve each research-only recipient, then record an assessed lawful basis on their contact before outreach.");
+    this.name = "ResearchOnlyContactError";
+  }
+}
+
 /**
  * Log a note/call/message activity, independent of any stage change.
  *
@@ -476,8 +485,9 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
 
 /**
  * Refuse an outbound kind if anyone at this organisation is on the
- * do-not-contact list. Read on the transaction's own client so the check and
- * the insert cannot straddle a concurrent suppression being added.
+ * do-not-contact list, or the recipient is research-only. Without a recipient,
+ * research-only also fails closed for the organisation. Read on the transaction
+ * client so the check and insert use the same transaction.
  *
  * Exported for the same reason as `advanceStageOnQuery`: "outbound contact is
  * refused for a suppressed organisation" is a rule this file owns, and a
@@ -491,9 +501,10 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
 export async function assertNoSuppressedContact(
   organisationId: string,
   query: TxQuery,
+  recipientContactId?: string,
 ): Promise<void> {
-  const contacts = await query<{ email: string | null; instagram_handle: string | null }>(
-    `SELECT email, instagram_handle FROM crm_contacts WHERE organisation_id = $1`,
+  const contacts = await query<{ id: string; email: string | null; instagram_handle: string | null; lawful_basis: string | null }>(
+    `SELECT email, instagram_handle, lawful_basis, id FROM crm_contacts WHERE organisation_id = $1 FOR SHARE`,
     [organisationId],
   );
   for (const contact of contacts) {
@@ -507,6 +518,16 @@ export async function assertNoSuppressedContact(
     if (suppressed) {
       throw new SuppressedContactError(organisationId);
     }
+  }
+  // Manual activities do not identify a recipient: fail closed for the organisation.
+  // Templates do identify one: an unrelated research contact must not block them.
+  // Suppression above remains organisation-wide, regardless of the recipient.
+  // FOR SHARE prevents a concurrent basis edit until an outbound write commits.
+  if (contacts.some((contact) =>
+    (recipientContactId === undefined || contact.id === recipientContactId) &&
+    contact.lawful_basis === RESEARCH_ONLY_LAWFUL_BASIS
+  )) {
+    throw new ResearchOnlyContactError();
   }
 }
 
