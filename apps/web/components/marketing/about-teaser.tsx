@@ -25,8 +25,9 @@ const STATEMENT = `Tesserix is a small team shipping real software for real busi
 const roadmapNotes: Record<string, string> = {
   mark8ly: "Editorial commerce",
   fe3dr: "Home-cooked delivery",
+  helivanta: "Hospital management",
+  roamie: "Travel companion",
   dwellm8: "Rental management",
-  medicare: "Clinic operations",
   kora: "AI nutrition tracking",
 };
 

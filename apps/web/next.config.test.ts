@@ -126,6 +126,12 @@ describe("the admin surfaces #199 and #207 retired are served, not redirected", 
   });
 });
 
+describe("renamed product pages", () => {
+  it("sends the MediCare placeholder to Helivanta, the shipped hospital product", async () => {
+    expect(await resolveRedirect("/products/medicare")).toBe("/products/helivanta");
+  });
+});
+
 describe("content security policy", () => {
   it("allows the self-hosted OpenPanel tracking script to load", async () => {
     expect((await cspDirectives())["script-src"]).toContain(

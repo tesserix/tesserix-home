@@ -20,6 +20,7 @@ const industryLabels: Record<Industry, string> = {
   rentals: "Rental management",
   healthcare: "Healthcare",
   nutrition: "Nutrition",
+  travel: "Travel",
 };
 
 // One row per product, in portfolio order, derived from products-data.ts —

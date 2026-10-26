@@ -12,8 +12,9 @@ const footerNavigation = {
   products: [
     { name: "Mark8ly", href: "/products/mark8ly" },
     { name: "Fe3dr", href: "/products/fe3dr" },
+    { name: "Helivanta", href: "/products/helivanta" },
+    { name: "Roamie", href: "/products/roamie" },
     { name: "Dwellm8", href: "/products/dwellm8" },
-    { name: "MediCare", href: "/products/medicare" },
     { name: "Kora", href: "/products/kora" },
   ],
   company: [

@@ -13,6 +13,7 @@ import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AppStoreBadges } from "@tesserix/web";
 import { Reveal } from "@/components/marketing/reveal";
 import {
+  countWord,
   isComingSoon,
   products as productsData,
 } from "@/app/(marketing)/products/[slug]/products-data";
@@ -25,12 +26,28 @@ import {
  * placeholder frame rather than guessing at an image path that may not
  * exist.
  */
+interface PhoneShot {
+  src: string;
+  alt: string;
+}
+
 const SHOT_TREATMENTS: Record<
   string,
-  { kind: "browser"; imageSrc: string } | { kind: "duo-phone" }
+  | { kind: "browser"; imageSrc: string }
+  | { kind: "duo-phone"; left: PhoneShot; right: PhoneShot }
 > = {
   mark8ly: { kind: "browser", imageSrc: "/screens/mark8ly-storefront.jpg" },
-  fe3dr: { kind: "duo-phone" },
+  fe3dr: {
+    kind: "duo-phone",
+    left: { src: "/screens/fe3dr-app-browse.png", alt: "Fe3dr customer app" },
+    right: { src: "/screens/fe3dr-app-orders.png", alt: "Fe3dr cook orders queue" },
+  },
+  helivanta: { kind: "browser", imageSrc: "/screens/helivanta-web.jpg" },
+  roamie: {
+    kind: "duo-phone",
+    left: { src: "/screens/roamie-app-text.png", alt: "Roamie text translation" },
+    right: { src: "/screens/roamie-app-trip.png", alt: "Roamie trip overview" },
+  },
 };
 
 interface LiveProduct {
@@ -57,6 +74,7 @@ interface SoonProduct {
 // than being restated here. Live products render as ledger rows in
 // products-data order; coming-soon products render as cards, also in order.
 const productEntries = Object.entries(productsData);
+const portfolioSize = countWord(productEntries.length);
 
 const liveProducts: LiveProduct[] = productEntries
   .filter(([slug]) => !isComingSoon(slug))
@@ -186,14 +204,12 @@ function ProductShot({
   const treatment = SHOT_TREATMENTS[slug];
 
   if (treatment?.kind === "duo-phone") {
-    // Only Fe3dr uses the duo-phone treatment today, so its two screenshots
-    // are wired directly rather than through a generic per-slug lookup.
     return (
       <DuoPhoneFrame
-        leftSrc="/screens/fe3dr-app-browse.png"
-        leftAlt="Fe3dr customer app"
-        rightSrc="/screens/fe3dr-app-orders.png"
-        rightAlt="Fe3dr cook orders queue"
+        leftSrc={treatment.left.src}
+        leftAlt={treatment.left.alt}
+        rightSrc={treatment.right.src}
+        rightAlt={treatment.right.alt}
       />
     );
   }
@@ -203,7 +219,7 @@ function ProductShot({
       <BrowserFrame website={website ?? slug}>
         <Image
           src={treatment.imageSrc}
-          alt={`${title} storefront`}
+          alt={`${title} homepage`}
           width={1568}
           height={682}
           loading="lazy"
@@ -326,11 +342,12 @@ export function ProductsGrid() {
             The portfolio
           </p>
           <h2 className="mt-4 max-w-2xl text-balance text-[clamp(2rem,4.6vw,3.4rem)] font-semibold leading-[1.04] tracking-[-0.04em] text-foreground">
-            Five products. Each one focused.
+            {portfolioSize[0].toUpperCase() + portfolioSize.slice(1)} products.
+            Each one focused.
           </h2>
           <p className="mt-4 max-w-[34rem] text-muted-foreground">
-            We&apos;d rather make five products that do specific things well
-            than one platform that does everything badly.
+            We&apos;d rather make {portfolioSize} products that do specific
+            things well than one platform that does everything badly.
           </p>
         </Reveal>
 
