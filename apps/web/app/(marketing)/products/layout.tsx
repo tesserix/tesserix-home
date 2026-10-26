@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Products",
   description:
-    "The Tesserix product portfolio: Mark8ly, Fe3dr, Dwellm8, MediCare and Kora — one product per industry, each focused on doing a specific job well.",
+    "The Tesserix product portfolio: Mark8ly, Fe3dr, Helivanta, Roamie, Dwellm8 and Kora — one product per industry, each focused on doing a specific job well.",
   alternates: {
     canonical: "/products",
   },

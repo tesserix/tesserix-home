@@ -14,10 +14,10 @@ import {
   Utensils,
   Truck,
   Hospital,
-  Stethoscope,
-  Calendar,
   FileText,
   Pill,
+  FlaskConical,
+  History,
   UserCheck,
   Salad,
   Camera,
@@ -25,6 +25,11 @@ import {
   ScanLine,
   Pencil,
   ShieldCheck,
+  Plane,
+  Languages,
+  CalendarDays,
+  MapPin,
+  Wallet,
 } from "lucide-react";
 
 interface ProductMediaImage {
@@ -36,12 +41,18 @@ interface ProductMediaImage {
 }
 
 /**
- * The five industries the current portfolio covers, one per product. This is
+ * The industries the current portfolio covers, one per product. This is
  * the single source of truth for the "one industry at a time" marketing
  * copy repeated on the hero, footer and /about — those sites derive their
  * industry list from `industryNames` below instead of holding their own copy.
  */
-export type Industry = "commerce" | "food" | "rentals" | "healthcare" | "nutrition";
+export type Industry =
+  | "commerce"
+  | "food"
+  | "rentals"
+  | "healthcare"
+  | "nutrition"
+  | "travel";
 
 export const products: Record<
   string,
@@ -311,6 +322,184 @@ export const products: Record<
       ],
     },
   },
+  helivanta: {
+    title: "Helivanta",
+    tagline: "One connected hospital, from boardroom to bedside",
+    description:
+      "A hospital management system where departments, administration and management work from the same records.",
+    website: "https://helivanta.app",
+    // Copy tracks helivanta.app's own availability labels; nothing marked "Planned" there is claimed as shipped here.
+    longDescription:
+      "Helivanta is a hospital management system where departments, administration and management work from the same records. Reception, doctors, the laboratory and the pharmacy each add to one patient record, and every batch of stock lands on a trail that only grows — a correction is added, never overwritten. Patient registration, outpatient visits, lab orders, pharmacy dispensing and hospital setup are available today; billing, inpatient care, procurement and the rest of the hospital follow on a published roadmap.",
+    icon: Hospital,
+    status: "available",
+    industry: "healthcare",
+    ctaLabel: "Explore Helivanta",
+    ctaSubtext: "See which modules are available today and what's on the roadmap.",
+    highlights: [
+      "Patient registration & outpatient visits",
+      "Lab orders & worklists",
+      "Pharmacy with batch & expiry control",
+      "Hospital setup & staff directories",
+      "Several hospitals per organisation",
+      "Corrections added, never overwritten",
+    ],
+    features: [
+      {
+        icon: FileText,
+        title: "One patient, one record",
+        description:
+          "Registration, outpatient visits, lab orders and dispensing all write to the same record, so a returning patient is found, not registered again.",
+      },
+      {
+        icon: Pill,
+        title: "Pharmacy with batch and expiry",
+        description:
+          "A stock register with batch and expiry control, quarantine, dispensing, and supplier payables and settlements — each batch traceable to the patient it went to.",
+      },
+      {
+        icon: FlaskConical,
+        title: "Laboratory orders and worklists",
+        description:
+          "Doctors order tests against the visit and they land on the laboratory's worklist. Specimen tracking and validated result release are on the roadmap.",
+      },
+      {
+        icon: Building2,
+        title: "Hospitals, teams and permissions",
+        description:
+          "Run several hospitals under one organisation, with hospital-scoped staff directories and access that follows each person's role.",
+      },
+      {
+        icon: History,
+        title: "A trail that only grows",
+        description:
+          "Stock and money land on one trail. A correction adds an entry instead of overwriting one, so an auditor sees what changed, who changed it and why.",
+      },
+      {
+        icon: Palette,
+        title: "Your organisation's workspace",
+        description:
+          "Your own logo and login theme across every hospital, pharmacy and laboratory in your organisation.",
+      },
+    ],
+    benefits: [
+      "Departments and administration work from the same records",
+      "Every batch traceable from receipt to patient",
+      "Corrections are added, never overwritten",
+      "Several hospitals under one organisation",
+      "Access scoped to each person's role and hospital",
+      "A published roadmap that marks what's available and what's planned",
+    ],
+    media: {
+      site: {
+        src: "/screens/helivanta-web.jpg",
+        alt: "The Helivanta homepage, headlined “From boardroom to bedside, one connected hospital,” with a walkthrough of how a request moves between hospital teams",
+        width: 1568,
+        height: 682,
+        orientation: "landscape",
+      },
+    },
+  },
+  roamie: {
+    title: "Roamie",
+    tagline: "Feel more at home wherever you travel",
+    description:
+      "A travel companion for iOS and Android — translate conversations, plan your trip and explore places along the way.",
+    // No `website`: Roamie has no marketing site; its store listings are the front door.
+    longDescription:
+      "Roamie brings conversation translation, trip planning and everyday travel tools together in one app. Talk across languages hands-free, or show the translation to the person you're speaking with. Plan a day-by-day itinerary around your dates, interests and budget, find nearby places, translate signs and menus from a photo, and keep track of what the trip is costing.",
+    icon: Plane,
+    status: "available",
+    industry: "travel",
+    operatingSystem: "iOS, Android",
+    ctaSubtext: "Translate conversations, plan your trip and explore places along the way.",
+    highlights: [
+      "Conversation & text translation",
+      "Hands-free mode and Show them",
+      "Day-by-day trip planning",
+      "Photo translation for signs & menus",
+      "Trip spending from receipts",
+      "iOS and Android",
+    ],
+    features: [
+      {
+        icon: Languages,
+        title: "Talk across languages",
+        description:
+          "Translate spoken conversations and written text. Listen to the translation, or use Show them to display it clearly to the person you're talking to.",
+      },
+      {
+        icon: Mic,
+        title: "Hands-free conversations",
+        description:
+          "Hands-free mode keeps a conversation moving without tapping between turns, and you can still choose languages yourself when you need to.",
+      },
+      {
+        icon: CalendarDays,
+        title: "A plan that fits you",
+        description:
+          "Tell the trip advisor where you're going, your dates, interests and budget, then build a day-by-day itinerary from its suggestions.",
+      },
+      {
+        icon: Camera,
+        title: "Translate what you see",
+        description:
+          "Photograph a sign or a menu and read it in your own language.",
+      },
+      {
+        icon: MapPin,
+        title: "Find your way around",
+        description:
+          "Look up nearby places and useful travel information, including the weather.",
+      },
+      {
+        icon: Wallet,
+        title: "Keep track of spending",
+        description:
+          "Record trip expenses and review amounts read from receipt photos or statements before you save them.",
+      },
+    ],
+    benefits: [
+      "Translation, trip planning and travel tools in one app",
+      "Hands-free conversation translation",
+      "Itineraries built around your dates, interests and budget",
+      "Translate signs and menus from a photo",
+      "Review every amount read from a receipt before it's saved",
+      "Sign in with Google, or Apple on iPhone",
+    ],
+    listings: {
+      ios: { url: "", artworkSrc: "/badges/app-store-badge.svg" },
+      android: {
+        url: "https://play.google.com/store/apps/details?id=app.tesserix.roamie",
+        artworkSrc: "/badges/google-play-badge.png",
+      },
+    },
+    media: {
+      screenshots: [
+        {
+          src: "/screens/roamie-app-talk.png",
+          alt: "The Roamie Translate screen in Talk mode, set to English and Hindi, with a large tap-to-talk button and a hands-free option",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+        {
+          src: "/screens/roamie-app-text.png",
+          alt: "Roamie translating “Where is the train station?” into Hindi, with a Show them button to display the translation",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+        {
+          src: "/screens/roamie-app-trip.png",
+          alt: "A Roamie trip overview for “Japan in autumn” in Tokyo, with the trip manager and a before-you-go checklist",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+      ],
+    },
+  },
   dwellm8: {
     title: "Dwellm8",
     tagline: "Rent, managed like a record",
@@ -381,71 +570,6 @@ export const products: Record<
       "Mobile apps for every side of the tenancy",
     ],
   },
-  medicare: {
-    title: "MediCare",
-    tagline: "Hospital management without the bloat",
-    description:
-      "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab, without enterprise software's bloat.",
-    longDescription:
-      "MediCare handles hospital operations end to end: patient registration and electronic health records, appointment scheduling, billing, and pharmacy inventory. It's built for clinics and hospitals that outgrew spreadsheets but never wanted enterprise software's bloat.",
-    icon: Hospital,
-    status: "coming-soon",
-    industry: "healthcare",
-    eta: "2026",
-    highlights: [
-      "Electronic health records",
-      "Appointment scheduling",
-      "Billing & invoicing",
-      "Pharmacy & inventory",
-      "Staff management",
-      "HIPAA-aligned",
-    ],
-    features: [
-      {
-        icon: FileText,
-        title: "Electronic health records",
-        description:
-          "Secure, centralized patient records with medical history, prescriptions, lab results, and imaging.",
-      },
-      {
-        icon: Calendar,
-        title: "Appointment scheduling",
-        description:
-          "Smart scheduling system with doctor availability, patient reminders, and waitlist management.",
-      },
-      {
-        icon: CreditCard,
-        title: "Billing & invoicing",
-        description:
-          "Automated billing, insurance claim processing, and payment tracking with detailed financial reports.",
-      },
-      {
-        icon: Pill,
-        title: "Pharmacy & inventory",
-        description:
-          "Complete pharmacy management with drug inventory, expiry tracking, and prescription fulfillment.",
-      },
-      {
-        icon: Users,
-        title: "Staff management",
-        description:
-          "Employee scheduling, attendance tracking, payroll integration, and performance management.",
-      },
-      {
-        icon: Stethoscope,
-        title: "Lab & diagnostics",
-        description:
-          "Lab test ordering, result tracking, and integration with diagnostic equipment for seamless workflows.",
-      },
-    ],
-    benefits: [
-      "Improve patient care coordination",
-      "Real-time bed and resource management",
-      "Multi-location support",
-      "HIPAA-aligned data security",
-      "Integration with medical devices",
-    ],
-  },
   kora: {
     title: "Kora",
     tagline: "The easiest nutrition tracking experience, built with AI",
@@ -513,6 +637,12 @@ export const products: Record<
   },
 };
 
+/** Spells a count for marketing copy ("six products"); past ten it falls back to digits. */
+export function countWord(count: number): string {
+  const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  return words[count] ?? String(count);
+}
+
 /**
  * Every product slug. Derived from `products` so the two can never drift —
  * the waitlist API validates signups against this, and the launch-announce job
@@ -554,7 +684,7 @@ export function isComingSoon(slug: string): boolean {
 
 /**
  * The industries covered by the current lineup, in portfolio order
- * (commerce, food, rentals, healthcare, nutrition). Derived from `products`
+ * (commerce, food, healthcare, travel, rentals, nutrition). Derived from `products`
  * so the marketing copy that quotes this list can't drift from the actual
  * products again.
  */
@@ -587,8 +717,8 @@ function oxfordJoin(names: string[]): string {
 
 /**
  * Industry list with one name excluded and an Oxford "and" before the last
- * item, e.g. industryListExcluding("commerce") => "food, rentals, healthcare,
- * and nutrition" — used for mid-sentence copy that already names the
+ * item, e.g. industryListExcluding("commerce") => "food, healthcare, travel,
+ * rentals, and nutrition" — used for mid-sentence copy that already names the
  * excluded industry's product separately (e.g. the about-teaser statement,
  * which names Mark8ly/commerce in the sentence before this list).
  */
@@ -598,7 +728,7 @@ export function industryListExcluding(exclude: Industry): string {
 
 /**
  * Industries of products that haven't launched yet, with an Oxford "and", e.g.
- * "rentals, healthcare, and nutrition". Copy that names the shipped products
+ * "rentals and nutrition". Copy that names the shipped products
  * individually and then points at what's still in build reads this, so the
  * sentence re-balances itself the moment a product's status flips.
  */

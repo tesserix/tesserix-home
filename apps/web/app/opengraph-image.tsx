@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { products } from "./(marketing)/products/[slug]/products-data";
 
 /**
  * OpenGraph image — Next 16 file convention. Generated at build into a
@@ -113,7 +114,7 @@ export default async function OpenGraphImage() {
           >
             <span>tesserix.app</span>
             <span style={{ margin: "0 14px" }}>·</span>
-            <span>Mark8ly · Fe3dr · Dwellm8 · MediCare · Kora</span>
+            <span>{Object.values(products).map((product) => product.title).join(" · ")}</span>
           </div>
         </div>
 

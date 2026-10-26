@@ -32,7 +32,7 @@ export const COMPANY = {
    * dwellm8.com does not resolve (connection fails outright), so it's
    * excluded rather than asserted here on every page.
    */
-  productDomains: ["https://mark8ly.com", "https://fe3dr.com"],
+  productDomains: ["https://mark8ly.com", "https://fe3dr.com", "https://helivanta.app"],
   socialProfiles: [
     "https://x.com/tesserix_app",
     "https://au.linkedin.com/company/tesserix-pty-ltd",

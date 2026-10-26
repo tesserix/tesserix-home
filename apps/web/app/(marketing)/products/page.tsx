@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { isComingSoon, products as productsData } from "./[slug]/products-data";
+import { countWord, isComingSoon, products as productsData } from "./[slug]/products-data";
 
 type Status = "live" | "soon";
 
@@ -36,6 +36,8 @@ const products: ProductEntry[] = Object.entries(productsData).map(
     status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
   }),
 );
+
+const portfolioSize = countWord(products.length);
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {
@@ -143,8 +145,9 @@ export default function ProductsPage() {
               The portfolio.
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
-              Five products, five industries. Each one focused on doing a
-              specific job well — and nothing else.
+              {portfolioSize[0].toUpperCase() + portfolioSize.slice(1)}{" "}
+              products, {portfolioSize} industries. Each one focused on doing
+              a specific job well — and nothing else.
             </p>
           </AnimateOnScroll>
         </div>

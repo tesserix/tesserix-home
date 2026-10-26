@@ -25,6 +25,11 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
       {
+        source: "/products/medicare",
+        destination: "/products/helivanta",
+        permanent: true,
+      },
+      {
         source: "/products/fanzone",
         destination: "/products",
         permanent: true,
