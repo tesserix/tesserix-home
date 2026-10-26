@@ -100,7 +100,7 @@ jobs:
       #
       # THE ALLOWLIST LIVES IN package.json (`pnpm.auditConfig.ignoreGhsas`),
       # not here — pnpm reads it from there and there is no CLI equivalent. It
-      # holds sixteen ids in four chains, all BUILD-TIME ONLY and in no
+      # holds seventeen ids in five chains, all BUILD-TIME ONLY and in no
       # deployed image:
       #
       #   image-size (2 ids) — apps/console -> @tesserix/web -> @tesserix/icons
@@ -126,6 +126,11 @@ jobs:
       #     through the metro chain above, eslint-config-next (dev) and
       #     Expo's tooling. No patched release: the advisory covers
       #     `<= 3.0.3`, the latest.
+      #
+      #   zod 3 (GHSA-mrhx-c7xc-m3w5) — apps/mobile -> expo -> @expo/cli
+      #     -> zod@3. The same Expo tooling again. The fix is 4.6.6 only and
+      #     3.25.76 is the last 3.x; forcing zod 4 into the CLI is a major
+      #     bump. The deployed apps' own zod is held at ^4.6.6 directly.
       #
       # Patchable advisories are fixed with `pnpm.overrides` instead, never
       # allowlisted. tinypool is pinned to 2.x under vitest 3, which asks

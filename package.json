@@ -36,7 +36,7 @@
       "shell-quote": "^1.11.0",
       "source-map-js": "^1.2.2",
       "tinypool": "^2.1.2",
-      "undici": "^8.10.2",
+      "undici": "^8.12.2",
       "uuid": "^11.1.1",
       "follow-redirects@>=1.16.0 <1.16.1": "1.16.1",
       "vite@>=7.0.0 <=7.3.6": "7.3.7"
@@ -58,7 +58,8 @@
         "GHSA-w2rr-34g9-rvrj",
         "GHSA-x4fp-j954-r2f4",
         "GHSA-86w9-cpqp-85rv",
-        "GHSA-vfj7-8cjw-p6xm"
+        "GHSA-vfj7-8cjw-p6xm",
+        "GHSA-mrhx-c7xc-m3w5"
       ]
     }
   }
