@@ -5,6 +5,7 @@ export default function ProvisioningLayout({children}:{children:ReactNode}){
  <Link href="/platform/provisioning/products">Products</Link>
  <Link href="/platform/provisioning/orgs">Tenants</Link>
  <Link href="/platform/provisioning/orgs/hospital">Helivanta onboarding</Link>
+ <Link href="/platform/provisioning/staff-recovery">Staff identity recovery</Link>
  <Link href="/platform/provisioning/audit">Identity audit</Link>
  </nav>{children}</div>;
 }
