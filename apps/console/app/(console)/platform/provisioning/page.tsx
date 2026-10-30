@@ -2,9 +2,10 @@ import Link from 'next/link';
 import {ConsolePageHeader} from '@/components/kit/page-header';
 export default function ProvisioningPage(){
  return <div className="space-y-8"><ConsolePageHeader title="Identity onboarding" description="Register products and provision customer identity boundaries."/>
- <div className="grid gap-6 md:grid-cols-3">{[
+ <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">{[
  ['/platform/provisioning/products','Product onboarding','Review registered projects, clients and machine identities, or register a product.'],
  ['/platform/provisioning/orgs','Tenant onboarding','Create or adopt a customer organization and review its product grants.'],
+ ['/platform/provisioning/staff-recovery','Staff identity recovery','Inspect retained identity commands and independently review uncertain account creation.'],
  ['/platform/provisioning/orgs/hospital','Helivanta onboarding','Provision a hospital or group, adopt an existing tenant, or resume a retained request.'],
  ].map(([href,title,description])=><Link key={href} href={href} className="rounded-lg border border-border p-6"><h2 className="font-semibold">{title}</h2><p className="mt-2 text-sm text-muted-foreground">{description}</p></Link>)}</div>
  <form method="get" action="/platform/provisioning/orgs/hospital" className="space-y-3 rounded-lg border border-border p-6">

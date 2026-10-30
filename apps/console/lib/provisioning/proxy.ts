@@ -1,10 +1,18 @@
 import 'server-only';
-import { getCurrentSession } from '@tesserix/platform-auth';
+import { CapabilityError, getCurrentSession } from '@tesserix/platform-auth';
 import { checkOperatorCapabilityLive } from '@/lib/auth/operator';
 import { resolvePlatformApiToken } from '@/lib/auth/platform-token';
 
 const segment = '[A-Za-z0-9_-]+';
+const uuid = '[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
+const uuidv7 = '[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
+const recoveryRoot = `orgs/${uuid}/staff-identities/${uuidv7}/recovery`;
+const recoveryRoute = new RegExp(`^${recoveryRoot}(?:/.*)?$`);
 const routes: ReadonlyArray<[RegExp, readonly string[]]> = [
+ [new RegExp(`^${recoveryRoot}$`), ['GET']],
+ [new RegExp(`^${recoveryRoot}/requests/${uuidv7}$`), ['GET', 'PUT']],
+ [new RegExp(`^${recoveryRoot}/requests/${uuidv7}/decision$`), ['PUT']],
+ [new RegExp(`^${recoveryRoot}/(observations|reconciliations)$`), ['POST']],
  [/^(me|audit)$/, ['GET']],
  [/^products$/, ['GET', 'POST']],
  [new RegExp(`^products/${segment}$`), ['GET']],
@@ -27,7 +35,10 @@ const failure=(status:number,detail:string)=>Response.json({detail},{status,head
 export async function proxyOnboarding(request: Request, segments: readonly string[]): Promise<Response> {
  const path=segments.join('/');
  if(segments.some(s=>s==='.'||s==='..'||/[/%\\]/.test(s)) || !routes.some(([pattern,methods])=>pattern.test(path)&&methods.includes(request.method))) return failure(404,'Not found');
+ const recovery=recoveryRoute.test(path);
+ if(recovery && request.url.includes('?')) return failure(400,'Recovery requests do not accept query parameters');
  const unsafe=request.method!=='GET';
+ const readObservation=recovery && request.method==='POST' && path.endsWith('/observations');
  if(unsafe){
   const expected=process.env.NODE_ENV==='development'?new URL(request.url).origin:'https://console.tesserix.app';
   if(request.headers.get('origin')!==expected) return failure(403,'Same-origin request required');
@@ -36,9 +47,12 @@ export async function proxyOnboarding(request: Request, segments: readonly strin
  if(!session) return failure(401,'Sign in to the console');
  try{
   await checkOperatorCapabilityLive(session,'platform');
-  if(unsafe) await checkOperatorCapabilityLive(session,'rotate-credentials');
+  if(unsafe&&!readObservation) await checkOperatorCapabilityLive(session,'rotate-credentials');
   if(request.method==='DELETE'||path.endsWith('/deactivate')) await checkOperatorCapabilityLive(session,'hard-delete');
- }catch{return failure(403,'Additional permission required')}
+ }catch(cause){
+  if(recovery&&!(cause instanceof CapabilityError))return failure(503,'Current authorization is unavailable');
+  return failure(403,'Additional permission required');
+ }
  const headers=new Headers({accept:'application/json'});
  let body:string|undefined;
  if(unsafe){
@@ -48,7 +62,8 @@ export async function proxyOnboarding(request: Request, segments: readonly strin
   const reader=request.body?.getReader();
   const chunks:Uint8Array[]=[];let size=0;
   if(reader){for(;;){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>262144){await reader.cancel();return failure(413,'Request too large')}chunks.push(next.value)}}
-  body=Buffer.concat(chunks).toString('utf8');
+  const bytes=Buffer.concat(chunks);
+  try{body=recovery?new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes):bytes.toString('utf8')}catch{return failure(400,'A UTF-8 JSON body is required')}
   if(body){try{JSON.parse(body)}catch{return failure(400,'A JSON body is required')}}
   headers.set('content-type','application/json');
  }

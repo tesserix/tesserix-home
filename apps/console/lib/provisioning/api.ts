@@ -1,7 +1,7 @@
 export class ApiError extends Error {
  constructor(message: string, readonly status: number) { super(message); this.name='ApiError'; }
 }
-type Options={method?:'GET'|'POST'|'PATCH'|'DELETE';body?:unknown;idempotencyKey?:string};
+type Options={method?:'GET'|'POST'|'PUT'|'PATCH'|'DELETE';body?:unknown;idempotencyKey?:string};
 export async function apiFetch<T=unknown>(path:string,options:Options={}):Promise<T>{
  if(!path.startsWith('/v1/'))throw new ApiError('Invalid onboarding route',400);
  const method=options.method??'GET';
