@@ -107,6 +107,19 @@ configuration, process handles and evidence are private under the authorized
 `.helivanta/staff-management-20261027/console-recovery-20261031` directory.
 No callback code, passwords, tokens or source payloads belong in this repository.
 
+## Remote CI gate
+
+Draft console PR #669 contains implementation commit
+`d9117af4a21526ebd9f642cb1eb96ee7723f18de`. GitHub refused to start CI
+41131982143 (build/e2e), secret scan 41131982554 and mobile typecheck
+41131982158. Their check annotations state: “The job was not started because
+recent account payments have failed or your spending limit needs to be increased.”
+No remote tests or scan ran and no job logs exist. Local passes do not satisfy
+this missing remote gate. Account-owner billing/capacity intervention is requested;
+no payment, spending-limit, visibility, runner or production change was made.
+After it is resolved, rerun the exact current PR head and inspect every required
+check before merge. The existing repository visibility remains unchanged.
+
 ## Remaining acceptance
 
 Real console callback/token-verifier/session and operator browser acceptance;
