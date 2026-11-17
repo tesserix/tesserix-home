@@ -33,6 +33,9 @@ try {
   const {connection}=await request("POST","/sdk-connections",{name:"CI SDK reader",environment:"production",projects:[project.id],languages:["go"],encryptPayload:false});
   const {key}=await request("POST","/keys",{description:"CI project scoped manager",type:"admin"});
   if(typeof key?.key!=="string" || !connection?.key)throw new Error("Fixture credential missing");
+  const keys=await request("GET","/keys");
+  const listed=keys.keys.find(row=>row.id===key.id);
+  if(!listed?.id || listed.secret!==true || listed.role!=="admin" || listed.userId || listed.disabled || listed.projectRoles?.length || listed.additionalRoles?.length || listed.limitAccessByEnvironment || listed.environments?.length)throw new Error("Management credential metadata contract mismatch");
   const directory=process.env.GROWTHBOOK_TEST_DIRECTORY;
   if(!directory)throw new Error("Fixture output directory required");
   await mkdir(directory,{recursive:true,mode:0o700});

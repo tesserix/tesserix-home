@@ -6,6 +6,7 @@ RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
 
 # Copy workspace manifests + lockfile first for cached, deterministic installs
 COPY pnpm-workspace.yaml pnpm-lock.yaml .npmrc package.json ./
+COPY patches ./patches
 COPY apps/console/package.json apps/console/package.json
 COPY packages/console-core/package.json packages/console-core/package.json
 COPY packages/crm-country/package.json packages/crm-country/package.json

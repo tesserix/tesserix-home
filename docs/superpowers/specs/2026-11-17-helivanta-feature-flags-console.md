@@ -109,3 +109,19 @@ and service port while retaining the API, MongoDB, PVCs and API health probes.
 Local checks start no applications or databases. Database journal/race tests and
 pinned GrowthBook v2 publication/SDK tests execute in CI before image publication.
 A successful local build does not establish deployed end-to-end acceptance.
+
+
+## Build compatibility fixes found during verification
+
+The affected Go images and authentication CI use Go 1.26.11 (GO-2026-6859 is
+reachable in the earlier 1.26.10 net/http implementation). Console and web use
+Next.js 16.4.6, beyond the <=16.4.4 root-param cache information disclosure range
+reported by GHSA-mfr8-8qww-v76h. Existing audit exceptions are unchanged.
+
+The workspace audit also required follow-redirects 1.16.2, node-forge 1.4.1 for
+Expo CLI and decode-uri-component 0.5.1. Query-string 7.1.3 is retained with a
+one-line pnpm patch selecting the decoder's ESM default export. A behavior check
+resolves the actual Expo Router dependency and verifies Unicode, repeated values,
+round-trip escaping and malformed percent input. Both Node Dockerfiles copy the
+patch before frozen installation. No native/mobile UI change or device acceptance
+is claimed by this dependency compatibility check.

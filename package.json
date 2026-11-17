@@ -38,8 +38,10 @@
       "tinypool": "^2.1.2",
       "undici": "^8.12.2",
       "uuid": "^11.1.1",
-      "follow-redirects@>=1.16.0 <1.16.1": "1.16.1",
-      "vite@>=7.0.0 <=7.3.6": "7.3.7"
+      "vite@>=7.0.0 <=7.3.6": "7.3.7",
+      "follow-redirects@<1.16.2": "1.16.2",
+      "@expo/cli>node-forge": "1.4.1",
+      "query-string>decode-uri-component": "0.5.1"
     },
     "auditConfig": {
       "ignoreGhsas": [
@@ -61,6 +63,9 @@
         "GHSA-vfj7-8cjw-p6xm",
         "GHSA-mrhx-c7xc-m3w5"
       ]
+    },
+    "patchedDependencies": {
+      "query-string@7.1.3": "patches/query-string@7.1.3.patch"
     }
   }
 }

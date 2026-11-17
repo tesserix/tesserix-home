@@ -148,6 +148,9 @@ jobs:
       - name: Audit (high and critical)
         run: pnpm audit --audit-level=high
 
+      - name: Verify Expo Router query decoder compatibility
+        run: node scripts/check-mobile-query-contract.mjs
+
       # apps/web and apps/console import @tesserix/platform-auth and
       # @tesserix/console-core, whose package.json entries point at dist/. A fresh
       # CI clone has no dist/, so Vitest fails with "Failed to resolve entry for
