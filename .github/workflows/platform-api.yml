@@ -266,7 +266,7 @@ jobs:
     permissions:
       contents: read
     env:
-      GROWTHBOOK_TEST_DIRECTORY: ${{ runner.temp }}/helivanta-growthbook
+      GROWTHBOOK_TEST_DIRECTORY: /tmp/helivanta-growthbook-contract
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
