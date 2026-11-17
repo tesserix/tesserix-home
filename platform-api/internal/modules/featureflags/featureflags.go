@@ -159,6 +159,24 @@ func Register(mux *http.ServeMux, cfg Config) {
 		}
 		httpx.WriteData(w, r, commandStatus(result), result, cfg.Log)
 	}))
+	for _, operation := range []string{"resume", "cancel"} {
+		mux.Handle("POST /v1/platform/feature-flags/{product}/commands/{command}/"+operation, guard(true, func(w http.ResponseWriter, r *http.Request) {
+			if !product(w, r) {
+				return
+			}
+			principal, ok := auth.FromContext(r.Context())
+			if !ok {
+				httpx.WriteError(w, r, httpx.Unauthorized("Sign in to continue."), cfg.Log)
+				return
+			}
+			result, err := s.recover(r.Context(), principal.Subject, r.PathValue("command"), operation == "resume")
+			if err != nil {
+				fail(w, r, err)
+				return
+			}
+			httpx.WriteData(w, r, commandStatus(result), result, cfg.Log)
+		}))
+	}
 }
 
 func (p *provider) managementKey() (string, error) {

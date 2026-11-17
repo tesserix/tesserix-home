@@ -37,4 +37,5 @@ export type IconKey =
   // (`activity`, `gauge`, `heart-pulse`) are all metric/health glyphs.
   | "list-checks"
   // A source repository. No existing key says "code".
-  | "git-branch";
+  | "git-branch"
+  | "flag";

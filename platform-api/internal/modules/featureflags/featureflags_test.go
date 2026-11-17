@@ -35,6 +35,10 @@ func TestEveryFeatureFlagRouteRequiresItsOwnCapabilities(t *testing.T) {
 		{"POST", "/v1/platform/feature-flags/helivanta/commands", []string{"platform"}, true, 403},
 		{"POST", "/v1/platform/feature-flags/helivanta/commands", []string{"manage-feature-flags"}, true, 403},
 		{"POST", "/v1/platform/feature-flags/helivanta/commands", []string{"platform", "manage-feature-flags"}, true, 501},
+		{"POST", "/v1/platform/feature-flags/helivanta/commands/018f8f5b-1111-7111-8111-111111111111/resume", []string{"platform"}, true, 403},
+		{"POST", "/v1/platform/feature-flags/helivanta/commands/018f8f5b-1111-7111-8111-111111111111/cancel", []string{"platform"}, true, 403},
+		{"POST", "/v1/platform/feature-flags/helivanta/commands/018f8f5b-1111-7111-8111-111111111111/resume", []string{"platform", "manage-feature-flags"}, true, 501},
+		{"POST", "/v1/platform/feature-flags/helivanta/commands/018f8f5b-1111-7111-8111-111111111111/cancel", []string{"platform", "manage-feature-flags"}, true, 501},
 	} {
 		t.Run(tc.method+tc.path+strings.Join(tc.roles, ","), func(t *testing.T) {
 			mux := http.NewServeMux()

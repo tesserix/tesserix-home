@@ -38,7 +38,8 @@
     "server-only": "^0.0.1",
     "stripe": "^22.5.0",
     "swr": "^2.4.1",
-    "@tesserix/questionnaires": "workspace:*"
+    "@tesserix/questionnaires": "workspace:*",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.5",

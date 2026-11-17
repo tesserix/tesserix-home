@@ -22,6 +22,7 @@ func (s service) read(ctx context.Context) (view, error) {
 	if err != nil {
 		return view{}, err
 	}
+	reconciled := false
 	for i, c := range commands {
 		if c.State != "in_doubt" && (c.State != "dispatching" || time.Since(c.UpdatedAt) < 10*time.Second) {
 			continue
@@ -39,6 +40,13 @@ func (s service) read(ctx context.Context) (view, error) {
 			return view{}, finishErr
 		}
 		commands[i] = settled
+		reconciled = true
+	}
+	if reconciled {
+		v, err = s.provider.load(ctx)
+		if err != nil {
+			return view{}, err
+		}
 	}
 	v.Commands = commands
 	return v, nil

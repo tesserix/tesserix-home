@@ -73,3 +73,36 @@ network access are part of delivery. Production migration/rollout approval must
 name those prepared actions. Local builds and unit tests are allowed; no local
 product apps, databases or Docker. Database and browser integration run in CI;
 live acceptance uses the shared deployed environment after authorized rollout.
+
+
+## Recovery and rollout gates
+
+Two recovery commands require both `platform` and `manage-feature-flags`:
+`POST /v1/platform/feature-flags/helivanta/commands/{id}/resume` and
+`POST /v1/platform/feature-flags/helivanta/commands/{id}/cancel`.
+Resume is restricted to the original requester and uses the durable request,
+idempotency key and expected revision. Only queued commands dispatch; a resume
+of an in-flight, uncertain or terminal command returns its recorded status.
+Cancellation atomically changes queued to failed with
+`CANCELED_BEFORE_DISPATCH`; it never cancels an already dispatched publication.
+The canceling operator is audited separately from the original requester.
+Read reconciliation refreshes the snapshot after confirming provider evidence.
+
+Migration `0058_console_feature_flag_commands.sql` and the production rollout
+require explicit approval under the repository's cloud rules. The infrastructure
+change declares the capability but grants it to nobody automatically. The intended
+operator must be verified and explicitly assigned the role. The management key is
+an organization credential with global `noaccess`, Helivanta project `engineer`
+and production environment scope. It is stored create-only in OpenBao and mounted
+only into platform-api; the SDK credential remains separate. A partial key-create /
+secret-persist failure stops for recovery rather than rotating or duplicating keys.
+
+GrowthBook remains on the pinned image and Kargo lane. Console-managed seeding
+preserves reviewed values; missing flags are seeded, unsupported targeting is
+rejected. `apiOnly` is implemented and defaults false. Activate it only after
+console/API/SDK and Helivanta UI/API acceptance. It removes the frontend process
+and service port while retaining the API, MongoDB, PVCs and API health probes.
+
+Local checks start no applications or databases. Database journal/race tests and
+pinned GrowthBook v2 publication/SDK tests execute in CI before image publication.
+A successful local build does not establish deployed end-to-end acceptance.

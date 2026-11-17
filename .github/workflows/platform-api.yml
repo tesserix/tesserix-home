@@ -15,16 +15,16 @@ on:
   push:
     branches: [main]
     paths:
-      - 'platform-api/**'
-      - 'platform-auth/**'
-      - 'go.work'
-      - 'Dockerfile.platform-api'
-      - '.github/workflows/platform-api.yml'
+      - "platform-api/**"
+      - "platform-auth/**"
+      - "go.work"
+      - "Dockerfile.platform-api"
+      - ".github/workflows/platform-api.yml"
       # capabilities_contract_test.go READS this TypeScript file across the
       # module boundary, so a TS-only change can break a Go test. Without this
       # path, that break lands on main with nothing to catch it -- which is
       # exactly what happened in #408.
-      - 'packages/platform-auth/**'
+      - "packages/platform-auth/**"
       # The Go tests run against a schema and its SEED, both built by applying
       # these migrations -- internal/platform/testdb migrates a scratch
       # database from this directory before every DB-backed test. A
@@ -33,20 +33,20 @@ on:
       # while touching no Go file. #486 deleted one seeded platform_tools row;
       # nothing here ran, and the tools handler and repository suites went red
       # on main unnoticed.
-      - 'apps/web/db/migrations/**'
+      - "apps/web/db/migrations/**"
   pull_request:
     branches: [main]
     paths:
-      - 'platform-api/**'
-      - 'platform-auth/**'
-      - 'go.work'
-      - 'Dockerfile.platform-api'
-      - '.github/workflows/platform-api.yml'
+      - "platform-api/**"
+      - "platform-auth/**"
+      - "go.work"
+      - "Dockerfile.platform-api"
+      - ".github/workflows/platform-api.yml"
       # capabilities_contract_test.go READS this TypeScript file across the
       # module boundary, so a TS-only change can break a Go test. Without this
       # path, that break lands on main with nothing to catch it -- which is
       # exactly what happened in #408.
-      - 'packages/platform-auth/**'
+      - "packages/platform-auth/**"
       # The Go tests run against a schema and its SEED, both built by applying
       # these migrations -- internal/platform/testdb migrates a scratch
       # database from this directory before every DB-backed test. A
@@ -55,7 +55,7 @@ on:
       # while touching no Go file. #486 deleted one seeded platform_tools row;
       # nothing here ran, and the tools handler and repository suites went red
       # on main unnoticed.
-      - 'apps/web/db/migrations/**'
+      - "apps/web/db/migrations/**"
   workflow_dispatch:
 
 concurrency:
@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: "1.26.10"
           cache-dependency-path: platform-auth/go.sum
 
       - name: Verify formatting
@@ -174,7 +174,7 @@ jobs:
 
     env:
       TESSERIX_TEST_DB_HOST: localhost
-      TESSERIX_TEST_DB_PORT: '5432'
+      TESSERIX_TEST_DB_PORT: "5432"
       TESSERIX_TEST_DB_USER: postgres
       TESSERIX_TEST_DB_PASSWORD: testpass
       TESSERIX_TEST_DB_NAME: postgres
@@ -185,7 +185,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.10'
+          go-version: "1.26.10"
           cache-dependency-path: platform-api/go.sum
 
       - name: Verify formatting
@@ -243,6 +243,9 @@ jobs:
       #
       # `-count=1` because a cached PASS from an earlier run reports no skips
       # and would satisfy this check without running anything.
+      - name: Feature flag journal integration and races
+        run: go test -tags=integration -race -count=1 ./internal/modules/featureflags
+
       - name: Confirm nothing skipped for want of a database
         run: |
           output=$(go test -count=1 -v ./... 2>&1) || { echo "$output"; exit 1; }
@@ -258,9 +261,49 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
+  growthbook-contract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GROWTHBOOK_TEST_DIRECTORY: ${{ runner.temp }}/helivanta-growthbook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: platform-api/go.mod
+          cache-dependency-path: platform-api/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Start pinned provider fixtures in CI only
+        run: |
+          docker network create growthbook-contract
+          docker run -d --name growthbook-mongo --network growthbook-contract --network-alias mongodb mongo:7.0.45@sha256:8bb4442761a63a8dda452744082cdac9644b429807eb977b42324a63cef59ca4
+          GB_TEST_JWT=$(openssl rand -hex 32)
+          GB_TEST_ENCRYPTION=$(openssl rand -hex 32)
+          docker run -d --name growthbook-contract --network growthbook-contract -p 3100:3100 \
+            -e MONGODB_URI=mongodb://mongodb:27017/growthbook -e AUTH_TYPE=local \
+            -e JWT_SECRET="$GB_TEST_JWT" -e ENCRYPTION_KEY="$GB_TEST_ENCRYPTION" \
+            -e APP_ORIGIN=http://localhost:3000 -e API_HOST=http://localhost:3100 \
+            -e ALLOW_SELF_ORG_CREATION=true -e IS_MULTI_ORG=false -e IS_CLOUD=false \
+            -e ALLOW_UNAUTHENTICATED_API=false -e DISABLE_TELEMETRY=true \
+            growthbook/growthbook:5.2.1@sha256:0da8afcb9ed92d8e09abca3ea9d9531e29b7e39b0bccba03d9a3d4cc47f1f60d \
+            node scripts/run-apps.js start ecosystem.config.js --only back-end
+      - name: Provision private test-only credentials
+        run: node platform-api/testdata/growthbook-setup.mjs
+      - name: Verify real v2 publication, revision and SDK contracts
+        run: go -C platform-api test -tags=growthbook_integration -race -count=1 ./internal/modules/featureflags
+      - name: Remove provider fixtures
+        if: always()
+        run: |
+          docker rm -f growthbook-contract growthbook-mongo || true
+          docker network rm growthbook-contract || true
+          python3 -c 'import os, shutil; shutil.rmtree(os.environ["GROWTHBOOK_TEST_DIRECTORY"], ignore_errors=True)'
+
   image:
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, growthbook-contract]
     steps:
       - uses: actions/checkout@v4
 
