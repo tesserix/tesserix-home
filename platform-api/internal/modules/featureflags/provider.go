@@ -37,6 +37,7 @@ type environment struct {
 	Definition string `json:"definition"`
 }
 type feature struct {
+	Description  string                 `json:"description"`
 	ID           string                 `json:"id"`
 	Project      string                 `json:"project"`
 	ValueType    string                 `json:"valueType"`
@@ -122,14 +123,32 @@ func (p *provider) load(ctx context.Context) (view, error) {
 	if json.Unmarshal(data, &result) != nil || result.HasMore || len(result.Features) > 100 {
 		return view{}, errProviderUnavailable
 	}
+	known := map[string]bool{}
+	for _, d := range c.Capabilities {
+		known[d.Key] = true
+	}
 	enabled := map[string]bool{}
 	features := map[string]feature{}
+	seen := map[string]bool{}
 	for _, f := range result.Features {
+		if seen[f.ID] {
+			return view{}, errProviderUnavailable
+		}
+		seen[f.ID] = true
 		value, err := p.value(f)
 		if err != nil {
 			return view{}, err
 		}
 		key := strings.TrimPrefix(f.ID, flagPrefix)
+		if !flagKey.MatchString(key) {
+			return view{}, errProviderUnavailable
+		}
+		if !known[key] {
+			if value {
+				return view{}, errProviderUnavailable
+			}
+			continue
+		}
 		if _, ok := enabled[key]; ok {
 			return view{}, errProviderUnavailable
 		}
@@ -240,6 +259,36 @@ func (p *provider) inspect(ctx context.Context, key string) (feature, error) {
 	}
 	if result.Feature.ID != flagPrefix+key {
 		return feature{}, fmt.Errorf("%w: feature mismatch", errProviderUnavailable)
+	}
+	return result.Feature, nil
+}
+
+func (p *provider) create(ctx context.Context, key, id, reason string) (feature, error) {
+	description := "Tesserix command " + id + ": " + reason
+	data, status, err := p.request(ctx, http.MethodPost, providerOrigin+"/api/v2/features", map[string]any{
+		"id": flagPrefix + key, "project": p.project, "valueType": "boolean", "defaultValue": "false",
+		"description": description, "tags": []string{"helivanta", "release"}, "rules": []any{},
+		"environments": map[string]any{"production": map[string]bool{"enabled": true}},
+	})
+	if errors.Is(err, errNotSent) {
+		return feature{}, errNotSent
+	}
+	if err == nil && (status == 400 || status == 401 || status == 403 || status == 404 || status == 409 || status == 422) {
+		return feature{}, errProviderRefused
+	}
+	if err != nil || status < 200 || status >= 300 {
+		return feature{}, errUncertain
+	}
+	var result struct {
+		Feature       feature           `json:"feature"`
+		BypassedGates []json.RawMessage `json:"bypassedGates"`
+	}
+	if json.Unmarshal(data, &result) != nil || len(result.BypassedGates) > 0 {
+		return feature{}, errUncertain
+	}
+	value, err := p.value(result.Feature)
+	if err != nil || value || result.Feature.ID != flagPrefix+key || result.Feature.Description != description {
+		return feature{}, errUncertain
 	}
 	return result.Feature, nil
 }

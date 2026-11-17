@@ -28,7 +28,7 @@ func (s service) read(ctx context.Context) (view, error) {
 			continue
 		}
 		f, inspectErr := s.provider.inspect(ctx, c.Key)
-		if inspectErr != nil || f.Revision.Version <= c.baseVersion || f.Revision.Comment != "Tesserix command "+c.ID+": "+c.Reason {
+		if inspectErr != nil || f.Revision.Version <= c.baseVersion || (f.Revision.Comment != "Tesserix command "+c.ID+": "+c.Reason && !(c.baseVersion == 0 && f.Description == "Tesserix command "+c.ID+": "+c.Reason)) {
 			continue
 		}
 		enabled, valueErr := s.provider.value(f)
@@ -111,13 +111,18 @@ func (s service) run(ctx context.Context, c command, r change) (command, error) 
 		return finish("failed", problem.Code, nil)
 	}
 	for _, f := range current.Flags {
-		if f.Key == r.Key && f.Enabled == r.Enabled {
+		if f.Key == r.Key && f.Provisioned && f.Enabled == r.Enabled {
 			version := current.features[r.Key].Revision.Version
 			return finish("succeeded", "ALREADY_SET", &version)
 		}
 	}
 	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	published, err := s.provider.publish(callCtx, r.Key, r.Enabled, c.ID, r.Reason)
+	var published feature
+	if _, exists := current.features[r.Key]; !exists {
+		published, err = s.provider.create(callCtx, r.Key, c.ID, r.Reason)
+	} else {
+		published, err = s.provider.publish(callCtx, r.Key, r.Enabled, c.ID, r.Reason)
+	}
 	cancel()
 	if errors.Is(err, errNotSent) {
 		return finish("failed", "PROVIDER_UNAVAILABLE", nil)

@@ -35,7 +35,7 @@ func TestInvalidCatalogueNeverProducesEditableFlags(t *testing.T) {
 }
 
 func TestWritePlanRequiresFreshReleasedAndUnblockedFeature(t *testing.T) {
-	current := view{Revision: "revision-one", Flags: []flag{{Key: "team_accounts", Enabled: false, Eligible: true}, {Key: "staff_core", Enabled: false, Eligible: true, BlockedBy: []string{"team_accounts"}}, {Key: "workforce_payroll", Enabled: false, Eligible: false}}}
+	current := view{Revision: "revision-one", Flags: []flag{{Provisioned: true, Key: "team_accounts", Enabled: false, Eligible: true}, {Provisioned: true, Key: "staff_core", Enabled: false, Eligible: true, BlockedBy: []string{"team_accounts"}}, {Provisioned: true, Key: "workforce_payroll", Enabled: false, Eligible: false}}}
 	for _, tc := range []struct {
 		key, revision string
 		enabled       bool

@@ -26,6 +26,7 @@ type catalogue struct {
 	Capabilities  []definition `json:"capabilities"`
 }
 type flag struct {
+	Provisioned        bool     `json:"provisioned"`
 	Key                string   `json:"key"`
 	Title              string   `json:"title"`
 	Description        string   `json:"description"`
@@ -120,12 +121,13 @@ func availability(c catalogue, enabled map[string]bool) map[string]bool {
 }
 
 func evaluate(c catalogue, enabled map[string]bool) ([]flag, error) {
-	if len(enabled) != len(c.Capabilities) {
-		return nil, errors.New("provider catalogue does not match the released product")
-	}
+	known := map[string]bool{}
 	for _, d := range c.Capabilities {
-		if _, ok := enabled[d.Key]; !ok {
-			return nil, errors.New("provider feature is missing")
+		known[d.Key] = true
+	}
+	for key := range enabled {
+		if !known[key] {
+			return nil, errors.New("provider catalogue does not match released product")
 		}
 	}
 	current := availability(c, enabled)
@@ -154,7 +156,8 @@ func evaluate(c catalogue, enabled map[string]bool) ([]flag, error) {
 				blocked = append(blocked, dep)
 			}
 		}
-		out = append(out, flag{Key: d.Key, Title: title, Description: description, Group: group, Enabled: enabled[d.Key], Eligible: d.Eligible, Available: current[d.Key], Dependencies: dependencies, BlockedBy: blocked, ImpactWhenEnabled: impact(d.Key, true), ImpactWhenDisabled: impact(d.Key, false)})
+		_, provisioned := enabled[d.Key]
+		out = append(out, flag{Provisioned: provisioned, Key: d.Key, Title: title, Description: description, Group: group, Enabled: enabled[d.Key], Eligible: d.Eligible, Available: current[d.Key], Dependencies: dependencies, BlockedBy: blocked, ImpactWhenEnabled: impact(d.Key, true), ImpactWhenDisabled: impact(d.Key, false)})
 	}
 	return out, nil
 }

@@ -280,38 +280,56 @@ export function FeatureFlagWorkspace({
                       </p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={flag.enabled}
-                    aria-label={`${flag.enabled ? "Disable" : "Enable"} ${flag.title}`}
-                    disabled={disabled}
-                    onClick={(event) =>
-                      setSelection({
-                        flag,
-                        enabled: !flag.enabled,
-                        revision: snapshot.revision,
-                        impact: (flag.enabled
-                          ? flag.impact_when_disabled
-                          : flag.impact_when_enabled
-                        ).map((key) => names.get(key) ?? key),
-                        focus: event.currentTarget,
-                      })
-                    }
-                    className={
-                      flag.enabled
-                        ? "mt-1 inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-primary p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
-                        : "mt-1 inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-muted-foreground/30 p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
-                    }
-                  >
-                    <span
+                  {!flag.provisioned ? (
+                    <Button
+                      disabled={!canManage || paused}
+                      onClick={(event) =>
+                        setSelection({
+                          flag,
+                          enabled: false,
+                          revision: snapshot.revision,
+                          impact: [],
+                          focus: event.currentTarget,
+                        })
+                      }
+                      aria-label={`Create ${flag.title}`}
+                    >
+                      Create disabled flag
+                    </Button>
+                  ) : (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={flag.enabled}
+                      aria-label={`${flag.enabled ? "Disable" : "Enable"} ${flag.title}`}
+                      disabled={disabled}
+                      onClick={(event) =>
+                        setSelection({
+                          flag,
+                          enabled: !flag.enabled,
+                          revision: snapshot.revision,
+                          impact: (flag.enabled
+                            ? flag.impact_when_disabled
+                            : flag.impact_when_enabled
+                          ).map((key) => names.get(key) ?? key),
+                          focus: event.currentTarget,
+                        })
+                      }
                       className={
                         flag.enabled
-                          ? "size-5 translate-x-5 rounded-full bg-background shadow transition-transform"
-                          : "size-5 rounded-full bg-background shadow transition-transform"
+                          ? "mt-1 inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-primary p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                          : "mt-1 inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-muted-foreground/30 p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
                       }
-                    />
-                  </button>
+                    >
+                      <span
+                        className={
+                          flag.enabled
+                            ? "size-5 translate-x-5 rounded-full bg-background shadow transition-transform"
+                            : "size-5 rounded-full bg-background shadow transition-transform"
+                        }
+                      />
+                    </button>
+                  )}
                 </article>
               );
             })}
@@ -490,11 +508,17 @@ function ChangeDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {selection.enabled ? "Enable" : "Disable"} {selection.flag.title}?
+            {!selection.flag.provisioned
+              ? "Create disabled flag:"
+              : selection.enabled
+                ? "Enable"
+                : "Disable"}{" "}
+            {selection.flag.title}?
           </DialogTitle>
           <DialogDescription>
-            This changes release availability for every Helivanta tenant in
-            production. Existing permissions remain required.
+            {!selection.flag.provisioned
+              ? "Creates the reviewed definition disabled. Enabling requires a separate release decision."
+              : "This changes release availability for every Helivanta tenant in production. Existing permissions remain required."}
           </DialogDescription>
         </DialogHeader>
         <form action={action} className="space-y-5">
@@ -571,9 +595,11 @@ function ChangeDialog({
                 ? "Confirming…"
                 : frozen
                   ? "Retry same request"
-                  : selection.enabled
-                    ? "Confirm enable"
-                    : "Confirm disable"}
+                  : !selection.flag.provisioned
+                    ? "Confirm create"
+                    : selection.enabled
+                      ? "Confirm enable"
+                      : "Confirm disable"}
             </Button>
           </DialogFooter>
         </form>

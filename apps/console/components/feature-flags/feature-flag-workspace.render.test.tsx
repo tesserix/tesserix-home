@@ -116,3 +116,41 @@ describe("Helivanta release controls", () => {
     expect(change.mock.calls[1]?.[0]).toEqual(change.mock.calls[0]?.[0]);
   });
 });
+
+it("creates a missing catalogue definition disabled with a reason", async () => {
+  const change = vi
+    .fn()
+    .mockResolvedValue({ ok: true, message: "Created disabled" });
+  const snapshot = structuredClone(base);
+  snapshot.flags[0] = {
+    ...snapshot.flags[0]!,
+    provisioned: false,
+    enabled: false,
+    available: false,
+  };
+  render(
+    <FeatureFlagWorkspace
+      snapshot={snapshot}
+      commands={[]}
+      canManage
+      operatorSubject="operator-one"
+      onChangeAction={change}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Create Staff accounts and permissions",
+    }),
+  );
+  expect(screen.getByRole("dialog")).toHaveTextContent("Create disabled flag");
+  fireEvent.change(screen.getByLabelText("Reason for this change"), {
+    target: { value: "Provision reviewed deployment definition" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm create" }));
+  await waitFor(() => expect(change).toHaveBeenCalledOnce());
+  expect(change.mock.calls[0]?.[0]).toMatchObject({
+    key: "team_accounts",
+    enabled: false,
+    expected_revision: base.revision,
+  });
+});

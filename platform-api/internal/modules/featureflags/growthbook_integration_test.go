@@ -89,4 +89,15 @@ func TestPinnedGrowthBookV2PublicationAndSDK(t *testing.T) {
 			t.Fatal("publication did not reach SDK within the bounded wait")
 		}
 	}
+	created, err := p.create(ctx, "future_capability", "018f8f5b-2222-7222-8222-222222222222", "CI create disabled definition")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, err := p.value(created); err != nil || value {
+		t.Fatalf("new definition is not disabled: %v", err)
+	}
+	if _, err := p.load(ctx); err != nil {
+		t.Fatalf("disabled future flag broke released catalogue: %v", err)
+	}
+
 }
