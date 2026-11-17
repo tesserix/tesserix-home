@@ -62,6 +62,8 @@ const (
 	// from rotating a key. See capabilities.ts, which is the authority this
 	// mirrors.
 	CapRepoAdmin Capability = "repo-admin"
+	// CapManageFeatureFlags changes approved product release availability.
+	CapManageFeatureFlags Capability = "manage-feature-flags"
 
 	// CapReadPlanCatalog reads the PUBLISHED plan catalog. Held by a Zitadel
 	// service user (a machine), never an operator — a machine enters no
@@ -130,7 +132,7 @@ var Capabilities = []Capability{
 	CapRead,
 	CapCRM, CapSupport, CapBilling, CapPlatform,
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
-	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog, CapRepoAdmin,
+	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog, CapRepoAdmin, CapManageFeatureFlags,
 	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport,
 	CapReadAnnouncements, CapReadEntitlements,
 }
@@ -141,7 +143,7 @@ var Surfaces = []Capability{CapCRM, CapSupport, CapBilling, CapPlatform}
 // Verbs say what a principal may do.
 var Verbs = []Capability{
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
-	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog, CapRepoAdmin,
+	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog, CapRepoAdmin, CapManageFeatureFlags,
 }
 
 // Machines are capabilities held by a service identity, never an operator.

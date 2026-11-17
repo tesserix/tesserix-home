@@ -15,6 +15,7 @@ import (
 // Config is the whole of the service's configuration. Loaded once at startup
 // and passed down; nothing reads os.Getenv below this package.
 type Config struct {
+	FeatureFlags    FeatureFlags
 	Port            string
 	Env             string
 	Database        Database
@@ -42,6 +43,11 @@ type Config struct {
 // It must flip when the first module lands (#269). The router refuses to
 // register a module route while this is off, so that is enforced rather than
 // remembered.
+type FeatureFlags struct {
+	ProjectID         string
+	ManagementKeyFile string
+}
+
 type Auth struct {
 	Enabled   bool
 	Issuer    string
@@ -232,6 +238,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ProductScope = scope
+	cfg.FeatureFlags = FeatureFlags{ProjectID: os.Getenv("HELIVANTA_GROWTHBOOK_PROJECT_ID"), ManagementKeyFile: os.Getenv("HELIVANTA_GROWTHBOOK_MANAGEMENT_KEY_FILE")}
 
 	return cfg, nil
 }
