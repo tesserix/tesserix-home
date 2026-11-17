@@ -91,9 +91,12 @@ Read reconciliation refreshes the snapshot after confirming provider evidence.
 Migration `0058_console_feature_flag_commands.sql` and the production rollout
 require explicit approval under the repository's cloud rules. The infrastructure
 change declares the capability but grants it to nobody automatically. The intended
-operator must be verified and explicitly assigned the role. The management key is
-an organization credential with global `noaccess`, Helivanta project `engineer`
-and production environment scope. It is stored create-only in OpenBao and mounted
+operator must be verified and explicitly assigned the role. GrowthBook 5.2.1 gates project/environment key restrictions behind its paid
+advanced-permissions feature (ApiKeyModel.assertPlanAllowsScope). The management
+key is therefore an admin credential confined to the dedicated, single-project
+Helivanta provider organization. The console restricts its operations to the fixed
+project, production environment and canonical release catalogue. It is not a
+provider-enforced project/environment restricted key. It is stored create-only in OpenBao and mounted
 only into platform-api; the SDK credential remains separate. A partial key-create /
 secret-persist failure stops for recovery rather than rotating or duplicating keys.
 
