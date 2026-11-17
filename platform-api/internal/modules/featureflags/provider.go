@@ -172,7 +172,7 @@ func (p *provider) load(ctx context.Context) (view, error) {
 }
 func (p *provider) value(f feature) (bool, error) {
 	env, ok := f.Environments["production"]
-	if !strings.HasPrefix(f.ID, flagPrefix) || f.Project != p.project || f.ValueType != "boolean" || f.DefaultValue != "false" || f.Archived || !ok || !env.Enabled || f.DateUpdated == "" {
+	if !strings.HasPrefix(f.ID, flagPrefix) || f.Project != p.project || f.ValueType != "boolean" || f.DefaultValue != "false" || f.Archived || f.Revision.Version < 1 || !ok || !env.Enabled || f.DateUpdated == "" {
 		return false, errProviderUnavailable
 	}
 	if _, err := time.Parse(time.RFC3339Nano, f.DateUpdated); err != nil {

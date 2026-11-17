@@ -28,14 +28,18 @@ func (s service) read(ctx context.Context) (view, error) {
 			continue
 		}
 		f, inspectErr := s.provider.inspect(ctx, c.Key)
-		if inspectErr != nil || f.Revision.Version <= c.baseVersion || (f.Revision.Comment != "Tesserix command "+c.ID+": "+c.Reason && !(c.baseVersion == 0 && f.Description == "Tesserix command "+c.ID+": "+c.Reason)) {
+		if inspectErr != nil {
 			continue
 		}
 		enabled, valueErr := s.provider.value(f)
-		if valueErr != nil || enabled != c.Enabled {
+		if valueErr != nil {
 			continue
 		}
-		settled, finishErr := s.journal.finish(ctx, c, "succeeded", "CONFIRMED", &f.Revision.Version)
+		state, code := reconciledOutcome(c, f, enabled)
+		if state == "" {
+			continue
+		}
+		settled, finishErr := s.journal.finish(ctx, c, state, code, &f.Revision.Version)
 		if finishErr != nil {
 			return view{}, finishErr
 		}
@@ -137,4 +141,25 @@ func (s service) run(ctx context.Context, c command, r change) (command, error) 
 		return finish("in_doubt", "OUTCOME_UNKNOWN", nil)
 	}
 	return finish("succeeded", "CONFIRMED", &published.Revision.Version)
+}
+
+func reconciledOutcome(c command, f feature, enabled bool) (string, string) {
+	if f.Revision.Version <= c.baseVersion {
+		return "", ""
+	}
+	own := "Tesserix command " + c.ID + ": " + c.Reason
+	if c.baseVersion == 0 {
+		// A create cannot overwrite the unique provider ID, even if its late delivery races the operator.
+		if enabled {
+			return "failed", "PROVISIONED_AND_CHANGED"
+		}
+		if f.Description == own {
+			return "succeeded", "CONFIRMED"
+		}
+		return "succeeded", "ALREADY_PROVISIONED"
+	}
+	if enabled == c.Enabled && f.Revision.Comment == own {
+		return "succeeded", "CONFIRMED"
+	}
+	return "", ""
 }

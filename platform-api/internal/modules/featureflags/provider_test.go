@@ -43,6 +43,7 @@ func TestProviderUsesPrivateCredentialOnlyAtItsFixedOrigin(t *testing.T) {
 func TestProviderDriftAndIncompleteResponsesFailClosed(t *testing.T) {
 	for _, body := range []string{
 		`{"features":[` + providerFeature + `],"hasMore":true}`,
+		`{"features":[` + strings.ReplaceAll(providerFeature, `"version":1`, `"version":0`) + `],"hasMore":false}`,
 		`{"features":[` + strings.ReplaceAll(providerFeature, "prj-helivanta", "foreign-project") + `],"hasMore":false}`,
 		`{"features":[` + strings.ReplaceAll(providerFeature, `\"force\":true`, `\"force\":true,\"condition\":{\"tenant_id\":\"other\"}`) + `],"hasMore":false}`,
 	} {
