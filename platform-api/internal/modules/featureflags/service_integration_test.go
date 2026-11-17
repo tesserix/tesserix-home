@@ -38,11 +38,16 @@ func serviceFixture(t *testing.T) (service, *providerFixture) {
 		if r.Method == "POST" {
 			f.writes++
 			var payload struct {
-				Rules   []json.RawMessage `json:"rules"`
-				Comment string            `json:"comment"`
+				ID          string            `json:"id"`
+				Description string            `json:"description"`
+				Rules       []json.RawMessage `json:"rules"`
+				Comment     string            `json:"comment"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
+			}
+			if payload.ID != "" {
+				f.current = feature{ID: payload.ID, Project: "prj-helivanta", ValueType: "boolean", DefaultValue: "false", DateUpdated: "2026-11-17T00:00:00Z", Description: payload.Description, Environments: map[string]environment{}}
 			}
 			definition := `{"defaultValue":false}`
 			if len(payload.Rules) != 0 {
@@ -56,7 +61,11 @@ func serviceFixture(t *testing.T) (service, *providerFixture) {
 			}
 			body = map[string]any{"feature": f.current}
 		} else if strings.HasSuffix(r.URL.Path, "/features") {
-			body = map[string]any{"features": []feature{f.current}, "hasMore": false}
+			rows := []feature{}
+			if f.current.ID != "" {
+				rows = append(rows, f.current)
+			}
+			body = map[string]any{"features": rows, "hasMore": false}
 		} else {
 			body = map[string]any{"feature": f.current}
 		}
@@ -144,5 +153,32 @@ func TestQueuedRecoveryUsesOriginalActorAndReleaseRevision(t *testing.T) {
 	result, err := s.recover(ctx, "requester", c.ID, true)
 	if err != nil || result.State != "failed" || result.Code != "STALE_FLAGS" || f.writes != 0 {
 		t.Fatalf("stale queued request published: %#v %v", result, err)
+	}
+}
+
+func TestCreateDisabledDefinitionUsesJournalAndReconcilesLostResponse(t *testing.T) {
+	s, f := serviceFixture(t)
+	f.current = feature{}
+	v, err := s.read(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Flags[0].Provisioned {
+		t.Fatal("missing definition hidden")
+	}
+	f.loseResponse = true
+	r := change{Key: "team_accounts", Enabled: false, ExpectedRevision: v.Revision, Reason: "Provision reviewed definition disabled"}
+	c, err := s.apply(t.Context(), "operator-one", "018f8f5b-3333-7333-8333-333333333333", r)
+	if err != nil || c.State != "in_doubt" || f.writes != 1 {
+		t.Fatalf("create timeout: %+v %v", c, err)
+	}
+	f.loseResponse = false
+	v, err = s.read(t.Context())
+	if err != nil || !v.Flags[0].Provisioned || v.Flags[0].Enabled || v.Commands[0].State != "succeeded" {
+		t.Fatalf("create evidence not reconciled: %+v %v", v, err)
+	}
+	replay, err := s.apply(t.Context(), "operator-one", "018f8f5b-3333-7333-8333-333333333333", r)
+	if err != nil || replay.ID != c.ID || f.writes != 1 {
+		t.Fatalf("replayed create wrote again: %+v %v", replay, err)
 	}
 }
