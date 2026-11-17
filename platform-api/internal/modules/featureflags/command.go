@@ -44,6 +44,9 @@ func validateChange(v view, r change) *problem {
 		if f.Key != r.Key {
 			continue
 		}
+		if !f.Provisioned && r.Enabled {
+			return &problem{409, "FLAG_NOT_PROVISIONED", "Create this flag disabled before enabling it."}
+		}
 		if r.Enabled && !f.Eligible {
 			return &problem{422, "FEATURE_NOT_RELEASED", "This feature is not eligible in the approved release."}
 		}

@@ -2,9 +2,10 @@
   "product": "helivanta",
   "environment": "production",
   "policy_version": "r1",
-  "revision": "225799770ead475d0b63816a2457072116f4e2a6064639c6e084bd6b22e04900",
+  "revision": "67e0dd60c42fbb67eff93afd4303bdcd4b6990cf6487e487e58ee159bde37c2f",
   "flags": [
     {
+      "provisioned": true,
       "key": "team_accounts",
       "title": "Staff accounts and permissions",
       "description": "Invite team members and manage their permission-assignment workflows. This flag grants no roles.",
@@ -15,9 +16,12 @@
       "dependencies": [],
       "blocked_by": [],
       "impact_when_enabled": [],
-      "impact_when_disabled": ["staff_core"]
+      "impact_when_disabled": [
+        "staff_core"
+      ]
     },
     {
+      "provisioned": true,
       "key": "staff_core",
       "title": "Staff records and reviews",
       "description": "Staff directory, reviewed identity/employment links and core credentials.",
@@ -25,7 +29,9 @@
       "enabled": true,
       "eligible": true,
       "available": true,
-      "dependencies": ["team_accounts"],
+      "dependencies": [
+        "team_accounts"
+      ],
       "blocked_by": [],
       "impact_when_enabled": [],
       "impact_when_disabled": []

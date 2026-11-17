@@ -42,7 +42,6 @@ func TestProviderUsesPrivateCredentialOnlyAtItsFixedOrigin(t *testing.T) {
 
 func TestProviderDriftAndIncompleteResponsesFailClosed(t *testing.T) {
 	for _, body := range []string{
-		`{"features":[],"hasMore":false}`,
 		`{"features":[` + providerFeature + `],"hasMore":true}`,
 		`{"features":[` + strings.ReplaceAll(providerFeature, "prj-helivanta", "foreign-project") + `],"hasMore":false}`,
 		`{"features":[` + strings.ReplaceAll(providerFeature, `\"force\":true`, `\"force\":true,\"condition\":{\"tenant_id\":\"other\"}`) + `],"hasMore":false}`,
@@ -94,5 +93,60 @@ func TestMissingCredentialCannotBeReportedAsAnInFlightMutation(t *testing.T) {
 	_, err := p.publish(context.Background(), "team_accounts", false, "command-one", "Reviewed release control")
 	if called || !errors.Is(err, errNotSent) {
 		t.Fatalf("unsent mutation confused with timeout: called=%v err=%v", called, err)
+	}
+}
+
+func TestMissingReleasedFlagIsVisibleAndCanBeProvisionedDisabled(t *testing.T) {
+	p := newProvider("prj-helivanta", "test-key", &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+		body := oneCatalogue
+		if r.URL.Host != "raw.githubusercontent.com" {
+			body = `{"features":[],"hasMore":false}`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})})
+	v, err := p.load(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Flags) != 1 || v.Flags[0].Provisioned || v.Flags[0].Enabled || v.Flags[0].Available {
+		t.Fatalf("missing flag not shown safely: %+v", v.Flags)
+	}
+	if issue := validateChange(v, change{Key: "team_accounts", Enabled: true, ExpectedRevision: v.Revision}); issue == nil || issue.Code != "FLAG_NOT_PROVISIONED" {
+		t.Fatalf("enable must require separate create: %v", issue)
+	}
+	if issue := validateChange(v, change{Key: "team_accounts", Enabled: false, ExpectedRevision: v.Revision}); issue != nil {
+		t.Fatal(issue)
+	}
+}
+
+func TestCreateUsesReviewedKeyAndCannotEnableOrOverwrite(t *testing.T) {
+	for _, status := range []int{200, 409, 503} {
+		p := newProvider("prj-helivanta", "test-key", &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+			if r.Method != "POST" || r.URL.Path != "/api/v2/features" {
+				t.Fatal("create must not use update endpoint")
+			}
+			payload, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(payload), `"owner":"platform-admin@helivanta.com"`) {
+				t.Fatal("service-key creates require the dedicated provider owner")
+			}
+			if !strings.Contains(string(payload), `"defaultValue":"false"`) || !strings.Contains(string(payload), `"rules":[]`) {
+				t.Fatal("create can enable a flag")
+			}
+			body := strings.ReplaceAll(providerFeature, `\"rules\":[{\"force\":true}]`, `\"rules\":[]`)
+			body = strings.Replace(body, `"id":`, `"description":"Tesserix command create-one: Reviewed provisioning", "id":`, 1)
+			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(`{"feature":` + body + `}`)), Header: make(http.Header)}, nil
+		})})
+		f, err := p.create(t.Context(), "team_accounts", "create-one", "Reviewed provisioning")
+		if status == 200 {
+			if err != nil || f.ID != flagPrefix+"team_accounts" {
+				t.Fatalf("valid create not confirmed: %v", err)
+			}
+		} else if status == 409 {
+			if !errors.Is(err, errProviderRefused) {
+				t.Fatal(err)
+			}
+		} else if !errors.Is(err, errUncertain) {
+			t.Fatal(err)
+		}
 	}
 }

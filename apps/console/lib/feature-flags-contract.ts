@@ -18,6 +18,7 @@ export const featureFlagCommandsSchema = z
   .array(featureFlagCommandSchema)
   .max(20);
 const flagSchema = z.object({
+  provisioned: z.boolean().default(true),
   key,
   title: z.string().min(1).max(200),
   description: z.string().min(1).max(2000),
@@ -44,6 +45,12 @@ const snapshotSchema = z
     if (flags.size !== snapshot.flags.length)
       ctx.addIssue({ code: "custom", message: "Duplicate feature flags" });
     for (const flag of snapshot.flags) {
+      if (!flag.provisioned && (flag.enabled || flag.available)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "An unprovisioned flag cannot be enabled or available.",
+        });
+      }
       if (
         flag.available &&
         (!flag.enabled ||

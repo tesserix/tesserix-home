@@ -152,3 +152,35 @@ The dependency override also keeps Next.js at a single 16.4.6 instance across th
 workspace, so the app and authentication library share the same request/cookie
 context. The existing encrypted-session tests reproduce the failure from duplicate
 framework instances and pass with the unified resolution.
+
+
+## Deployment catalogue and manual provisioning (2026-11-17)
+
+Helivanta's published release contract remains the catalogue authority. New keys,
+owners and dependency bindings are reviewed in application code and that contract;
+console configuration cannot invent application routes or permissions. The
+onboarding-service chart projects this contract into a schema-validated ConfigMap.
+The private scheduled catalogue reconciler creates missing keys disabled, preserves
+all existing values and never deletes definitions. See the infrastructure ADR
+`docs/adr/2026-11-17-helivanta-feature-catalogue.md` and generator
+`scripts/sync-helivanta-feature-catalogue.py` in tesserix-k8s.
+
+The console now shows missing known definitions as `provisioned: false`, disabled
+and unavailable. A permitted operator can select **Create disabled flag**, supply a
+reason and confirm. This reuses the existing command endpoint, idempotency key,
+revision fence, queued recovery and audit; no new credential or database migration
+is needed. Enabling an absent key is rejected. Creating and enabling are separate
+commands. Unknown disabled future keys are tolerated only with valid provider
+project/type/environment metadata; unknown enabled keys remain an error.
+
+A create timeout is reconciled using the unique provider key and attributable
+creation description. A concurrent operator create receives provider refusal and
+never becomes an overwrite. Application compatibility must be deployed before new
+catalogue keys are introduced. Local tests establish behavior but do not replace
+the hosted pinned-provider create test or deployed browser acceptance.
+
+GrowthBook 5.2.1 requires explicit owner metadata for service-key creates. New
+flags bind to the dedicated provider bootstrap administrator
+`platform-admin@helivanta.com`; the real console requester remains the attributable
+command/audit actor. The hosted fixture uses its own synthetic organization member.
+This metadata does not grant provider or tenant permissions.
