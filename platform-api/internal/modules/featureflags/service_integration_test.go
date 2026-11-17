@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -17,9 +18,10 @@ import (
 
 type providerFixture struct {
 	sync.Mutex
-	current      feature
-	writes       int
-	loseResponse bool
+	current           feature
+	writes            int
+	loseResponse      bool
+	loseBeforePersist bool
 }
 
 func serviceFixture(t *testing.T) (service, *providerFixture) {
@@ -37,6 +39,9 @@ func serviceFixture(t *testing.T) (service, *providerFixture) {
 		}
 		if r.Method == "POST" {
 			f.writes++
+			if f.loseBeforePersist {
+				return nil, context.DeadlineExceeded
+			}
 			var payload struct {
 				ID          string            `json:"id"`
 				Description string            `json:"description"`
@@ -180,5 +185,42 @@ func TestCreateDisabledDefinitionUsesJournalAndReconcilesLostResponse(t *testing
 	replay, err := s.apply(t.Context(), "operator-one", "018f8f5b-3333-7333-8333-333333333333", r)
 	if err != nil || replay.ID != c.ID || f.writes != 1 {
 		t.Fatalf("replayed create wrote again: %+v %v", replay, err)
+	}
+}
+
+func TestCatalogueOperatorCanCompleteAnUncertainManualCreate(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			s, f := serviceFixture(t)
+			f.current = feature{}
+			f.loseBeforePersist = true
+			v, err := s.read(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.apply(t.Context(), "operator-one", "018f8f5b-4444-7444-8444-444444444444", change{Key: "team_accounts", Enabled: false, ExpectedRevision: v.Revision, Reason: "Provision reviewed definition disabled"})
+			if err != nil || c.State != "in_doubt" {
+				t.Fatalf("uncertain create: %+v %v", c, err)
+			}
+			if err := json.Unmarshal([]byte(providerFeature), &f.current); err != nil {
+				t.Fatal(err)
+			}
+			f.current.Description = "Helivanta deployment catalogue"
+			f.current.Revision.Comment = ""
+			if !enabled {
+				f.current.Environments["production"] = environment{Enabled: true, Definition: `{"defaultValue":false}`}
+			}
+			v, err = s.read(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantState, wantCode := "succeeded", "ALREADY_PROVISIONED"
+			if enabled {
+				wantState, wantCode = "failed", "PROVISIONED_AND_CHANGED"
+			}
+			if v.Commands[0].State != wantState || v.Commands[0].Code != wantCode || v.Flags[0].Enabled != enabled || f.writes != 1 {
+				t.Fatalf("operator state overwritten or unresolved: %+v writes=%d", v, f.writes)
+			}
+		})
 	}
 }

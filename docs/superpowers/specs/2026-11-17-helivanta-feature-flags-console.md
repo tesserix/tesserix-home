@@ -184,3 +184,14 @@ flags bind to the dedicated provider bootstrap administrator
 `platform-admin@helivanta.com`; the real console requester remains the attributable
 command/audit actor. The hosted fixture uses its own synthetic organization member.
 This metadata does not grant provider or tenant permissions.
+
+
+A missing-definition command reserves provider base version zero; all existing
+provider definitions must have a positive revision. If a manual create times out
+and the scheduled catalogue operator later creates that same unique key disabled,
+read reconciliation settles the command as `ALREADY_PROVISIONED` without claiming
+the console performed that write. If another operator has already enabled it,
+`PROVISIONED_AND_CHANGED` closes the failed intent while preserving that state.
+An update still requires the exact attributable provider revision/comment; the
+create-only rule never treats an unrelated update as confirmed or retries an
+uncertain update. Real database integration tests cover both operator outcomes.
