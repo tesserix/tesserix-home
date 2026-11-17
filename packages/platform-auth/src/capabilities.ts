@@ -129,6 +129,7 @@ export const CAPABILITIES = [
    * repository actions are dead for every operator.
    */
   "repo-admin",
+  "manage-feature-flags",
 
   // ---------------------------------------------------------------------
   // MACHINE — held by a service identity, not an operator.
@@ -300,6 +301,7 @@ export const RISK_CAPABILITIES = [
   "hard-delete",
   "publish-catalog",
   "repo-admin",
+  "manage-feature-flags",
 ] as const satisfies readonly Capability[];
 
 /**

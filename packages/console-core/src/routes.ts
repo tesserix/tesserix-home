@@ -179,14 +179,24 @@ export const ROUTES = {
   // route below (`kora.aiMetrics`) is the one that takes `koraNav` from 3 to
   // 4; `estate.ts`'s Kora `entries` count is derived from `koraNav.length`,
   // so it tracks the rail automatically either way.
-  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, capability: "platform", product: "kora" },
+  "kora.overview": {
+    web: "/admin/apps/kora",
+    mobile: "/kora",
+    exact: true,
+    capability: "platform",
+    product: "kora",
+  },
   // NOT pending: the console serves this page — the full surface behind the
   // overview's three AI-resolution tiles (§B of the kora-overview part 2
   // plan). No `web` path: apps/web never served this, `/v1/kora/ai-metrics`
   // postdates it. `koraNav` gains a fourth entry for this route; `estate.ts`'s
   // Kora `entries` count is derived from `koraNav.length`, so it updates with
   // the rail rather than needing a second hand-maintained number.
-  "kora.aiMetrics": { mobile: "/kora/ai-metrics", capability: "platform", product: "kora" },
+  "kora.aiMetrics": {
+    mobile: "/kora/ai-metrics",
+    capability: "platform",
+    product: "kora",
+  },
   // NOT pending: the console serves this page. The FIRST product-rail surface
   // the console owns — every route it served before this was on the platform
   // rail.
@@ -194,7 +204,12 @@ export const ROUTES = {
   // No `console` path: `consolePath` falls back to `mobile`, and the two agree
   // at /kora/foods. `web` stays recorded because apps/web still serves its own
   // version until that app is retired.
-  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", capability: "platform", product: "kora" },
+  "kora.foods": {
+    web: "/admin/apps/kora/foods",
+    mobile: "/kora/foods",
+    capability: "platform",
+    product: "kora",
+  },
   // RETIRED, not pending (#139). Kora's audit trail is one source in the
   // console's estate-wide `platform.auditLog`, and there is no Kora-scoped audit
   // page coming to the console — `pending` would promise one. `/admin/apps/kora/audit`
@@ -204,7 +219,13 @@ export const ROUTES = {
   //
   // `mobile` also stays: retirement is per-renderer, and expo-router still
   // serves that screen standalone.
-  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true, capability: "platform", product: "kora" },
+  "kora.audit": {
+    web: "/admin/apps/kora/audit",
+    mobile: "/kora/audit",
+    retired: true,
+    capability: "platform",
+    product: "kora",
+  },
   // RETIRED, not pending — the same call #139 made for `kora.audit`, for the
   // same reason and with more evidence behind it. §8.5: implementing
   // `/admin/inbox` does not earn a product rail entry, it makes the product a
@@ -219,7 +240,13 @@ export const ROUTES = {
   // `pending` would promise a Kora-scoped feedback page in the console. None is
   // coming; the estate Inbox (#356) is where these land. `web` and `mobile`
   // stay recorded for the same reasons they do on `kora.audit`.
-  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", retired: true, capability: "platform", product: "kora" },
+  "kora.feedback": {
+    web: "/admin/apps/kora/feedback",
+    mobile: "/kora/feedback",
+    retired: true,
+    capability: "platform",
+    product: "kora",
+  },
   // Left at the `read` default deliberately: the list is readable, and whether
   // the surface also carries user deletion (`hard-delete`) is undecided until
   // it is built — staff scoping is blocked on #134.
@@ -230,7 +257,12 @@ export const ROUTES = {
   // Left at the `read` default deliberately, as the previous comment said:
   // the list is readable, and whether this surface ever carries deletion
   // (`hard-delete`) is that same open decision.
-  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", capability: "platform", product: "kora" },
+  "kora.users": {
+    web: "/admin/apps/kora/users",
+    mobile: "/kora/users",
+    capability: "platform",
+    product: "kora",
+  },
 
   // Mark8ly's product rail — one route, the CSM migration fast-path review
   // queue. `migrationFastPath` renders mark8ly's own vocabulary: it is the
@@ -456,13 +488,27 @@ export const ROUTES = {
   // `shell: true` — its CONSOLE path is `/`, the landing page every sign-in
   // arrives at. `capability` stays `platform` for the web and mobile
   // dashboards, which are ordinary surfaces. See `shell` on RouteEntry.
-  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/", capability: "platform", shell: true },
+  "platform.dashboard": {
+    web: "/admin/dashboard",
+    mobile: "/platform",
+    console: "/",
+    capability: "platform",
+    shell: true,
+  },
   // Managing the internal tools directory (#318 follow-up). `platform`
   // because every write on /v1/platform/tools requires it — the two READS
   // moved to `read` so the home page's directory renders for everyone, and
   // this surface is the other half of that split: one place where the write
   // affordances live, so the UI's gate and the API's cannot drift.
   "platform.tools": { console: "/platform/tools", capability: "platform" },
+  "platform.featureFlags": {
+    console: "/platform/feature-flags",
+    capability: "platform",
+  },
+  "platform.helivantaFlags": {
+    console: "/platform/feature-flags/helivanta",
+    capability: "platform",
+  },
   /**
    * The operator's own record: what they hold, and when it was last checked
    * against Zitadel.
@@ -478,12 +524,26 @@ export const ROUTES = {
    * (#440 part 3) belongs here rather than on the login page, since it is a
    * thing you do to your own account while signed in.
    */
-  "platform.profile": { console: "/platform/profile", capability: "read", shell: true },
-  "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true, capability: "platform" },
+  "platform.profile": {
+    console: "/platform/profile",
+    capability: "read",
+    shell: true,
+  },
+  "platform.apps": {
+    web: "/admin/apps",
+    mobile: "/platform/apps",
+    exact: true,
+    pending: true,
+    capability: "platform",
+  },
   // First surface built in the console — hence no `pending`. Served at
   // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
   // is deleted.
-  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets", capability: "support" },
+  "platform.tickets": {
+    web: "/admin/platform-tickets",
+    mobile: "/platform/tickets",
+    capability: "support",
+  },
   // Retired on web and in the console (#133): the eight KPIs and the three
   // breakdowns are a tab on `platform.tickets` now, and `/admin/analytics/support`
   // is a redirect to it. Not `pending` — nothing is coming.
@@ -494,15 +554,29 @@ export const ROUTES = {
   // "/platform/analytics-support", and (tabs)/platform.tsx links exactly that.
   // Recording the wrong path is the drift this package exists to prevent, and
   // it survived because nothing consumes this id's mobile path yet.
-  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/analytics-support", retired: true, capability: "support" },
+  "platform.supportAnalytics": {
+    web: "/admin/analytics/support",
+    mobile: "/platform/analytics-support",
+    retired: true,
+    capability: "support",
+  },
   // A live-chat console is not a reading surface: it is opened to reply, and
   // `respond` is documented as "reply to tickets and chats". `platform.tickets`
   // is deliberately NOT `respond` — the queue is genuinely readable, and
   // replying from it asserts its own capability at the action.
-  "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true, capability: "respond" },
+  "platform.liveChat": {
+    web: "/admin/support/live-chat",
+    mobile: "/platform/live-chat",
+    pending: true,
+    capability: "respond",
+  },
   // `mass-send` names announcements explicitly, and they are irrevocable once
   // sent. Offering the composer to someone who cannot send is a dead end.
-  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", capability: "mass-send" },
+  "platform.announcements": {
+    web: "/admin/platform-announcements",
+    mobile: "/platform/announcements",
+    capability: "mass-send",
+  },
   // Cross-product identity lookup (#134): find one staff member or operator
   // across the estate, from one box, with an audit row per use.
   //
@@ -561,7 +635,12 @@ export const ROUTES = {
   // Revisit if the surface ever grows an action beyond reading, per the
   // `capability` doc above: where a route's real capability is undecided
   // because the surface is pending, take the default and say so.
-  "platform.identityLookup": { web: "/admin/search", mobile: "/platform/identity-lookup", pending: true, capability: "platform" },
+  "platform.identityLookup": {
+    web: "/admin/search",
+    mobile: "/platform/identity-lookup",
+    pending: true,
+    capability: "platform",
+  },
 
   // The estate's audit timeline (#139): every product's audit trail plus the
   // console's own operator log, in one surface, newest first.
@@ -596,7 +675,10 @@ export const ROUTES = {
   // accountability. Reading it is also itself audited (the console's own
   // `console_audit_log` is one of the sources on this very page), which is the
   // control that actually applies here; no capability value can express it.
-  "platform.auditLog": { mobile: "/platform/audit-log", capability: "platform" },
+  "platform.auditLog": {
+    mobile: "/platform/audit-log",
+    capability: "platform",
+  },
 
   // The secrets inventory. `platform` because reading the estate's secret
   // NAMES and their reader state is a governance read, not a mutation — the
@@ -653,7 +735,10 @@ export const ROUTES = {
   // The detail route (`/platform/secrets/reviews/[number]`) gets no id of its
   // own — detail routes are not registered in this console, matching
   // `secrets/[...path]` above.
-  "platform.secretsReviews": { mobile: "/platform/secrets/reviews", capability: "platform" },
+  "platform.secretsReviews": {
+    mobile: "/platform/secrets/reviews",
+    capability: "platform",
+  },
 
   // Creating a secret — the route the write form's create mode never had.
   // `[...path]/page.tsx` turns a 404 into `notFound()`, so a path holding
@@ -676,7 +761,10 @@ export const ROUTES = {
   // console puts page actions.
   //
   // No `web` predecessor, matching the two secrets routes above.
-  "platform.newSecret": { mobile: "/platform/secrets/new", capability: "platform" },
+  "platform.newSecret": {
+    mobile: "/platform/secrets/new",
+    capability: "platform",
+  },
   // The org's GitHub repositories: visibility, archive state and security
   // signals. Console-only, like `platform.tools` — no `mobile`, because
   // expo-router has no screen for it, and no `web`, because apps/web never had
@@ -765,8 +853,14 @@ export const ROUTES = {
   //
   // `platform`, not `billing`: knowing a tenant exists is an Operate concern.
   // Only what they pay is a Revenue one.
-  "platform.questionnaires": { console: "/platform/questionnaires", capability: "platform" },
-  "platform.provisioning": { console: "/platform/provisioning", capability: "platform" },
+  "platform.questionnaires": {
+    console: "/platform/questionnaires",
+    capability: "platform",
+  },
+  "platform.provisioning": {
+    console: "/platform/provisioning",
+    capability: "platform",
+  },
   "platform.tenants": { mobile: "/platform/tenants", capability: "platform" },
 
   // Where signups stall, read from the product that owns the funnel (#404).
@@ -789,7 +883,10 @@ export const ROUTES = {
   // NOT `pending`: the console serves this page. `platform`, not `billing`,
   // matching the gate platform-api puts on the route — a funnel that ends in
   // a paid conversion is still an operational question, not a revenue surface.
-  "platform.onboarding": { console: "/platform/onboarding", capability: "platform" },
+  "platform.onboarding": {
+    console: "/platform/onboarding",
+    capability: "platform",
+  },
 
   // The rows behind the funnel's counts (#448). A SEPARATE route rather than a
   // section of `platform.onboarding`, and the split is by question: the funnel
@@ -827,18 +924,43 @@ export const ROUTES = {
   // same ones who read the audit log.
   "platform.aiUsage": { mobile: "/platform/ai-usage", capability: "platform" },
 
-  "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true, capability: "platform" },
+  "platform.uptime": {
+    web: "/admin/uptime",
+    mobile: "/platform/uptime",
+    pending: true,
+    capability: "platform",
+  },
   // The estate health page. NOT `pending`: the console serves this surface at
   // /platform/health. It is reached from the header health indicator rather
   // than from the rail — the rail's Health group was deleted as dead
   // placeholders (see nav.ts) — and the `web` path stays recorded because
   // apps/web still serves its own.
-  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", console: "/platform/health", capability: "platform" },
-  "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true, capability: "platform" },
-  "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true, capability: "platform" },
+  "platform.serviceHealth": {
+    web: "/admin/health",
+    mobile: "/platform/health",
+    console: "/platform/health",
+    capability: "platform",
+  },
+  "platform.observability": {
+    web: "/admin/observability",
+    mobile: "/platform/observability",
+    pending: true,
+    capability: "platform",
+  },
+  "platform.databases": {
+    web: "/admin/databases",
+    mobile: "/platform/databases",
+    pending: true,
+    capability: "platform",
+  },
   // Left at `read`: none of CAPABILITIES covers DNS mutation, and inventing a
   // mapping onto one that nearly fits would be worse than the default.
-  "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", pending: true, capability: "platform" },
+  "platform.customDomains": {
+    web: "/admin/custom-domains",
+    mobile: "/platform/custom-domains",
+    pending: true,
+    capability: "platform",
+  },
   // Left at `read`: the outbox is a log. Whether it also offers a re-send
   // (which would be `mass-send`) is undecided until the surface is built.
   //
@@ -846,24 +968,54 @@ export const ROUTES = {
   // the platform API's federated `GET /v1/outbox` (task 3 of the v1 outbox
   // federation plan). `pending` meant "the console has not kept this
   // promise" — it now has.
-  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", console: "/platform/outbox", capability: "platform" },
-  "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", pending: true, capability: "platform" },
+  "platform.outbox": {
+    web: "/admin/outbox",
+    mobile: "/platform/outbox",
+    console: "/platform/outbox",
+    capability: "platform",
+  },
+  "platform.notificationLog": {
+    web: "/admin/notifications/log",
+    mobile: "/platform/notifications",
+    pending: true,
+    capability: "platform",
+  },
   // Left at `read`, though `mass-send` names "template test-sends": authoring a
   // template is not sending one, and the test-send action must assert
   // `mass-send` itself rather than the whole page being gated on it.
-  "platform.leadTemplates": { web: "/admin/notifications/lead-templates", mobile: "/platform/lead-templates", pending: true, capability: "crm" },
+  "platform.leadTemplates": {
+    web: "/admin/notifications/lead-templates",
+    mobile: "/platform/lead-templates",
+    pending: true,
+    capability: "crm",
+  },
   // The erasure queue exists to execute irreversible deletions — `hard-delete`
   // names leads, users and tenant archival.
-  "platform.gdprQueue": { web: "/admin/erasure-requests", mobile: "/platform/gdpr", pending: true, capability: "hard-delete" },
+  "platform.gdprQueue": {
+    web: "/admin/erasure-requests",
+    mobile: "/platform/gdpr",
+    pending: true,
+    capability: "hard-delete",
+  },
   // The unambiguous one: `rotate-credentials` names break-glass rotation
   // outright, and this is the highest-blast-radius surface in the estate.
-  "platform.breakGlass": { web: "/admin/break-glass", mobile: "/platform/break-glass", pending: true, capability: "rotate-credentials" },
+  "platform.breakGlass": {
+    web: "/admin/break-glass",
+    mobile: "/platform/break-glass",
+    pending: true,
+    capability: "rotate-credentials",
+  },
   // Left at `read` despite `rotate-credentials` naming "Stripe settings":
   // platform settings is a container whose contents are not yet decided, and
   // gating the whole page on credential rotation would hide benign settings
   // from every operator who cannot rotate keys. Gate the Stripe section, not
   // the route, once the surface exists.
-  "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", pending: true, capability: "platform" },
+  "platform.settings": {
+    web: "/admin/settings",
+    mobile: "/platform/settings",
+    pending: true,
+    capability: "platform",
+  },
 
   // The CRM: a sales queue for inbound leads, replacing apps/web's
   // Mark8ly-scoped leads page with an estate-native surface.
@@ -878,7 +1030,11 @@ export const ROUTES = {
   //
   // NOT `pending`: the queue is this task's reason for existing, and later
   // tasks build the surface this id points at.
-  "platform.crm": { web: "/admin/apps/mark8ly/leads", mobile: "/platform/crm", capability: "crm" },
+  "platform.crm": {
+    web: "/admin/apps/mark8ly/leads",
+    mobile: "/platform/crm",
+    capability: "crm",
+  },
   // No `web`: the import flow was never a distinct page in apps/web — it
   // lived inside the leads page itself, under `platform.crm`. There is no
   // separate predecessor to record.
@@ -1089,7 +1245,8 @@ export function isRouteActive(
   if (target === undefined) return false;
   // Product roots are a strict prefix of their own children, so an exact
   // match is required or Overview stays highlighted on every nested route.
-  if (entry.exact) return currentPath === target || currentPath === `${target}/`;
+  if (entry.exact)
+    return currentPath === target || currentPath === `${target}/`;
   // Match on segment boundaries, not bare string prefix: `startsWith(target)`
   // would also mark "/admin/apps/kora/foodsXYZ" active for "kora.foods",
   // since it merely shares a string prefix with the real nested route

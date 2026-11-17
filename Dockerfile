@@ -6,6 +6,7 @@ RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
 
 # Copy workspace manifests + lockfile first for cached, deterministic installs
 COPY pnpm-workspace.yaml pnpm-lock.yaml .npmrc package.json ./
+COPY patches ./patches
 COPY apps/web/package.json apps/web/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json

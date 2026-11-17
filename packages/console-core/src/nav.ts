@@ -202,7 +202,11 @@ export const platformNav: readonly NavEntry[] = [
     name: "Operate",
     icon: "layout-dashboard",
     items: [
-      { name: "Dashboard", route: "platform.dashboard", icon: "layout-dashboard" },
+      {
+        name: "Dashboard",
+        route: "platform.dashboard",
+        icon: "layout-dashboard",
+      },
       // Directly after Dashboard: the dashboard says how the estate IS, the
       // inbox says what needs doing. Placed here rather than beside Tickets
       // (the other queue) because nav.test.ts pins Identity lookup as
@@ -230,8 +234,16 @@ export const platformNav: readonly NavEntry[] = [
       // it is the estate-wide view of who is on the platform, not one
       // product's. (A new key costs one registry entry — see icons.ts.)
       { name: "Tenants", route: "platform.tenants", icon: "globe" },
-      { name: "Questionnaires", route: "platform.questionnaires", icon: "users" },
-      { name: "Identity onboarding", route: "platform.provisioning", icon: "users" },
+      {
+        name: "Questionnaires",
+        route: "platform.questionnaires",
+        icon: "users",
+      },
+      {
+        name: "Identity onboarding",
+        route: "platform.provisioning",
+        icon: "users",
+      },
       { name: "Tickets", route: "platform.tickets", icon: "life-buoy" },
       // No "Support analytics" entry: it is a tab on Tickets now (#133), so a
       // rail item would be a second door onto the same page. The route id is
@@ -252,9 +264,17 @@ export const platformNav: readonly NavEntry[] = [
       // surface returns people, which is what `users` says. A dedicated key
       // would read better and is affordable — one registry entry, see
       // icons.ts — but `users` is not saying anything false meanwhile.
-      { name: "Identity lookup", route: "platform.identityLookup", icon: "users" },
+      {
+        name: "Identity lookup",
+        route: "platform.identityLookup",
+        icon: "users",
+      },
       { name: "Live chat", route: "platform.liveChat", icon: "message-square" },
-      { name: "Announcements", route: "platform.announcements", icon: "megaphone" },
+      {
+        name: "Announcements",
+        route: "platform.announcements",
+        icon: "megaphone",
+      },
     ],
   },
   // No "Health" group: its five entries (Uptime, Service health,
@@ -296,7 +316,11 @@ export const platformNav: readonly NavEntry[] = [
       // entry into this one.
       { name: "Audit log", route: "platform.auditLog", icon: "scroll-text" },
       { name: "Outbox", route: "platform.outbox", icon: "inbox" },
-      { name: "Notification log", route: "platform.notificationLog", icon: "mail" },
+      {
+        name: "Notification log",
+        route: "platform.notificationLog",
+        icon: "mail",
+      },
       { name: "Lead templates", route: "platform.leadTemplates", icon: "mail" },
       { name: "GDPR queue", route: "platform.gdprQueue", icon: "shield" },
       { name: "Break-glass", route: "platform.breakGlass", icon: "key-round" },
@@ -317,7 +341,11 @@ export const platformNav: readonly NavEntry[] = [
       // Outbox and GDPR queue as exactly this shape of surface — a queue
       // that is usually empty and exists to be drained — so this fits the
       // group rather than being an exception to it.
-      { name: "Secrets reviews", route: "platform.secretsReviews", icon: "key-round" },
+      {
+        name: "Secrets reviews",
+        route: "platform.secretsReviews",
+        icon: "key-round",
+      },
       // Beside the secrets surfaces: a public repository is a published
       // history, and the question this answers — what is exposed, and what is
       // unpatched — is the same governance question from the code side.
@@ -326,6 +354,7 @@ export const platformNav: readonly NavEntry[] = [
       // Managing the internal tools directory (#318 follow-up). Beside
       // Settings: both are configuration surfaces for the platform itself,
       // not a queue or a record of work done.
+      { name: "Feature flags", route: "platform.featureFlags", icon: "flag" },
       { name: "Tools", route: "platform.tools", icon: "settings" },
     ],
   },
@@ -417,8 +446,16 @@ export const platformNav: readonly NavEntry[] = [
       // the whole justification for the duplicate icon: `apps/console` is the
       // only package that depends on console-core, so the cost was always one
       // registry entry. See icons.ts.
-      { name: "Organisations", route: "platform.crmOrganisations", icon: "globe" },
-      { name: "Do-not-contact", route: "platform.crmSuppressions", icon: "shield" },
+      {
+        name: "Organisations",
+        route: "platform.crmOrganisations",
+        icon: "globe",
+      },
+      {
+        name: "Do-not-contact",
+        route: "platform.crmSuppressions",
+        icon: "shield",
+      },
       // `mail` for the same reason `platform.leadTemplates` carries it: this is
       // outreach copy. The two are different route ids for different surfaces
       // (see routes.ts) but they are the same KIND of thing to an operator

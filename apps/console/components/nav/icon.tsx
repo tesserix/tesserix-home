@@ -1,34 +1,59 @@
 import {
-  Activity, BarChart3, Cloud, Database, Gauge, GitBranch, Globe, HeartPulse, Inbox,
-  KeyRound, LayoutDashboard, LifeBuoy, ListChecks, Mail, Megaphone, MessageSquare,
-  ScrollText, Settings, Shield, Users,
+  Flag,
+  Activity,
+  BarChart3,
+  Cloud,
+  Database,
+  Gauge,
+  GitBranch,
+  Globe,
+  HeartPulse,
+  Inbox,
+  KeyRound,
+  LayoutDashboard,
+  LifeBuoy,
+  ListChecks,
+  Mail,
+  Megaphone,
+  MessageSquare,
+  ScrollText,
+  Settings,
+  Shield,
+  Users,
 } from "lucide-react";
 import type { IconKey } from "@tesserix/console-core";
 
 const REGISTRY: Record<IconKey, React.ComponentType<{ className?: string }>> = {
-  "activity": Activity,
-  "database": Database,
-  "inbox": Inbox,
+  activity: Activity,
+  database: Database,
+  inbox: Inbox,
   "layout-dashboard": LayoutDashboard,
   "message-square": MessageSquare,
   "scroll-text": ScrollText,
-  "settings": Settings,
-  "cloud": Cloud,
+  settings: Settings,
+  cloud: Cloud,
   "life-buoy": LifeBuoy,
   "bar-chart": BarChart3,
-  "megaphone": Megaphone,
+  megaphone: Megaphone,
   "heart-pulse": HeartPulse,
-  "gauge": Gauge,
-  "globe": Globe,
-  "mail": Mail,
-  "shield": Shield,
+  gauge: Gauge,
+  globe: Globe,
+  mail: Mail,
+  shield: Shield,
   "key-round": KeyRound,
   "list-checks": ListChecks,
   "git-branch": GitBranch,
-  "users": Users,
+  flag: Flag,
+  users: Users,
 };
 
-export function NavIcon({ name, className }: { name: IconKey; className?: string }) {
+export function NavIcon({
+  name,
+  className,
+}: {
+  name: IconKey;
+  className?: string;
+}) {
   const Cmp = REGISTRY[name];
   return <Cmp className={className} aria-hidden="true" />;
 }

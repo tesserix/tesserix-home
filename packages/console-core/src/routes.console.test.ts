@@ -17,9 +17,10 @@ describe("consolePath", () => {
     // a host that IS the admin would read as a leftover, and would tie the
     // console's URLs to an app being deleted.
     for (const id of ROUTE_IDS) {
-      expect(consolePath(id), `${id} leaks a web path into the console`).not.toMatch(
-        /^\/admin\//,
-      );
+      expect(
+        consolePath(id),
+        `${id} leaks a web path into the console`,
+      ).not.toMatch(/^\/admin\//);
     }
   });
 
@@ -70,7 +71,9 @@ describe("consolePath", () => {
         id === "platform.onboarding" ||
         id === "platform.onboardingSessions" ||
         id === "platform.profile" ||
-        id === "platform.repos"
+        id === "platform.repos" ||
+        id === "platform.featureFlags" ||
+        id === "platform.helivantaFlags"
       )
         continue;
       expect(consolePath(id)).toBe(mobilePath(id));
@@ -83,7 +86,9 @@ describe("consolePath", () => {
     // internal tools directory, which is not the same surface `mobile`
     // ("/platform") points at.
     expect(consolePath("platform.dashboard")).toBe("/");
-    expect(consolePath("platform.dashboard")).not.toBe(mobilePath("platform.dashboard"));
+    expect(consolePath("platform.dashboard")).not.toBe(
+      mobilePath("platform.dashboard"),
+    );
   });
 
   it("keeps web paths distinct from console paths", () => {
@@ -99,6 +104,22 @@ describe("consolePath", () => {
 });
 
 describe("console-native surfaces record no apps/web path", () => {
+  it("keeps release controls console-only", () => {
+    expect(consolePath("platform.featureFlags")).toBe(
+      "/platform/feature-flags",
+    );
+    expect(consolePath("platform.helivantaFlags")).toBe(
+      "/platform/feature-flags/helivanta",
+    );
+    for (const id of [
+      "platform.featureFlags",
+      "platform.helivantaFlags",
+    ] as const) {
+      expect(webPath(id)).toBeUndefined();
+      expect(mobilePath(id)).toBeUndefined();
+    }
+  });
+
   it("gives the estate audit log no web path", () => {
     // #139. apps/web served three product-scoped audit pages and no
     // estate-wide one, so there is no single predecessor to record. Naming one
@@ -193,6 +214,8 @@ describe("console-native surfaces record no apps/web path", () => {
       "mark8ly.tenants",
       "mark8ly.users",
       "platform.tools",
+      "platform.featureFlags",
+      "platform.helivantaFlags",
       "platform.profile",
       "platform.auditLog",
       "platform.secrets",
@@ -235,8 +258,12 @@ describe("the CRM serves its queue, its do-not-contact list, its templates, and 
     // against `GET /lead-templates`, with a test-send behind it;
     // `platform.crmTemplates` is CRM outreach copy with no send path at all.
     // Collapsing them would give one id two meanings across two renderers.
-    expect(consolePath("platform.crmTemplates")).toBe("/platform/crm/templates");
-    expect(consolePath("platform.leadTemplates")).toBe("/platform/lead-templates");
+    expect(consolePath("platform.crmTemplates")).toBe(
+      "/platform/crm/templates",
+    );
+    expect(consolePath("platform.leadTemplates")).toBe(
+      "/platform/lead-templates",
+    );
     // And the marketing registry is still unbuilt in the console — this task
     // did not quietly satisfy it by building something else.
     expect(isPending("platform.leadTemplates")).toBe(true);
@@ -254,9 +281,9 @@ describe("the CRM serves its queue, its do-not-contact list, its templates, and 
 
 describe("isRouteActive understands the console prefix", () => {
   it("matches a console path exactly", () => {
-    expect(isRouteActive("/platform/tickets", "platform.tickets", "console")).toBe(
-      true,
-    );
+    expect(
+      isRouteActive("/platform/tickets", "platform.tickets", "console"),
+    ).toBe(true);
   });
 
   it("matches nested routes under a non-exact entry", () => {
@@ -315,7 +342,12 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
   for (const { path, secrets, reviews } of cases) {
     it(`lights ${secrets ? "Secrets" : "Secrets reviews"} on ${path}`, () => {
       expect(
-        isMostSpecificActiveRoute(path, "platform.secrets", railRoutes, "console"),
+        isMostSpecificActiveRoute(
+          path,
+          "platform.secrets",
+          railRoutes,
+          "console",
+        ),
         `Secrets on ${path}`,
       ).toBe(secrets);
       expect(
@@ -359,7 +391,12 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
     }
     // The parent's own page is untouched.
     expect(
-      isMostSpecificActiveRoute("/platform/crm", "platform.crm", railRoutes, "console"),
+      isMostSpecificActiveRoute(
+        "/platform/crm",
+        "platform.crm",
+        railRoutes,
+        "console",
+      ),
     ).toBe(true);
   });
 
@@ -369,10 +406,20 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
     // merely because a longer sibling out-competes it.
     const koraRoutes = navItems(koraNav).map((item) => item.route);
     expect(
-      isMostSpecificActiveRoute("/kora", "kora.overview", koraRoutes, "console"),
+      isMostSpecificActiveRoute(
+        "/kora",
+        "kora.overview",
+        koraRoutes,
+        "console",
+      ),
     ).toBe(true);
     expect(
-      isMostSpecificActiveRoute("/kora/foods", "kora.overview", koraRoutes, "console"),
+      isMostSpecificActiveRoute(
+        "/kora/foods",
+        "kora.overview",
+        koraRoutes,
+        "console",
+      ),
     ).toBe(false);
   });
 
@@ -409,7 +456,12 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
     // gap `isRouteActive` guards. The narrowing must not resolve `undefined`
     // and then compare lengths against the literal "undefined".
     expect(
-      isMostSpecificActiveRoute("/platform/tools", "platform.tools", railRoutes, "web"),
+      isMostSpecificActiveRoute(
+        "/platform/tools",
+        "platform.tools",
+        railRoutes,
+        "web",
+      ),
     ).toBe(false);
   });
 });
@@ -615,11 +667,15 @@ describe("the onboarding session list", () => {
     // "where do merchants stall" and this answers "which merchant do I call".
     // The nesting is what keeps the rail highlighting the funnel's entry while
     // an operator is here — `platform.onboarding` is deliberately not `exact`.
-    expect(consolePath("platform.onboardingSessions")).toBe("/platform/onboarding/sessions");
-    expect(isPending("platform.onboardingSessions")).toBe(false);
-    expect(consolePath("platform.onboardingSessions").startsWith(consolePath("platform.onboarding"))).toBe(
-      true,
+    expect(consolePath("platform.onboardingSessions")).toBe(
+      "/platform/onboarding/sessions",
     );
+    expect(isPending("platform.onboardingSessions")).toBe(false);
+    expect(
+      consolePath("platform.onboardingSessions").startsWith(
+        consolePath("platform.onboarding"),
+      ),
+    ).toBe(true);
   });
 
   it("appears in no rail — it is the funnel's detail, and the estate's one PII queue", () => {

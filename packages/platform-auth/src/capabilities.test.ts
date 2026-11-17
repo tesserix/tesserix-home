@@ -45,9 +45,9 @@ describe("hasCapability fails closed", () => {
   it("rejects a required capability outside the known set", () => {
     // Guards against a typo'd literal silently passing because the token
     // happens to carry the same typo.
-    expect(hasCapability(["not-a-capability"], "not-a-capability" as never)).toBe(
-      false,
-    );
+    expect(
+      hasCapability(["not-a-capability"], "not-a-capability" as never),
+    ).toBe(false);
   });
 });
 
@@ -122,6 +122,8 @@ describe("the capability set is a contract with Zitadel", () => {
       // note above applies in full: until `repo-admin` exists on the Platform
       // Console project and is granted, nobody can flip or archive a repo.
       "repo-admin",
+      // New release controls stay read-only until their explicit operator grant.
+      "manage-feature-flags",
       "read-plan-catalog",
       // #521. A MACHINE capability, which is why adding it here does not lock
       // an operator out the way the note above warns about: no operator holds
@@ -236,13 +238,17 @@ describe("publish-catalog capability", () => {
 
   it("does not admit a publish on the billing surface alone", () => {
     expect(hasCapability(["billing"], "publish-catalog")).toBe(false);
-    expect(hasCapability(["billing", "publish-catalog"], "publish-catalog")).toBe(true);
+    expect(
+      hasCapability(["billing", "publish-catalog"], "publish-catalog"),
+    ).toBe(true);
   });
 });
 
 describe("read-plan-catalog capability", () => {
   it("maps the plan-catalog read role to its capability", () => {
-    expect(toCapabilities(["read-plan-catalog"])).toContain("read-plan-catalog");
+    expect(toCapabilities(["read-plan-catalog"])).toContain(
+      "read-plan-catalog",
+    );
   });
 
   it("does not grant the billing surface to a plan-catalog reader", () => {
@@ -267,15 +273,21 @@ describe("read-plan-catalog capability", () => {
 
 describe("read-promo-catalog capability", () => {
   it("maps the promo-catalog read role to its capability", () => {
-    expect(toCapabilities(["read-promo-catalog"])).toContain("read-promo-catalog");
+    expect(toCapabilities(["read-promo-catalog"])).toContain(
+      "read-promo-catalog",
+    );
   });
 
   it("is not implied by read-plan-catalog, in either direction", () => {
     // The two published contracts are separate grants. If holding one ever
     // starts admitting the other, a grant already made to a price reader
     // silently widens to every promo code in the estate.
-    expect(hasCapability(["read-plan-catalog"], "read-promo-catalog")).toBe(false);
-    expect(hasCapability(["read-promo-catalog"], "read-plan-catalog")).toBe(false);
+    expect(hasCapability(["read-plan-catalog"], "read-promo-catalog")).toBe(
+      false,
+    );
+    expect(hasCapability(["read-promo-catalog"], "read-plan-catalog")).toBe(
+      false,
+    );
   });
 
   it("does not grant the billing surface to a promo-catalog reader", () => {
@@ -323,9 +335,13 @@ describe("product-support capability", () => {
     // A price reader has no business in a ticket queue, and a support caller
     // has none enumerating the estate's promo codes.
     expect(hasCapability(["read-plan-catalog"], "product-support")).toBe(false);
-    expect(hasCapability(["read-promo-catalog"], "product-support")).toBe(false);
+    expect(hasCapability(["read-promo-catalog"], "product-support")).toBe(
+      false,
+    );
     expect(hasCapability(["product-support"], "read-plan-catalog")).toBe(false);
-    expect(hasCapability(["product-support"], "read-promo-catalog")).toBe(false);
+    expect(hasCapability(["product-support"], "read-promo-catalog")).toBe(
+      false,
+    );
   });
 
   it("does not let the console-entry capability imply it", () => {
@@ -341,14 +357,20 @@ describe("product-support capability", () => {
 
 describe("read-announcements capability", () => {
   it("maps the role to its capability", () => {
-    expect(toCapabilities(["read-announcements"])).toContain("read-announcements");
+    expect(toCapabilities(["read-announcements"])).toContain(
+      "read-announcements",
+    );
   });
 
   it("is not implied by product-support, in either direction", () => {
     // A product showing a maintenance banner has no business in its
     // merchants' ticket queue, and a support caller need not read broadcasts.
-    expect(hasCapability(["product-support"], "read-announcements")).toBe(false);
-    expect(hasCapability(["read-announcements"], "product-support")).toBe(false);
+    expect(hasCapability(["product-support"], "read-announcements")).toBe(
+      false,
+    );
+    expect(hasCapability(["read-announcements"], "product-support")).toBe(
+      false,
+    );
   });
 
   it("does not grant any operator surface", () => {
@@ -366,7 +388,9 @@ describe("read-announcements capability", () => {
 
 describe("read-entitlements capability", () => {
   it("maps the role to its capability", () => {
-    expect(toCapabilities(["read-entitlements"])).toContain("read-entitlements");
+    expect(toCapabilities(["read-entitlements"])).toContain(
+      "read-entitlements",
+    );
   });
 
   it("does not grant the billing surface to an entitlement reader", () => {

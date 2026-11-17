@@ -28,24 +28,25 @@ type (
 )
 
 const (
-	CapRead              = authcore.CapRead
-	CapCRM               = authcore.CapCRM
-	CapSupport           = authcore.CapSupport
-	CapBilling           = authcore.CapBilling
-	CapPlatform          = authcore.CapPlatform
-	CapRespond           = authcore.CapRespond
-	CapRotateCredentials = authcore.CapRotateCredentials
-	CapAdjustBalance     = authcore.CapAdjustBalance
-	CapExecuteRefund     = authcore.CapExecuteRefund
-	CapMassSend          = authcore.CapMassSend
-	CapHardDelete        = authcore.CapHardDelete
-	CapPublishCatalog    = authcore.CapPublishCatalog
-	CapRepoAdmin         = authcore.CapRepoAdmin
-	CapReadPlanCatalog   = authcore.CapReadPlanCatalog
-	CapReadPromoCatalog  = authcore.CapReadPromoCatalog
-	CapProductSupport    = authcore.CapProductSupport
-	CapReadAnnouncements = authcore.CapReadAnnouncements
-	CapReadEntitlements  = authcore.CapReadEntitlements
+	CapRead               = authcore.CapRead
+	CapCRM                = authcore.CapCRM
+	CapSupport            = authcore.CapSupport
+	CapBilling            = authcore.CapBilling
+	CapPlatform           = authcore.CapPlatform
+	CapRespond            = authcore.CapRespond
+	CapRotateCredentials  = authcore.CapRotateCredentials
+	CapAdjustBalance      = authcore.CapAdjustBalance
+	CapExecuteRefund      = authcore.CapExecuteRefund
+	CapMassSend           = authcore.CapMassSend
+	CapHardDelete         = authcore.CapHardDelete
+	CapPublishCatalog     = authcore.CapPublishCatalog
+	CapRepoAdmin          = authcore.CapRepoAdmin
+	CapManageFeatureFlags = authcore.CapManageFeatureFlags
+	CapReadPlanCatalog    = authcore.CapReadPlanCatalog
+	CapReadPromoCatalog   = authcore.CapReadPromoCatalog
+	CapProductSupport     = authcore.CapProductSupport
+	CapReadAnnouncements  = authcore.CapReadAnnouncements
+	CapReadEntitlements   = authcore.CapReadEntitlements
 
 	KindOperator = authcore.KindOperator
 	KindService  = authcore.KindService

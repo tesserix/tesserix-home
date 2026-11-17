@@ -28,6 +28,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/emailtemplates"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/entities"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/featureflags"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/koraaimetrics"
@@ -141,6 +142,9 @@ func run(log *slog.Logger) error {
 	})
 	// Built before registering so the routes and the window sweeper share one
 	// GitHub client. The sweeper is a no-op until an App is configured.
+	httpx.RegisterModule(mux, verifier, "featureflags", func(m *http.ServeMux) {
+		featureflags.Register(m, featureflags.Config{Pool: pool.Pool, Verifier: verifier, Log: log, ProjectID: cfg.FeatureFlags.ProjectID, ManagementKeyFile: cfg.FeatureFlags.ManagementKeyFile})
+	})
 	reposModule := repos.New(repos.Config{
 		GitHub: repos.GitHub{
 			AppID:          cfg.Repos.AppID,

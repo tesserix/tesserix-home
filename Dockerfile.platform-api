@@ -8,7 +8,7 @@
 # resolve. If those base images do exist somewhere and are the estate standard,
 # switching to them is a one-line change and worth making.
 
-FROM golang:1.26.10-alpine AS builder
+FROM golang:1.26.11-alpine AS builder
 
 WORKDIR /src
 
