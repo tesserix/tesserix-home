@@ -26,6 +26,7 @@ var errUncertain = errors.New("provider mutation outcome is uncertain")
 
 type provider struct {
 	project, key, keyFile string
+	creationOwner         string
 	client                *http.Client
 }
 type revision struct {
@@ -63,7 +64,7 @@ func newProvider(project, key string, client *http.Client) *provider {
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &provider{project: project, key: key, client: &copyClient}
+	return &provider{project: project, key: key, client: &copyClient, creationOwner: "platform-admin@helivanta.com"}
 }
 func (p *provider) request(ctx context.Context, method, address string, body any) ([]byte, int, error) {
 	var payload []byte
@@ -266,7 +267,7 @@ func (p *provider) inspect(ctx context.Context, key string) (feature, error) {
 func (p *provider) create(ctx context.Context, key, id, reason string) (feature, error) {
 	description := "Tesserix command " + id + ": " + reason
 	data, status, err := p.request(ctx, http.MethodPost, providerOrigin+"/api/v2/features", map[string]any{
-		"id": flagPrefix + key, "project": p.project, "valueType": "boolean", "defaultValue": "false",
+		"id": flagPrefix + key, "project": p.project, "valueType": "boolean", "defaultValue": "false", "owner": p.creationOwner,
 		"description": description, "tags": []string{"helivanta", "release"}, "rules": []any{},
 		"environments": map[string]any{"production": map[string]bool{"enabled": true}},
 	})

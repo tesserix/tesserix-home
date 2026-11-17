@@ -40,6 +40,7 @@ func TestPinnedGrowthBookV2PublicationAndSDK(t *testing.T) {
 	})}
 	p := newProvider(fixture.Project, "", client)
 	p.keyFile = filepath.Join(directory, "management-key")
+	p.creationOwner = "fixture@example.invalid"
 	ctx := context.Background()
 	v, err := p.load(ctx)
 	if err != nil || len(v.Flags) != 1 || v.Flags[0].Available {

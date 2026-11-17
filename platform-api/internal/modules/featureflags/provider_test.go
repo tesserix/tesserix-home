@@ -126,6 +126,9 @@ func TestCreateUsesReviewedKeyAndCannotEnableOrOverwrite(t *testing.T) {
 				t.Fatal("create must not use update endpoint")
 			}
 			payload, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(payload), `"owner":"platform-admin@helivanta.com"`) {
+				t.Fatal("service-key creates require the dedicated provider owner")
+			}
 			if !strings.Contains(string(payload), `"defaultValue":"false"`) || !strings.Contains(string(payload), `"rules":[]`) {
 				t.Fatal("create can enable a flag")
 			}

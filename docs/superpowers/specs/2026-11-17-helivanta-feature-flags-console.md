@@ -178,3 +178,9 @@ creation description. A concurrent operator create receives provider refusal and
 never becomes an overwrite. Application compatibility must be deployed before new
 catalogue keys are introduced. Local tests establish behavior but do not replace
 the hosted pinned-provider create test or deployed browser acceptance.
+
+GrowthBook 5.2.1 requires explicit owner metadata for service-key creates. New
+flags bind to the dedicated provider bootstrap administrator
+`platform-admin@helivanta.com`; the real console requester remains the attributable
+command/audit actor. The hosted fixture uses its own synthetic organization member.
+This metadata does not grant provider or tenant permissions.
