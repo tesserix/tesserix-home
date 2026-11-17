@@ -125,3 +125,30 @@ resolves the actual Expo Router dependency and verifies Unicode, repeated values
 round-trip escaping and malformed percent input. Both Node Dockerfiles copy the
 patch before frozen installation. No native/mobile UI change or device acceptance
 is claimed by this dependency compatibility check.
+
+
+## Authority and ownership check
+
+The actor is a platform release operator with a verified console identity,
+`platform` plus the explicitly assigned `manage-feature-flags` action capability,
+and a required command reason. Approval belongs to the platform's authorized
+access administrator; the change does not assign a tenant role. Its only scope is
+the Helivanta release catalogue for all tenants. This respects ORG-AU-09's
+separation of platform and tenant authority and ORG-AC-01/02: feature availability
+is a prerequisite, never a Staff, hospital, outlet or clinical assignment.
+GrowthBook owns desired values; Helivanta owns compiled release eligibility and
+business authorization; platform-api owns the command journal and audit. No
+patient/staff/business records are read or written by these management routes.
+Unknown products/objects return 404, missing permission 403 and unavailable
+provider/authorization dependencies fail closed. Unconfigured management is an
+explicit 501, not a fabricated disabled snapshot.
+
+Read-only live verification confirmed the console project
+`386377618200461939` belongs to `TESSERIX` organization `386377229942128837`.
+The current browser console operator is `samyak.rout@gmail.com`; no new role has
+been granted. Preserve existing project-role keys when applying an approved grant.
+
+The dependency override also keeps Next.js at a single 16.4.6 instance across the
+workspace, so the app and authentication library share the same request/cookie
+context. The existing encrypted-session tests reproduce the failure from duplicate
+framework instances and pass with the unified resolution.

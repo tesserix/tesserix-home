@@ -334,3 +334,20 @@ this document exists is that it was, accidentally.
 - Four capability roles added — `crm`, `support`, `billing`, `platform` (#261).
 - Duplicate operator users removed; the instance default organization changed
   to Tesserix as an unblock, then made irrelevant by `ZITADEL_ORG_ID`.
+
+
+## Helivanta release controls
+
+`manage-feature-flags` is a human operator action capability, additional to
+`platform`. It enables the new console release-control commands only and grants no
+hospital, Staff, clinical or pharmacy-record access. Its declaration is delivered
+through zitadel-bootstrap; no human or machine receives it automatically. Verify
+the intended console principal and preserve their existing role keys when applying
+an explicitly approved grant. The console performs a live capability check on
+writes, and platform-api independently validates the token's project capabilities.
+
+Apply `0058_console_feature_flag_commands.sql` with the existing
+`node apps/web/scripts/db-migrate.mjs` runner before merging/releasing the new
+console image. The runner must record version 58 in `schema_migrations`; do not
+pipe bare SQL into psql. The console startup preflight deliberately refuses a
+new image until the full migration ledger it was built with is present.
