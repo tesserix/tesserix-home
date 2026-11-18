@@ -12,14 +12,10 @@ import {
 import type { MotionValue } from "framer-motion";
 import { Reveal } from "@/components/marketing/reveal";
 import { MarketingButton } from "@/components/marketing/marketing-button";
-import {
-  isComingSoon,
-  productSlugs,
-  products,
-  upcomingIndustryList,
-} from "@/app/(marketing)/products/[slug]/products-data";
+import { isComingSoon, upcomingIndustryList } from "@/lib/cms/products";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 
-const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune, then built Fe3dr because good home cooking shouldn't be hard to find. We're building for ${upcomingIndustryList()} next — each product designed to solve one problem well, not to check a feature list.`;
+const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune, then built Fe3dr because good home cooking shouldn't be hard to find. We're building for ${upcomingIndustryList(products)} next — each product designed to solve one problem well, not to check a feature list.`;
 
 /** Short editorial gloss per product; names and launch state come from data. */
 const roadmapNotes: Record<string, string> = {
@@ -34,10 +30,10 @@ const roadmapNotes: Record<string, string> = {
 // Derived from products-data.ts rather than restated here: this list had
 // drifted and showed Dwellm8 as "Live" while the product stack directly above
 // it on the same page showed the same product as "Coming soon".
-const roadmap = productSlugs.map((slug) => ({
+const roadmap = Object.keys(products).map((slug) => ({
   name: products[slug].title,
   note: roadmapNotes[slug] ?? "",
-  status: isComingSoon(slug) ? "In development" : "Live",
+  status: isComingSoon(products, slug) ? "In development" : "Live",
 }));
 
 interface WordProps {

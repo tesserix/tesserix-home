@@ -1,35 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
 import { Reveal } from "@/components/marketing/reveal";
 
-interface OpenSourceRepo {
-  name: string;
-  description: string;
-}
-
-// Static data — these are external repos on github.com/tesserix, not
-// products-data (which covers Tesserix's own products, not tooling).
-const repos: OpenSourceRepo[] = [
-  {
-    name: "sandboxctl",
-    description:
-      "One-command local Kubernetes sandbox — kind, Argo CD, Istio and a GitOps deploy loop.",
-  },
-  {
-    name: "cloudnav",
-    description:
-      "Keyboard-driven multi-cloud TUI for Azure, GCP and AWS — resources, costs and IAM in one terminal.",
-  },
-  {
-    name: "design-system",
-    description:
-      "@tesserix/web — the design system behind every Tesserix product. TypeScript, Tailwind.",
-  },
-  {
-    name: "reposhift",
-    description:
-      "Azure DevOps to GitHub migration — repos, work items and pipelines. SaaS or self-hosted.",
-  },
-];
+import { fallbackOpenSource as repos } from "@/lib/cms/fallback/site";
 
 export function OpenSourceStrip() {
   return (

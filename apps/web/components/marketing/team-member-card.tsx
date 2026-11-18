@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import type { TeamMember } from "@/app/(marketing)/about/team";
+import type { TeamMember } from "@/lib/cms/types";
 
 function initialsFor(name: string): string {
   return name
@@ -57,7 +57,7 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
           </div>
         ) : (
           <Image
-            src={`/team/${member.slug}.jpg`}
+            src={member.photo}
             alt={member.name}
             width={112}
             height={112}

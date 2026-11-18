@@ -16,15 +16,8 @@ import {
   AppStoreBadges,
 } from "@tesserix/web";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
-import { products } from "./products-data";
-
-// Pricing lives on each product's own site — the only place it can stay
-// accurate (Mark8ly's is location-based, so no static figure here would be
-// correct for every visitor). Only products with a public pricing page get
-// a link out; the rest render nothing in that slot.
-const PRICING_LINKS: Record<string, string> = {
-  mark8ly: "https://mark8ly.com/#pricing",
-};
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
+import { ProductIcon } from "@/components/marketing/icon";
 
 export function ProductContent({ slug }: { slug: string }) {
   const product = products[slug];
@@ -34,7 +27,7 @@ export function ProductContent({ slug }: { slug: string }) {
   }
 
   const isComingSoon = product.status === "coming-soon";
-  const pricingLink = PRICING_LINKS[slug];
+  const pricingLink = product.pricingUrl;
 
   return (
     <div>
@@ -85,7 +78,7 @@ export function ProductContent({ slug }: { slug: string }) {
               ) : product.website && product.ctaLabel ? (
                 // The primary CTA links to the product's own site — where the
                 // real signup/ordering flow lives — rather than /contact, and
-                // its label is authored per product in products-data.ts so it
+                // its label is authored per product in lib/cms/fallback/products.ts so it
                 // never promises an offer (e.g. a trial) the product doesn't
                 // actually have.
                 <Button size="lg" asChild>
@@ -109,7 +102,7 @@ export function ProductContent({ slug }: { slug: string }) {
               )}
             </div>
             {/* Only rendered when the product actually has a trial to state
-                (products-data.ts `trialLine`) — e.g. Fe3dr has none, since it's
+                (lib/cms/fallback/products.ts `trialLine`) — e.g. Fe3dr has none, since it's
                 a marketplace you buy meals on, not a subscription. */}
             {!isComingSoon && product.trialLine && (
               <p className="mt-4 text-sm text-muted-foreground">
@@ -148,7 +141,7 @@ export function ProductContent({ slug }: { slug: string }) {
       </section>
 
       {/* Product imagery — only products that have actually shipped get a
-          gallery here. See `media` on products-data.ts. */}
+          gallery here. See `media` on lib/cms/fallback/products.ts. */}
       {product.media && (
         <section className="border-b py-16 sm:py-24">
           <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -227,7 +220,8 @@ export function ProductContent({ slug }: { slug: string }) {
                 delay={index * 0.05}
               >
                 <div className="border-t pt-6">
-                  <feature.icon
+                  <ProductIcon
+                    name={feature.icon}
                     className="h-5 w-5 text-muted-foreground"
                     aria-hidden="true"
                   />
@@ -368,7 +362,7 @@ export function ProductContent({ slug }: { slug: string }) {
                       the waitlist above already owns that. This is the other
                       reason someone reads this page: they want to talk to us.
                       For live products, the subtext is the product's own
-                      honest offer (products-data.ts `ctaSubtext`) rather than
+                      honest offer (lib/cms/fallback/products.ts `ctaSubtext`) rather than
                       a generic trial claim that isn't true for every product. */}
                   <p className="mt-4 max-w-md text-base leading-relaxed text-primary-foreground/70">
                     {isComingSoon

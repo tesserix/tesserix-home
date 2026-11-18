@@ -12,15 +12,12 @@ import Image from "next/image";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AppStoreBadges } from "@tesserix/web";
 import { Reveal } from "@/components/marketing/reveal";
-import {
-  countWord,
-  isComingSoon,
-  products as productsData,
-} from "@/app/(marketing)/products/[slug]/products-data";
+import { countWord, isComingSoon } from "@/lib/cms/products";
+import { fallbackProducts as productsData } from "@/lib/cms/fallback/products";
 
 /**
  * Visual treatment for each live product's screenshot frame. This is a
- * homepage-only presentational choice (not derived from products-data), so
+ * homepage-only presentational choice (not derived from the product data), so
  * it's a simple lookup keyed by slug. A launched product with no entry here
  * (or a "browser" entry with no `imageSrc`) falls back to a clean
  * placeholder frame rather than guessing at an image path that may not
@@ -70,14 +67,14 @@ interface SoonProduct {
 }
 
 // Title, tagline, description and launch state all come from
-// products-data.ts — the single source of truth for product copy — rather
+// lib/cms/fallback/products.ts — the single source of truth for product copy — rather
 // than being restated here. Live products render as ledger rows in
 // products-data order; coming-soon products render as cards, also in order.
 const productEntries = Object.entries(productsData);
 const portfolioSize = countWord(productEntries.length);
 
 const liveProducts: LiveProduct[] = productEntries
-  .filter(([slug]) => !isComingSoon(slug))
+  .filter(([slug]) => !isComingSoon(productsData, slug))
   .map(([slug, product]) => ({
     slug,
     title: product.title,
@@ -88,7 +85,7 @@ const liveProducts: LiveProduct[] = productEntries
   }));
 
 const soonProducts: SoonProduct[] = productEntries
-  .filter(([slug]) => isComingSoon(slug))
+  .filter(([slug]) => isComingSoon(productsData, slug))
   .map(([slug, product]) => ({
     slug,
     title: product.title,

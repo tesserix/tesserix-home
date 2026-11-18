@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { Analytics } from "./analytics";
-import { industryListPlain } from "./(marketing)/products/[slug]/products-data";
-import { team } from "./(marketing)/about/team";
+import { industryListPlain } from "@/lib/cms/products";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
+import { fallbackTeam as team } from "@/lib/cms/fallback/site";
 import { buildOrganizationSchema, buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
 import "./globals.css";
 
-const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain()}.`;
+const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain(fallbackProducts)}.`;
 
 export const metadata: Metadata = {
   title: {

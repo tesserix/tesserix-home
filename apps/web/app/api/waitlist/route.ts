@@ -12,7 +12,9 @@ import { z } from "zod";
 
 import { subscribeToWaitlist } from "@/lib/db/product-waitlist";
 import { logger } from "@/lib/logger";
-import { productSlugs } from "@/app/(marketing)/products/[slug]/products-data";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
+
+const productSlugs = Object.keys(fallbackProducts);
 
 const waitlistInputSchema = z.object({
   // Constrained to real product slugs so the table cannot be seeded with

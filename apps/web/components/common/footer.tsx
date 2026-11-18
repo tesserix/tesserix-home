@@ -3,20 +3,11 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Input, Button, AppStoreBadges } from "@tesserix/web";
-import {
-  products,
-  industryListPlain,
-} from "@/app/(marketing)/products/[slug]/products-data";
+import { industryListPlain } from "@/lib/cms/products";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 
 const footerNavigation = {
-  products: [
-    { name: "Mark8ly", href: "/products/mark8ly" },
-    { name: "Fe3dr", href: "/products/fe3dr" },
-    { name: "Helivanta", href: "/products/helivanta" },
-    { name: "Roamie", href: "/products/roamie" },
-    { name: "Dwellm8", href: "/products/dwellm8" },
-    { name: "Kora", href: "/products/kora" },
-  ],
+  products: Object.values(products).map((p) => ({ name: p.title, href: `/products/${p.slug}` })),
   company: [
     { name: "About", href: "/about" },
     { name: "Contact", href: "/contact" },
@@ -98,7 +89,7 @@ export function Footer() {
             />
             <p className="mt-5 max-w-xs text-sm leading-relaxed text-muted-foreground">
               A product studio building specialized software — one industry at
-              a time. {industryListPlain()}.
+              a time. {industryListPlain(products)}.
             </p>
             {/* Newsletter signup */}
             <div className="mt-8">

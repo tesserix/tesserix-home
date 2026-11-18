@@ -24,10 +24,8 @@ import {
 import { logger } from "@/lib/logger";
 import { siteOrigin } from "@/lib/site-origin";
 import { sendViaSendGrid } from "@/lib/sendgrid/send";
-import {
-  launchedProductSlugs,
-  productTitle,
-} from "@/app/(marketing)/products/[slug]/products-data";
+import { launchedProductSlugs, productTitle } from "@/lib/cms/products";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 
 const FROM =
   process.env.WAITLIST_FROM_EMAIL ?? "hello@tesserix.app";
@@ -112,7 +110,7 @@ export async function announceProduct(
   productSlug: string,
   opts: { dryRun?: boolean } = {},
 ): Promise<AnnounceProductResult> {
-  const title = productTitle(productSlug);
+  const title = productTitle(products, productSlug);
   const pending = await listPendingSubscribers(productSlug);
 
   if (opts.dryRun) {
@@ -198,7 +196,7 @@ export async function announceProduct(
 export async function announcePendingLaunches(
   opts: { dryRun?: boolean } = {},
 ): Promise<AnnounceRunResult> {
-  const live = launchedProductSlugs();
+  const live = launchedProductSlugs(products);
   const already = await listAnnouncedProducts();
   const results: AnnounceProductResult[] = [];
 

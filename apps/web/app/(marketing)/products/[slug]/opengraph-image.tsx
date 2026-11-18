@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { products } from "./products-data";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 
 /**
  * Per-product OG image — Next 16 file convention for a dynamic segment.

@@ -1,12 +1,12 @@
 import type { MetadataRoute } from "next";
 
 import { siteOrigin } from "@/lib/site-origin";
-import { productSlugs } from "./(marketing)/products/[slug]/products-data";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = siteOrigin();
 
-  const productEntries: MetadataRoute.Sitemap = productSlugs.map((slug) => ({
+  const productEntries: MetadataRoute.Sitemap = Object.keys(fallbackProducts).map((slug) => ({
     url: `${baseUrl}/products/${slug}`,
     lastModified: new Date(),
     changeFrequency: "weekly" as const,

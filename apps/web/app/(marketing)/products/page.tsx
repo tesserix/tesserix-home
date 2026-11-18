@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { countWord, isComingSoon, products as productsData } from "./[slug]/products-data";
+import { countWord, isComingSoon } from "@/lib/cms/products";
+import { fallbackProducts as productsData } from "@/lib/cms/fallback/products";
 
 type Status = "live" | "soon";
 
@@ -33,7 +34,7 @@ const products: ProductEntry[] = Object.entries(productsData).map(
     website: product.website?.replace(/^https?:\/\//, ""),
     features: product.highlights,
     href: `/products/${slug}`,
-    status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
+    status: isComingSoon(productsData, slug) ? ("soon" as const) : ("live" as const),
   }),
 );
 

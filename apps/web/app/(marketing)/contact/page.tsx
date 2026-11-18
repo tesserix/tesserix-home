@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
 import { Mail, Loader2, CheckCircle2 } from "lucide-react";
 import {
   Button,
@@ -203,12 +204,11 @@ export default function ContactPage() {
                         position="popper"
                         className="w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)] !bg-popover text-popover-foreground border border-line-strong rounded-[10px] shadow-xl overflow-hidden"
                       >
-                        <SelectItem value="mark8ly">Mark8ly</SelectItem>
-                        <SelectItem value="fe3dr">Fe3dr</SelectItem>
-                        <SelectItem value="helivanta">Helivanta</SelectItem>
-                        <SelectItem value="roamie">Roamie</SelectItem>
-                        <SelectItem value="dwellm8">Dwellm8</SelectItem>
-                        <SelectItem value="kora">Kora</SelectItem>
+                        {Object.values(fallbackProducts).map((p) => (
+                          <SelectItem key={p.slug} value={p.slug}>
+                            {p.title}
+                          </SelectItem>
+                        ))}
                         <SelectItem value="other">
                           Other / General inquiry
                         </SelectItem>

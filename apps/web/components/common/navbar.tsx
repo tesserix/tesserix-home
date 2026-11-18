@@ -3,54 +3,21 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Building2, Hospital, Salad, Plane } from "lucide-react";
+import { Menu, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@tesserix/web";
-import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
+import { isComingSoon } from "@/lib/cms/products";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
+import { ProductIcon } from "@/components/marketing/icon";
 
-// `slug` drives both the link and the launch state — the status itself lives in
-// products-data.ts so this menu can't claim a product is shipped when it isn't.
-const products = [
-  {
-    slug: "mark8ly",
-    name: "Mark8ly",
-    description: "Multi-tenant marketplace platform",
-    icon: ShoppingBag,
-  },
-  {
-    slug: "fe3dr",
-    name: "Fe3dr",
-    description: "Real home-cooked food, delivered",
-    icon: ChefHat,
-  },
-  {
-    slug: "helivanta",
-    name: "Helivanta",
-    description: "Hospital management system",
-    icon: Hospital,
-  },
-  {
-    slug: "roamie",
-    name: "Roamie",
-    description: "Translate, plan and explore abroad",
-    icon: Plane,
-  },
-  {
-    slug: "dwellm8",
-    name: "Dwellm8",
-    description: "Rental management, one record",
-    icon: Building2,
-  },
-  {
-    slug: "kora",
-    name: "Kora",
-    description: "AI-powered nutrition tracking",
-    icon: Salad,
-  },
-].map((p) => ({
-  ...p,
+// Derived from the product lineup, so this menu can't claim a product is shipped when it isn't.
+const products = Object.values(fallbackProducts).map((p) => ({
+  slug: p.slug,
+  name: p.title,
+  description: p.tagline,
+  icon: p.icon,
   href: `/products/${p.slug}`,
-  comingSoon: isComingSoon(p.slug),
+  comingSoon: isComingSoon(fallbackProducts, p.slug),
 }));
 
 const navigation = [
@@ -191,7 +158,7 @@ export function Navbar() {
                       role="menuitem"
                     >
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background">
-                        <product.icon className="h-5 w-5 text-foreground" />
+                        <ProductIcon name={product.icon} className="h-5 w-5 text-foreground" />
                       </div>
                       <div>
                         <span className="flex flex-wrap items-center gap-2">
@@ -306,7 +273,7 @@ export function Navbar() {
                   className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-base font-medium text-foreground hover:bg-muted transition-colors"
                   onClick={() => setMobileMenuOpen(false)}
                 >
-                  <product.icon className="h-5 w-5" aria-hidden="true" />
+                  <ProductIcon name={product.icon} className="h-5 w-5" />
                   {product.name}
                   {product.comingSoon ? (
                     <span className="rounded-full border bg-muted/50 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">

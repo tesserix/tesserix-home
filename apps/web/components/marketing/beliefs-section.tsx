@@ -1,22 +1,6 @@
 import { Reveal } from "@/components/marketing/reveal";
 
-const beliefs = [
-  {
-    num: "Specialized > generic",
-    title: "Built for one industry each",
-    body: "A tool built for one industry beats a platform that flexes for ten. Each Tesserix product is opinionated about its domain — and stays out of the others.",
-  },
-  {
-    num: "No surprise pricing",
-    title: "The bill never mutates",
-    body: "Flat plans, no transaction skim, no per-seat traps. You should know what you pay before you sign up, and the bill should look the same in month twelve as it did in month one.",
-  },
-  {
-    num: "Humans reply",
-    title: "No chatbot queues",
-    body: "When you reach out, a person responds. We don't hide behind chatbots or queue you behind a knowledge base. Small team, real replies.",
-  },
-];
+import { fallbackBeliefs as beliefs } from "@/lib/cms/fallback/site";
 
 export function BeliefsSection() {
   return (
@@ -42,7 +26,7 @@ export function BeliefsSection() {
               }`}
             >
               <p className="font-mono text-[0.68rem] uppercase tracking-[0.12em] text-cobalt">
-                {belief.num}
+                {belief.label}
               </p>
               <h3 className="mt-[0.9rem] text-[1.12rem] font-[650] tracking-[-0.015em] text-foreground">
                 {belief.title}

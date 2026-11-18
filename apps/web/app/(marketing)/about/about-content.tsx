@@ -3,15 +3,11 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { principles } from "./principles";
-import { team } from "./team";
+import { fallbackPrinciples as principles, fallbackTeam as team } from "@/lib/cms/fallback/site";
 import { TeamMemberCard } from "@/components/marketing/team-member-card";
-import type { Industry } from "../products/[slug]/products-data";
-import {
-  isComingSoon,
-  productSlugs,
-  products,
-} from "../products/[slug]/products-data";
+import type { Industry } from "@/lib/cms/types";
+import { isComingSoon } from "@/lib/cms/products";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 
 /** Human-readable label for each industry the portfolio covers. */
 const industryLabels: Record<Industry, string> = {
@@ -27,10 +23,10 @@ const industryLabels: Record<Industry, string> = {
 // the one place launch state and the industry mapping are recorded. This list
 // used to be hand-maintained and had drifted: it omitted Kora entirely while
 // the copy beside it promises one product per industry.
-const focus = productSlugs.map((slug) => ({
+const focus = Object.keys(products).map((slug) => ({
   area: industryLabels[products[slug].industry],
   product: products[slug].title,
-  status: isComingSoon(slug) ? "In development" : "Live",
+  status: isComingSoon(products, slug) ? "In development" : "Live",
 }));
 
 export function AboutContent() {
@@ -167,7 +163,7 @@ export function AboutContent() {
           <div className="mt-14 grid grid-cols-1 gap-x-8 gap-y-12 sm:grid-cols-2">
             {principles.map((principle, index) => (
               <AnimateOnScroll
-                key={principle.number}
+                key={principle.title}
                 variant="fade-up"
                 delay={index * 0.08}
               >
@@ -176,7 +172,7 @@ export function AboutContent() {
                     aria-hidden="true"
                     className="font-mono text-5xl font-semibold tracking-tight text-muted-foreground/25 transition-colors duration-500 group-hover:text-muted-foreground/50 sm:text-6xl"
                   >
-                    {principle.number}
+                    {String(index + 1).padStart(2, "0")}
                   </span>
                   <h3 className="mt-5 text-xl font-semibold tracking-tight text-foreground">
                     {principle.title}

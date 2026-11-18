@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { products } from "./products-data";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 import { ProductContent } from "./product-content";
 import {
   buildBreadcrumbSchema,

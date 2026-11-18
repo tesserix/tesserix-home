@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
-import { products, productSlugs } from "@/app/(marketing)/products/[slug]/products-data";
+import { fallbackProducts as products } from "@/lib/cms/fallback/products";
 import { COMPANY, SITE_URL } from "@/app/seo/structured-data";
 
 /**
  * /llms.txt — the llms.txt convention (https://llmstxt.org): a short H1, a
  * blockquote summary, then linked sections with one-line descriptions, aimed
  * at LLMs reading the site rather than rendering it. The product list is
- * generated from products-data.ts so it can't drift from the real lineup.
+ * generated from lib/cms/fallback/products.ts so it can't drift from the real lineup.
  */
 
 function buildLlmsTxt(): string {
-  const productLines = productSlugs
+  const productLines = Object.keys(products)
     .map((slug) => {
       const product = products[slug];
       const status = product.status === "available" ? "live" : "coming soon";
