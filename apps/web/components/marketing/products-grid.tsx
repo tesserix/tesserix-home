@@ -12,7 +12,7 @@ import Image from "next/image";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AppStoreBadges } from "@tesserix/web";
 import { Reveal } from "@/components/marketing/reveal";
-import { countWord, isComingSoon, type Products } from "@/lib/cms/products";
+import { countWord, isComingSoon, type Products } from "@/lib/cms/helpers";
 
 /**
  * Visual treatment for each live product's screenshot frame. This is a

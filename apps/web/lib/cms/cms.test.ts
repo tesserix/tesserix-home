@@ -142,3 +142,11 @@ describe("site content from the CMS", () => {
     expect((await getPrinciples()).length).toBe(2);
   });
 });
+
+describe("getProduct", () => {
+  it("returns undefined for a slug that is only an Object.prototype member", async () => {
+    const { getProduct } = await import("./products");
+    expect(await getProduct("constructor")).toBeUndefined();
+    expect(await getProduct("mark8ly")).toBeDefined();
+  });
+});

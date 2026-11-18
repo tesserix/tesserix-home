@@ -41,7 +41,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const { productSlug, email, name, source } = parsed.data;
 
-  if (!(productSlug in (await getProducts()))) {
+  if (!Object.hasOwn(await getProducts(), productSlug)) {
     return NextResponse.json({ error: "Unknown product" }, { status: 404 });
   }
 

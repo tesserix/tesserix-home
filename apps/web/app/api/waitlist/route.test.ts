@@ -26,6 +26,11 @@ describe("POST /api/waitlist", () => {
     expect(subscribe).toHaveBeenCalledWith(expect.objectContaining({ productSlug: "newthing" }));
   });
 
+  it("rejects a slug that is only an Object.prototype member", async () => {
+    expect((await post({ productSlug: "constructor", email: "a@b.co" })).status).toBe(404);
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
   it("rejects a slug no product has", async () => {
     expect((await post({ productSlug: "nope", email: "a@b.co" })).status).toBe(404);
     expect(subscribe).not.toHaveBeenCalled();

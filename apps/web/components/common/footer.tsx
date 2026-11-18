@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Input, Button, AppStoreBadges } from "@tesserix/web";
-import type { Products } from "@/lib/cms/products";
+import type { Products } from "@/lib/cms/helpers";
 
 const footerNavigation = {
   company: [

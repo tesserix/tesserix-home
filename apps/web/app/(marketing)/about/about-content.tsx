@@ -5,7 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
 import { TeamMemberCard } from "@/components/marketing/team-member-card";
 import type { Industry, Principle, TeamMember } from "@/lib/cms/types";
-import { isComingSoon, type Products } from "@/lib/cms/products";
+import { isComingSoon, type Products } from "@/lib/cms/helpers";
 
 /** Human-readable label for each industry the portfolio covers. */
 const industryLabels: Record<Industry, string> = {

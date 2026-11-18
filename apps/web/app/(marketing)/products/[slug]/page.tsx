@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getProducts } from "@/lib/cms/products";
+import { getProduct, getProducts } from "@/lib/cms/products";
 import { ProductContent } from "./product-content";
 import {
   buildBreadcrumbSchema,
@@ -13,7 +13,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const product = (await getProducts())[slug];
+  const product = await getProduct(slug);
 
   if (!product) {
     return {
@@ -44,7 +44,7 @@ export async function generateStaticParams() {
 
 export default async function ProductPage({ params }: PageProps) {
   const { slug } = await params;
-  const product = (await getProducts())[slug];
+  const product = await getProduct(slug);
 
   if (!product) {
     notFound();

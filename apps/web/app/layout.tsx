@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
 import { Analytics } from "./analytics";
-import { getProducts, industryListPlain } from "@/lib/cms/products";
-import { getTeam } from "@/lib/cms/site";
-import { buildOrganizationSchema, buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
+import { industryListPlain } from "@/lib/cms/helpers";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
+import { buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
 import "./globals.css";
 
-const siteDescription = (industries: string) =>
-  `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industries}.`;
+// The site-wide default. Static on purpose: this layout wraps /admin and /auth too, which must
+// never wait on the CMS. The marketing layout overrides it with the live industry list.
+const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain(fallbackProducts)}.`;
 
-export async function generateMetadata(): Promise<Metadata> {
-  const SITE_DESCRIPTION = siteDescription(industryListPlain(await getProducts()));
-  return {
+export const metadata: Metadata = {
   title: {
     default: "Tesserix — Specialized SaaS, One Industry at a Time",
     template: "%s | Tesserix",
@@ -80,8 +79,7 @@ export async function generateMetadata(): Promise<Metadata> {
   verification: {
     google: "google-site-verification-code",
   },
-  };
-}
+};
 
 // JSON-LD structured data for the company and site — see app/seo/structured-data.ts
 // for the verified facts and why price/rating are deliberately never emitted.
@@ -89,23 +87,16 @@ export async function generateMetadata(): Promise<Metadata> {
 // product detail page instead of a single hardcoded product here.
 const websiteSchema = buildWebSiteSchema();
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const organizationSchema = buildOrganizationSchema(await getTeam());
   // Prefill the support widget with the logged-in admin's identity (skips
   // OTP); anonymous visitors get the email-verification flow.
   return (
     <html lang="en">
       <head>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify(organizationSchema),
-          }}
-        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
