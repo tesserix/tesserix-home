@@ -3,11 +3,9 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Input, Button, AppStoreBadges } from "@tesserix/web";
-import { industryListPlain } from "@/lib/cms/products";
-import { fallbackProducts as products } from "@/lib/cms/fallback/products";
+import type { Products } from "@/lib/cms/products";
 
 const footerNavigation = {
-  products: Object.values(products).map((p) => ({ name: p.title, href: `/products/${p.slug}` })),
   company: [
     { name: "About", href: "/about" },
     { name: "Contact", href: "/contact" },
@@ -66,7 +64,7 @@ function FooterColumn({ title, items }: FooterColumnProps) {
   );
 }
 
-export function Footer() {
+export function Footer({ products, industries }: { products: Products; industries: string }) {
   // Only launched products with a real app store presence get a badge here.
   // Fe3dr's vendor (home-cook) app is a second audience surfaced on the Fe3dr
   // product page, not the footer.
@@ -89,7 +87,7 @@ export function Footer() {
             />
             <p className="mt-5 max-w-xs text-sm leading-relaxed text-muted-foreground">
               A product studio building specialized software — one industry at
-              a time. {industryListPlain(products)}.
+              a time. {industries}.
             </p>
             {/* Newsletter signup */}
             <div className="mt-8">
@@ -110,7 +108,7 @@ export function Footer() {
 
           {/* Navigation */}
           <div className="grid grid-cols-2 gap-x-8 gap-y-12 sm:grid-cols-4 lg:col-span-7 lg:col-start-6">
-            <FooterColumn title="Products" items={footerNavigation.products} />
+            <FooterColumn title="Products" items={Object.values(products).map((p) => ({ name: p.title, href: `/products/${p.slug}` }))} />
             <FooterColumn title="Company" items={footerNavigation.company} />
             <FooterColumn
               title="Resources"

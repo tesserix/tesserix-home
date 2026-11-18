@@ -1,8 +1,8 @@
 import { Reveal } from "@/components/marketing/reveal";
 
-import { fallbackBeliefs as beliefs } from "@/lib/cms/fallback/site";
+import type { Belief } from "@/lib/cms/types";
 
-export function BeliefsSection() {
+export function BeliefsSection({ beliefs }: { beliefs: Belief[] }) {
   return (
     <section className="relative border-t py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">

@@ -3,11 +3,9 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { fallbackPrinciples as principles, fallbackTeam as team } from "@/lib/cms/fallback/site";
 import { TeamMemberCard } from "@/components/marketing/team-member-card";
-import type { Industry } from "@/lib/cms/types";
-import { isComingSoon } from "@/lib/cms/products";
-import { fallbackProducts as products } from "@/lib/cms/fallback/products";
+import type { Industry, Principle, TeamMember } from "@/lib/cms/types";
+import { isComingSoon, type Products } from "@/lib/cms/products";
 
 /** Human-readable label for each industry the portfolio covers. */
 const industryLabels: Record<Industry, string> = {
@@ -23,13 +21,15 @@ const industryLabels: Record<Industry, string> = {
 // the one place launch state and the industry mapping are recorded. This list
 // used to be hand-maintained and had drifted: it omitted Kora entirely while
 // the copy beside it promises one product per industry.
-const focus = Object.keys(products).map((slug) => ({
+const focusFor = (products: Products) =>
+  Object.keys(products).map((slug) => ({
   area: industryLabels[products[slug].industry],
   product: products[slug].title,
   status: isComingSoon(products, slug) ? "In development" : "Live",
-}));
+  }));
 
-export function AboutContent() {
+export function AboutContent({ products, team, principles }: { products: Products; team: TeamMember[]; principles: Principle[] }) {
+  const focus = focusFor(products);
   return (
     <div>
       {/* Header */}

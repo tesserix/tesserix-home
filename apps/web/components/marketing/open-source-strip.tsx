@@ -1,9 +1,9 @@
 import { ArrowUpRight } from "lucide-react";
 import { Reveal } from "@/components/marketing/reveal";
 
-import { fallbackOpenSource as repos } from "@/lib/cms/fallback/site";
+import type { OpenSourceRepo } from "@/lib/cms/types";
 
-export function OpenSourceStrip() {
+export function OpenSourceStrip({ repos }: { repos: OpenSourceRepo[] }) {
   return (
     <section className="relative border-t border-line-strong py-[4rem]">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">

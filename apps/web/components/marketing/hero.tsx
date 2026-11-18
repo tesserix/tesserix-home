@@ -2,15 +2,14 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { Tesseract } from "@/components/marketing/tesseract";
 import { MarketingButton } from "@/components/marketing/marketing-button";
-import { industryListPlain, launchedProductSlugs, productTitle } from "@/lib/cms/products";
-import { fallbackProducts as products } from "@/lib/cms/fallback/products";
+import { industryListPlain, launchedProductSlugs, productTitle, type Products } from "@/lib/cms/products";
 
 /** Inline custom property carrying the CSS-only stagger delay for `.hero-rise`. */
 function riseDelay(seconds: number): CSSProperties {
   return { "--d": `${seconds}s` } as CSSProperties;
 }
 
-export function Hero() {
+export function Hero({ products }: { products: Products }) {
   const launched = launchedProductSlugs(products);
   const comingSoonCount = Object.keys(products).length - launched.length;
 

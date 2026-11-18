@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Mail } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { fallbackPrinciples as principles } from "@/lib/cms/fallback/site";
+import type { Principle } from "@/lib/cms/types";
 
 const lookingFor = [
   "People who'd rather ship something small and useful than debate it for a quarter.",
@@ -12,7 +12,7 @@ const lookingFor = [
   "Comfort with a small team's pace: fewer meetings, more building, direct feedback.",
 ];
 
-export function CareersContent() {
+export function CareersContent({ principles }: { principles: Principle[] }) {
   return (
     <div>
       {/* Header */}

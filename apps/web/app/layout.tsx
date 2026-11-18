@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import { Analytics } from "./analytics";
-import { industryListPlain } from "@/lib/cms/products";
-import { fallbackProducts } from "@/lib/cms/fallback/products";
-import { fallbackTeam as team } from "@/lib/cms/fallback/site";
+import { getProducts, industryListPlain } from "@/lib/cms/products";
+import { getTeam } from "@/lib/cms/site";
 import { buildOrganizationSchema, buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
 import "./globals.css";
 
-const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain(fallbackProducts)}.`;
+const siteDescription = (industries: string) =>
+  `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industries}.`;
 
-export const metadata: Metadata = {
+export async function generateMetadata(): Promise<Metadata> {
+  const SITE_DESCRIPTION = siteDescription(industryListPlain(await getProducts()));
+  return {
   title: {
     default: "Tesserix — Specialized SaaS, One Industry at a Time",
     template: "%s | Tesserix",
@@ -78,20 +80,21 @@ export const metadata: Metadata = {
   verification: {
     google: "google-site-verification-code",
   },
-};
+  };
+}
 
 // JSON-LD structured data for the company and site — see app/seo/structured-data.ts
 // for the verified facts and why price/rating are deliberately never emitted.
 // Per-product SoftwareApplication + BreadcrumbList schema lives on each
 // product detail page instead of a single hardcoded product here.
-const organizationSchema = buildOrganizationSchema(team);
 const websiteSchema = buildWebSiteSchema();
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const organizationSchema = buildOrganizationSchema(await getTeam());
   // Prefill the support widget with the logged-in admin's identity (skips
   // OTP); anonymous visitors get the email-verification flow.
   return (

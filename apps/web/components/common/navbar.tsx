@@ -6,26 +6,23 @@ import Image from "next/image";
 import { Menu, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@tesserix/web";
-import { isComingSoon } from "@/lib/cms/products";
-import { fallbackProducts } from "@/lib/cms/fallback/products";
 import { ProductIcon } from "@/components/marketing/icon";
 
-// Derived from the product lineup, so this menu can't claim a product is shipped when it isn't.
-const products = Object.values(fallbackProducts).map((p) => ({
-  slug: p.slug,
-  name: p.title,
-  description: p.tagline,
-  icon: p.icon,
-  href: `/products/${p.slug}`,
-  comingSoon: isComingSoon(fallbackProducts, p.slug),
-}));
+export interface NavProduct {
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  href: string;
+  comingSoon: boolean;
+}
 
 const navigation = [
   { name: "About", href: "/about" },
   { name: "Contact", href: "/contact" },
 ];
 
-export function Navbar() {
+export function Navbar({ products }: { products: NavProduct[] }) {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [productsOpen, setProductsOpen] = React.useState(false);
   const productsRef = React.useRef<HTMLDivElement>(null);

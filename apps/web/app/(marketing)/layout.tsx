@@ -1,5 +1,6 @@
 import { Navbar } from "@/components/common/navbar";
 import { Footer } from "@/components/common/footer";
+import { getProducts, industryListPlain, isComingSoon } from "@/lib/cms/products";
 
 /**
  * Blueprint grid background — the Structured Light plan's spec'd but
@@ -24,17 +25,30 @@ function BlueprintGrid() {
   );
 }
 
-export default function MarketingLayout({
+// Content comes from the CMS at request time; without this the pages prerendered at build
+// (where CMS_URL is unset and the fallback renders) would never refresh.
+export const revalidate = 60;
+
+export default async function MarketingLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const products = await getProducts();
+  const navProducts = Object.values(products).map((p) => ({
+    slug: p.slug,
+    name: p.title,
+    description: p.tagline,
+    icon: p.icon,
+    href: `/products/${p.slug}`,
+    comingSoon: isComingSoon(products, p.slug),
+  }));
   return (
     <div className="flex min-h-screen flex-col">
       <BlueprintGrid />
-      <Navbar />
+      <Navbar products={navProducts} />
       <main id="main-content" className="flex-1">{children}</main>
-      <Footer />
+      <Footer products={products} industries={industryListPlain(products)} />
     </div>
   );
 }

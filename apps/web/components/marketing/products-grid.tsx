@@ -12,8 +12,7 @@ import Image from "next/image";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AppStoreBadges } from "@tesserix/web";
 import { Reveal } from "@/components/marketing/reveal";
-import { countWord, isComingSoon } from "@/lib/cms/products";
-import { fallbackProducts as productsData } from "@/lib/cms/fallback/products";
+import { countWord, isComingSoon, type Products } from "@/lib/cms/products";
 
 /**
  * Visual treatment for each live product's screenshot frame. This is a
@@ -65,34 +64,6 @@ interface SoonProduct {
   eta?: string;
   href: string;
 }
-
-// Title, tagline, description and launch state all come from
-// lib/cms/fallback/products.ts — the single source of truth for product copy — rather
-// than being restated here. Live products render as ledger rows in
-// products-data order; coming-soon products render as cards, also in order.
-const productEntries = Object.entries(productsData);
-const portfolioSize = countWord(productEntries.length);
-
-const liveProducts: LiveProduct[] = productEntries
-  .filter(([slug]) => !isComingSoon(productsData, slug))
-  .map(([slug, product]) => ({
-    slug,
-    title: product.title,
-    tagline: product.tagline,
-    website: product.website?.replace(/^https?:\/\//, ""),
-    href: `/products/${slug}`,
-    listings: product.listings,
-  }));
-
-const soonProducts: SoonProduct[] = productEntries
-  .filter(([slug]) => isComingSoon(productsData, slug))
-  .map(([slug, product]) => ({
-    slug,
-    title: product.title,
-    description: product.description,
-    eta: product.eta,
-    href: `/products/${slug}`,
-  }));
 
 const FRAME_CLASSES =
   "overflow-hidden rounded-[14px] border bg-card shadow-[0_24px_60px_-28px_rgba(11,14,20,0.25)] transition-[transform,box-shadow] duration-[400ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:-translate-y-1 group-hover:shadow-[0_32px_70px_-28px_rgba(11,14,20,0.32)]";
@@ -329,7 +300,35 @@ function SoonCard({ product }: { product: SoonProduct }) {
   );
 }
 
-export function ProductsGrid() {
+export function ProductsGrid({ products: productsData }: { products: Products }) {
+  // Title, tagline, description and launch state all come from
+  // the product data (lib/cms/products.ts) — the single source of truth for product copy — rather
+  // than being restated here. Live products render as ledger rows in
+  // products-data order; coming-soon products render as cards, also in order.
+  const productEntries = Object.entries(productsData);
+  const portfolioSize = countWord(productEntries.length);
+
+  const liveProducts: LiveProduct[] = productEntries
+    .filter(([slug]) => !isComingSoon(productsData, slug))
+    .map(([slug, product]) => ({
+      slug,
+      title: product.title,
+      tagline: product.tagline,
+      website: product.website?.replace(/^https?:\/\//, ""),
+      href: `/products/${slug}`,
+      listings: product.listings,
+    }));
+
+  const soonProducts: SoonProduct[] = productEntries
+    .filter(([slug]) => isComingSoon(productsData, slug))
+    .map(([slug, product]) => ({
+      slug,
+      title: product.title,
+      description: product.description,
+      eta: product.eta,
+      href: `/products/${slug}`,
+    }));
+
   return (
     <section id="products" className="relative py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">

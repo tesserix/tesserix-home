@@ -12,9 +12,7 @@ import { z } from "zod";
 
 import { subscribeToWaitlist } from "@/lib/db/product-waitlist";
 import { logger } from "@/lib/logger";
-import { fallbackProducts } from "@/lib/cms/fallback/products";
-
-const productSlugs = Object.keys(fallbackProducts);
+import { getProducts } from "@/lib/cms/products";
 
 const waitlistInputSchema = z.object({
   // Constrained to real product slugs so the table cannot be seeded with
@@ -43,7 +41,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const { productSlug, email, name, source } = parsed.data;
 
-  if (!productSlugs.includes(productSlug)) {
+  if (!(productSlug in (await getProducts()))) {
     return NextResponse.json({ error: "Unknown product" }, { status: 404 });
   }
 

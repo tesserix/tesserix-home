@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { fallbackProducts as products } from "@/lib/cms/fallback/products";
+import { getProducts } from "@/lib/cms/products";
 
 /**
  * OpenGraph image — Next 16 file convention. Generated at build into a
@@ -26,6 +26,7 @@ export const contentType = "image/png";
 const GRID_LINE = "rgba(11,14,20,0.03)";
 
 export default async function OpenGraphImage() {
+  const products = await getProducts();
   return new ImageResponse(
     (
       <div
