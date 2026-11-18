@@ -1,0 +1,4 @@
+{ "docs": [
+  { "id": 1, "order": 1, "name": "sandboxctl", "description": "One-command local Kubernetes sandbox." },
+  { "id": 2, "order": 2, "name": "cloudnav", "description": "Keyboard-driven multi-cloud TUI." }
+] }

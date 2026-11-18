@@ -1,0 +1,53 @@
+{
+  "docs": [
+    {
+      "id": 1, "slug": "mark8ly", "order": 1, "_status": "published",
+      "title": "Mark8ly", "tagline": "Quiet commerce for people who make things",
+      "description": "An editorial commerce platform for independent merchants.",
+      "longDescription": "Mark8ly is a quiet, considered commerce platform.",
+      "icon": "ShoppingBag", "status": "available", "industry": "commerce",
+      "highlights": ["0% transaction fees, ever", "Custom domains from day one"],
+      "eta": null,
+      "features": [{ "id": "f1", "icon": "Palette", "title": "A storefront worth opening", "description": "A theme that feels considered." }],
+      "benefits": ["Free for ninety days, no card required"],
+      "website": "https://mark8ly.com", "pricingUrl": "https://mark8ly.com/#pricing",
+      "ctaLabel": "Start free trial", "ctaSubtext": "Free for ninety days. No card required.",
+      "trialLine": "Free for ninety days. No card required.", "operatingSystem": null,
+      "listings": [
+        { "id": "l1", "platform": "ios", "url": "" },
+        { "id": "l2", "platform": "android", "url": "https://play.google.com/store/apps/details?id=com.mark8ly.admin" }
+      ],
+      "vendorListingUrl": null,
+      "siteImage": {
+        "id": 10, "alt": "The Mark8ly marketing homepage", "width": 1568, "height": 682,
+        "url": "https://storage.googleapis.com/b/tesserix/mark8ly-storefront.jpg",
+        "sizes": { "card": { "url": "https://storage.googleapis.com/b/tesserix/mark8ly-storefront-640x278.webp", "width": 640, "height": 278 }, "profile": { "url": "https://storage.googleapis.com/b/tesserix/mark8ly-storefront-1000x435.webp", "width": 1000, "height": 435 } }
+      },
+      "screenshots": null, "previousSlugs": []
+    },
+    {
+      "id": 2, "slug": "roamie", "order": 2, "_status": "published",
+      "title": "Roamie", "tagline": "Translate, plan and explore abroad",
+      "description": "A travel companion.", "longDescription": "Roamie helps you travel.",
+      "icon": "Plane", "status": "available", "industry": "travel",
+      "highlights": ["Live translation"], "features": [], "benefits": [],
+      "website": "https://roamie.app", "listings": [{ "id": "l3", "platform": "android", "url": "https://play.google.com/store/apps/details?id=app.tesserix.roamie" }],
+      "siteImage": null,
+      "screenshots": [
+        { "id": 11, "alt": "Roamie talk", "width": 1080, "height": 1920, "url": "/api/media/file/roamie-app-talk.png", "sizes": { "card": { "url": "/api/media/file/roamie-app-talk-640x1138.webp" } } },
+        { "id": 12, "alt": "Roamie text", "width": 1080, "height": 1920, "url": "/api/media/file/roamie-app-text.png", "sizes": {} },
+        { "id": 13, "alt": "Roamie trip", "width": 1080, "height": 1920, "url": "/api/media/file/roamie-app-trip.png", "sizes": {} }
+      ],
+      "previousSlugs": []
+    },
+    {
+      "id": 3, "slug": "dwellm8", "order": 3, "_status": "published",
+      "title": "Dwellm8", "tagline": "Rental management, one record",
+      "description": "Rental management.", "longDescription": "Dwellm8 keeps one record per tenancy.",
+      "icon": "Building2", "status": "coming-soon", "industry": "rentals", "eta": "Early 2027",
+      "highlights": [], "features": null, "benefits": null, "listings": null,
+      "siteImage": { "id": 14, "alt": "A mockup", "width": 1568, "height": 682, "url": "https://storage.googleapis.com/b/tesserix/dwellm8-mock.jpg", "sizes": {} },
+      "screenshots": null, "previousSlugs": []
+    }
+  ]
+}
