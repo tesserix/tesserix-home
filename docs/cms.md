@@ -43,42 +43,35 @@ for products. The CMS fires it on publish, unpublish and delete (`tesserix-cms/s
 
 Local dev without a CMS needs nothing: leave `CMS_URL` unset.
 
-## Cluster handoff (not yet done)
+## Cluster wiring (done 2026-11-19, tesserix-k8s #1714)
 
-The local wiring mirrors yes-hospital's (`tesserix-k8s`, see yes-hospital's `docs/cms-handover.md`).
-In order:
+The wiring mirrors yes-hospital's: OpenBao policy/role `read-tesserix-cms-tesserix-production`, a
+SecretStore in namespace `tesserix`, ExternalSecrets `tesserix-cms-tesserix-webhook` (ns `cms`) and
+`company-cms` (ns `tesserix`), `jobs.seedTesserix` in the CMS chart, `CMS_URL` + `envFrom company-cms`
+on the company chart, and the cms/tesserix network-policy rules. The OpenBao secret is
+`tesserix-cms/app/tesserix-cms-tesserix-webhook-secret` (key `value`).
 
-1. **OpenBao secret.** Create `tesserix-cms/app/tesserix-cms-tesserix-webhook-secret` (key `value`,
-   random hex is fine) at console.tesserix.app/platform/secrets.
-2. **tesserix-k8s PR, OpenBao readers.** In `charts/thirdparty/openbao/values.yaml` add the new path to
-   policy `read-tesserix-cms-production` (so the CMS seed Job can read it) and add a policy + role
-   `read-tesserix-cms-tesserix-production` for service account `tesserix-cms-production-reader` in
-   namespace `tesserix`, modelled on `read-tesserix-cms-yes-hospital-production`. Add the matching
-   SecretStore/reader manifest for namespace `tesserix` next to
-   `external-secrets/prod/tesserix-cms-openbao-readers.yaml`.
-3. **tesserix-k8s PR, CMS side.**
-   - `external-secrets/prod/cms/externalsecret.yaml`: add `tesserixWebhookSecret` from the new path and
-     template it as `TESSERIX_WEBHOOK_SECRET`.
-   - `charts/apps/tesserix-cms/templates/manual-jobs.yaml` + `values.yaml`: a `jobs.seedTesserix`
-     block copied from `seedYesHospital`, script `seed:tesserix`, `SEED_WEBHOOK_SECRET` from key
-     `TESSERIX_WEBHOOK_SECRET`, `revalidateUrl: https://tesserix.app/api/revalidate`.
-   - `charts/thirdparty/istio-config/templates/network-policies.yaml`, policy `allow-cms-ingress`:
-     add a `from` rule for `kubernetes.io/metadata.name: tesserix` on TCP 3000, next to the
-     yes-hospital one.
-4. **tesserix-k8s PR, site side.**
-   - `charts/apps/company/values.yaml`: `env.CMS_URL: http://tesserix-cms.cms.svc.cluster.local`.
-   - A new `external-secrets/prod/tesserix/cms-webhook.yaml` (copy of
-     `external-secrets/prod/yes-hospital/cms-webhook.yaml`, namespace `tesserix`, target
-     `company-cms`) and `envFrom` that secret in `charts/apps/company/templates/deployment.yaml`.
-   - `charts/apps/company/templates/network-policy.yaml`, `allow-company-egress`: add a `to` rule for
-     namespace `cms`, TCP 3000.
-5. **Images.** Merge tesserix-cms `feat/tesserix-tenant`, build and pin its image in
-   `argocd/prod/apps/global/tesserix-cms.yaml` (the PreSync migrate Job applies the new migration;
-   the CI billing caveat in the handover doc still applies). Then merge this branch and pin the
-   tesserix-home image on `company`.
-6. **Seed.** Enable `jobs.seedTesserix` in `argocd/prod/apps/global/tesserix-cms.yaml` in one PR;
-   after the Job completes, remove it in a follow-up. The Job is a no-op if the tenant already exists.
-7. **Verify.** `curl -X POST https://tesserix.app/api/revalidate` → 401. In the admin, edit a
-   product tagline, publish, reload tesserix.app within a minute, revert.
-8. **People.** Create the first Tesserix Approver under Users (tenant Tesserix); the owner is already
-   super-admin. The editor guide is `tesserix-cms/docs/cms-editor-guide.md`.
+### Operating it
+
+- **Image tags and one-off Jobs are live-owned, not git-owned.** `global-app-of-apps` ignores
+  `/spec/source/helm/parameters` on its child Applications so Kargo's writes stick. A git change to
+  `image.tag` or `jobs.<name>.enabled` in `argocd/prod/apps/global/tesserix-cms.yaml` is the audit
+  trail; the mechanism is a patch on the child app:
+
+  ```
+  kubectl patch app tesserix-cms -n argocd --type merge \
+    -p '{"spec":{"source":{"helm":{"parameters":[{"name":"image.tag","value":"main-<sha>"}]}}}}'
+  ```
+
+  Add `{"name":"jobs.seedTesserix.enabled","value":"true"}` to that array to run the seed, and
+  patch the array back without it once the Job has completed. The seed is idempotent.
+- **Never manually sync `global-app-of-apps`** (the refresh-annotate + operation patch in
+  yes-hospital's handover doc). On 2026-11-19 it did not apply the tesserix-cms tag and did
+  overwrite the Kargo-written tags on `company`, `console` and `platform-api` with stale git values;
+  tesserix.app silently served an October build until the next Kargo promotion. If that happens
+  again, re-promote the stage's current freight in `kargo-tesserix-home`.
+- **The webhook is exempt from the CSRF gate** in `apps/web/middleware.ts` (it has no cookie and no
+  Origin; the route checks `x-cms-secret`). Expect `401` from
+  `curl -X POST https://tesserix.app/api/revalidate`, not `403`.
+- **Is the site really reading the CMS?** The About page's team photos come from
+  `storage.googleapis.com/tesserix-cms-media-prod-in/...`; the fallback uses `/team/<slug>.jpg`.
