@@ -12,14 +12,9 @@ import {
 import type { MotionValue } from "framer-motion";
 import { Reveal } from "@/components/marketing/reveal";
 import { MarketingButton } from "@/components/marketing/marketing-button";
-import {
-  isComingSoon,
-  productSlugs,
-  products,
-  upcomingIndustryList,
-} from "@/app/(marketing)/products/[slug]/products-data";
+import { isComingSoon, upcomingIndustryList, type Products } from "@/lib/cms/helpers";
 
-const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune, then built Fe3dr because good home cooking shouldn't be hard to find. We're building for ${upcomingIndustryList()} next — each product designed to solve one problem well, not to check a feature list.`;
+const statementFor = (products: Products) => `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune, then built Fe3dr because good home cooking shouldn't be hard to find. We're building for ${upcomingIndustryList(products)} next — each product designed to solve one problem well, not to check a feature list.`;
 
 /** Short editorial gloss per product; names and launch state come from data. */
 const roadmapNotes: Record<string, string> = {
@@ -34,11 +29,12 @@ const roadmapNotes: Record<string, string> = {
 // Derived from products-data.ts rather than restated here: this list had
 // drifted and showed Dwellm8 as "Live" while the product stack directly above
 // it on the same page showed the same product as "Coming soon".
-const roadmap = productSlugs.map((slug) => ({
+const roadmapFor = (products: Products) =>
+  Object.keys(products).map((slug) => ({
   name: products[slug].title,
   note: roadmapNotes[slug] ?? "",
-  status: isComingSoon(slug) ? "In development" : "Live",
-}));
+  status: isComingSoon(products, slug) ? "In development" : "Live",
+  }));
 
 interface WordProps {
   word: string;
@@ -57,7 +53,7 @@ function Word({ word, start, end, progress }: WordProps) {
 }
 
 /** Apple-style statement: words brighten one by one as the paragraph scrolls through the viewport. */
-function ScrollRevealStatement() {
+function ScrollRevealStatement({ statement }: { statement: string }) {
   const prefersReducedMotion = useReducedMotion();
   const ref = useRef<HTMLParagraphElement>(null);
   const { scrollYProgress } = useScroll({
@@ -65,12 +61,12 @@ function ScrollRevealStatement() {
     offset: ["start 0.85", "end 0.45"],
   });
 
-  const words = STATEMENT.split(" ");
+  const words = statement.split(" ");
 
   if (prefersReducedMotion) {
     return (
       <p className="max-w-[44rem] text-balance text-[clamp(1.5rem,3.4vw,2.5rem)] font-semibold leading-[1.24] tracking-[-0.035em] text-foreground">
-        {STATEMENT}
+        {statement}
       </p>
     );
   }
@@ -93,7 +89,8 @@ function ScrollRevealStatement() {
   );
 }
 
-export function AboutTeaser() {
+export function AboutTeaser({ products }: { products: Products }) {
+  const roadmap = roadmapFor(products);
   return (
     <section className="border-t py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -105,7 +102,7 @@ export function AboutTeaser() {
         </Reveal>
 
         <div className="mt-8">
-          <ScrollRevealStatement />
+          <ScrollRevealStatement statement={statementFor(products)} />
           <p className="mt-[1.8rem] font-mono text-[0.72rem] uppercase tracking-[0.1em] text-muted-foreground">
             The studio &middot; Sydney &amp; remote
           </p>

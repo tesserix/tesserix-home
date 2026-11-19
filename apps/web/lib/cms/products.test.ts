@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
+import { ICONS } from "@/components/marketing/icon";
+import { fallbackProducts as products } from "./fallback/products";
 import {
   countWord,
   industryListPlain,
   launchedProductSlugs,
-  products,
-  productSlugs,
-} from "./products-data";
+} from "./products";
 
 describe("product lineup", () => {
   it("launches Helivanta and Roamie, so the waitlist announcer treats both as live", () => {
-    expect(launchedProductSlugs()).toEqual(
+    expect(launchedProductSlugs(products)).toEqual(
       expect.arrayContaining(["helivanta", "roamie"]),
     );
   });
 
   it("no longer lists the MediCare placeholder Helivanta replaced", () => {
-    expect(productSlugs).not.toContain("medicare");
+    expect(Object.keys(products)).not.toContain("medicare");
   });
 
   it("links Roamie to Google Play and keeps its App Store listing pending review", () => {
@@ -33,9 +33,18 @@ describe("product lineup", () => {
   });
 
   it("adds travel to the industries the hero and footer quote", () => {
-    expect(industryListPlain()).toBe(
+    expect(industryListPlain(products)).toBe(
       "Commerce, food, healthcare, travel, rentals, nutrition",
     );
+  });
+
+  it("uses only icon names ProductIcon knows", () => {
+    const names = Object.values(products).flatMap((p) => [p.icon, ...p.features.map((f) => f.icon)]);
+    for (const n of names) expect(ICONS).toContain(n);
+  });
+
+  it("keeps portfolio order as the key order", () => {
+    expect(Object.keys(products)).toEqual(["mark8ly", "fe3dr", "helivanta", "roamie", "dwellm8", "kora"]);
   });
 });
 

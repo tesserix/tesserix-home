@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getPrinciples } from "@/lib/cms/site";
 import { CareersContent } from "./careers-content";
 
 export const metadata: Metadata = {
@@ -10,6 +11,6 @@ export const metadata: Metadata = {
   },
 };
 
-export default function CareersPage() {
-  return <CareersContent />;
+export default async function CareersPage() {
+  return <CareersContent principles={await getPrinciples()} />;
 }

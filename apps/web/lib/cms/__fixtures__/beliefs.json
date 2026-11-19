@@ -1,0 +1,4 @@
+{ "docs": [
+  { "id": 1, "order": 1, "label": "Specialized > generic", "title": "Built for one industry each", "body": "A tool built for one industry beats a platform that flexes for ten." },
+  { "id": 2, "order": 2, "label": "Humans reply", "title": "No chatbot queues", "body": "When you reach out, a person responds." }
+] }

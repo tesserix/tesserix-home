@@ -1,12 +1,16 @@
 import type { MetadataRoute } from "next";
 
 import { siteOrigin } from "@/lib/site-origin";
-import { productSlugs } from "./(marketing)/products/[slug]/products-data";
+import { getProducts } from "@/lib/cms/products";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+// Content comes from the CMS at request time; without this the pages prerendered at build
+// (where CMS_URL is unset and the fallback renders) would never refresh.
+export const revalidate = 60;
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = siteOrigin();
 
-  const productEntries: MetadataRoute.Sitemap = productSlugs.map((slug) => ({
+  const productEntries: MetadataRoute.Sitemap = Object.keys(await getProducts()).map((slug) => ({
     url: `${baseUrl}/products/${slug}`,
     lastModified: new Date(),
     changeFrequency: "weekly" as const,

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Mail } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { principles } from "../about/principles";
+import type { Principle } from "@/lib/cms/types";
 
 const lookingFor = [
   "People who'd rather ship something small and useful than debate it for a quarter.",
@@ -12,7 +12,7 @@ const lookingFor = [
   "Comfort with a small team's pace: fewer meetings, more building, direct feedback.",
 ];
 
-export function CareersContent() {
+export function CareersContent({ principles }: { principles: Principle[] }) {
   return (
     <div>
       {/* Header */}
@@ -73,7 +73,7 @@ export function CareersContent() {
           <div className="mt-14 grid grid-cols-1 gap-x-8 gap-y-12 sm:grid-cols-2">
             {principles.map((principle, index) => (
               <AnimateOnScroll
-                key={principle.number}
+                key={principle.title}
                 variant="fade-up"
                 delay={index * 0.08}
               >
@@ -82,7 +82,7 @@ export function CareersContent() {
                     aria-hidden="true"
                     className="font-mono text-5xl font-semibold tracking-tight text-muted-foreground/25 transition-colors duration-500 group-hover:text-muted-foreground/50 sm:text-6xl"
                   >
-                    {principle.number}
+                    {String(index + 1).padStart(2, "0")}
                   </span>
                   <h3 className="mt-5 text-xl font-semibold tracking-tight text-foreground">
                     {principle.title}

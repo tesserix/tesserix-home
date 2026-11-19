@@ -2,21 +2,16 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { Tesseract } from "@/components/marketing/tesseract";
 import { MarketingButton } from "@/components/marketing/marketing-button";
-import {
-  launchedProductSlugs,
-  productSlugs,
-  productTitle,
-  industryListPlain,
-} from "@/app/(marketing)/products/[slug]/products-data";
+import { industryListPlain, launchedProductSlugs, productTitle, type Products } from "@/lib/cms/products";
 
 /** Inline custom property carrying the CSS-only stagger delay for `.hero-rise`. */
 function riseDelay(seconds: number): CSSProperties {
   return { "--d": `${seconds}s` } as CSSProperties;
 }
 
-export function Hero() {
-  const launched = launchedProductSlugs();
-  const comingSoonCount = productSlugs.length - launched.length;
+export function Hero({ products }: { products: Products }) {
+  const launched = launchedProductSlugs(products);
+  const comingSoonCount = Object.keys(products).length - launched.length;
 
   return (
     <section className="relative min-h-[100svh] flex items-center overflow-hidden">
@@ -48,7 +43,7 @@ export function Hero() {
           style={riseDelay(0.24)}
         >
           We build focused SaaS products — one industry at a time.{" "}
-          {industryListPlain()}. Each product does one thing well and refuses
+          {industryListPlain(products)}. Each product does one thing well and refuses
           to do everything else.
         </p>
 
@@ -78,7 +73,7 @@ export function Hero() {
                 aria-hidden="true"
               />
               <b className="font-semibold text-foreground">
-                {productTitle(slug)}
+                {productTitle(products, slug)}
               </b>
               &nbsp;live
             </span>

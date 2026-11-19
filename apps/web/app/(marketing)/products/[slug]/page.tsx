@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { products } from "./products-data";
+import { getProduct, getProducts } from "@/lib/cms/products";
 import { ProductContent } from "./product-content";
 import {
   buildBreadcrumbSchema,
@@ -13,7 +13,7 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const product = products[slug];
+  const product = await getProduct(slug);
 
   if (!product) {
     return {
@@ -39,12 +39,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export async function generateStaticParams() {
-  return Object.keys(products).map((slug) => ({ slug }));
+  return Object.keys(await getProducts()).map((slug) => ({ slug }));
 }
 
 export default async function ProductPage({ params }: PageProps) {
   const { slug } = await params;
-  const product = products[slug];
+  const product = await getProduct(slug);
 
   if (!product) {
     notFound();
@@ -67,7 +67,7 @@ export default async function ProductPage({ params }: PageProps) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
       />
-      <ProductContent slug={slug} />
+      <ProductContent product={product} />
     </>
   );
 }

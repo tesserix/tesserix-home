@@ -1,0 +1,5 @@
+{ "docs": [
+  { "id": 1, "slug": "mahesh-sangawar", "order": 1, "name": "Mahesh Sangawar", "title": "Co-founder", "bio": "Cloud architect.", "linkedIn": "https://www.linkedin.com/in/mahesh-sangawar-985a3214/", "github": "https://github.com/mahesh-sangawar",
+    "photo": { "id": 20, "alt": "Mahesh Sangawar", "width": 1200, "height": 1200, "url": "https://storage.googleapis.com/b/tesserix/mahesh.jpg", "sizes": { "card": { "url": "https://storage.googleapis.com/b/tesserix/mahesh-640x640.webp" }, "profile": { "url": "https://storage.googleapis.com/b/tesserix/mahesh-1000x1000.webp" } } } },
+  { "id": 2, "slug": "samyak-r", "order": 2, "name": "Samyak Rout", "title": "Co-founder", "bio": null, "linkedIn": "https://www.linkedin.com/in/samyak-r-96551a21/", "github": "https://github.com/sam123ben", "photo": null }
+] }

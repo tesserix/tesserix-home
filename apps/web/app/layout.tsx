@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { Analytics } from "./analytics";
-import { industryListPlain } from "./(marketing)/products/[slug]/products-data";
-import { team } from "./(marketing)/about/team";
-import { buildOrganizationSchema, buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
+import { industryListPlain } from "@/lib/cms/helpers";
+import { fallbackProducts } from "@/lib/cms/fallback/products";
+import { buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
 import "./globals.css";
 
-const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain()}.`;
+// The site-wide default. Static on purpose: this layout wraps /admin and /auth too, which must
+// never wait on the CMS. The marketing layout overrides it with the live industry list.
+const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain(fallbackProducts)}.`;
 
 export const metadata: Metadata = {
   title: {
@@ -83,7 +85,6 @@ export const metadata: Metadata = {
 // for the verified facts and why price/rating are deliberately never emitted.
 // Per-product SoftwareApplication + BreadcrumbList schema lives on each
 // product detail page instead of a single hardcoded product here.
-const organizationSchema = buildOrganizationSchema(team);
 const websiteSchema = buildWebSiteSchema();
 
 export default function RootLayout({
@@ -96,12 +97,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify(organizationSchema),
-          }}
-        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{

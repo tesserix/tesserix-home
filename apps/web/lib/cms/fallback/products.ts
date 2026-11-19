@@ -1,145 +1,14 @@
-import {
-  ShoppingBag,
-  Users,
-  Building2,
-  KeyRound,
-  Wrench,
-  MessageSquare,
-  Palette,
-  CreditCard,
-  Package,
-  BarChart,
-  Shield,
-  ChefHat,
-  Utensils,
-  Truck,
-  Hospital,
-  FileText,
-  Pill,
-  FlaskConical,
-  History,
-  UserCheck,
-  Salad,
-  Camera,
-  Mic,
-  ScanLine,
-  Pencil,
-  ShieldCheck,
-  Plane,
-  Languages,
-  CalendarDays,
-  MapPin,
-  Wallet,
-} from "lucide-react";
-
-interface ProductMediaImage {
-  src: string;
-  alt: string;
-  width: number;
-  height: number;
-  orientation: "landscape" | "portrait";
-}
+import type { Product } from "../types";
 
 /**
- * The industries the current portfolio covers, one per product. This is
- * the single source of truth for the "one industry at a time" marketing
- * copy repeated on the hero, footer and /about — those sites derive their
- * industry list from `industryNames` below instead of holding their own copy.
+ * Today's product lineup, frozen: served when the CMS is unreachable or not
+ * configured (see lib/cms/client.ts). The CMS `products` collection is the
+ * live source; keep this in portfolio order, it is also the seed's origin.
  */
-export type Industry =
-  | "commerce"
-  | "food"
-  | "rentals"
-  | "healthcare"
-  | "nutrition"
-  | "travel";
-
-export const products: Record<
-  string,
-  {
-    title: string;
-    tagline: string;
-    description: string;
-    longDescription: string;
-    icon: React.ComponentType<{ className?: string }>;
-    status: "available" | "coming-soon";
-    industry: Industry;
-    /**
-     * Short bullet points used everywhere a product is summarized rather
-     * than detailed: the /products index rows and the homepage card stack
-     * (`products-grid.tsx`). Both used to keep their own copies of this list
-     * and drifted (that's how Mark8ly ended up with three descriptions) —
-     * they now read this field instead of restating it.
-     */
-    highlights: string[];
-    /**
-     * Honest target for a coming-soon product's launch, shown on the
-     * homepage's "In development" card (`products-grid.tsx`). Omit rather
-     * than guess a date for a product with no committed timeline.
-     */
-    eta?: string;
-    features: Array<{
-      icon: React.ComponentType<{ className?: string }>;
-      title: string;
-      description: string;
-    }>;
-    benefits: string[];
-    // Pricing lives on each product's own site, not here — see product-content.tsx.
-    website?: string;
-    /**
-     * The detail page's primary CTA for `available` products only — the
-     * label must match where the link actually goes, so it's authored per
-     * product rather than a single generic "Start free trial" that isn't
-     * true for every product (e.g. Fe3dr has no trial). Links to the
-     * product's own site (`website`), not `/contact`.
-     */
-    ctaLabel?: string;
-    /** Honest one-line subtext for the bottom CTA band; omit if there's nothing true to add. */
-    ctaSubtext?: string;
-    /**
-     * The real trial/pricing offer, stated exactly as the product's own
-     * site states it. Omit entirely for products with no trial (e.g. Fe3dr)
-     * rather than falling back to generic trial language.
-     */
-    trialLine?: string;
-    /**
-     * JSON-LD `operatingSystem` for the SoftwareApplication schema. Defaults
-     * to "Web" when omitted — set explicitly for products that are actually
-     * mobile-only (Kora, Fe3dr's app), since asserting "Web" for those is a
-     * verifiable-false claim to a crawler.
-     */
-    operatingSystem?: string;
-    /**
-     * App store presence, keyed by platform. A listing with `url: ""` is a
-     * real platform we're on that has no live link yet (e.g. iOS apps under
-     * App Store review) — `AppStoreBadges` renders it as a coming-soon plate
-     * rather than a dead link. Omit a platform entirely if there is no app.
-     */
-    listings?: Partial<
-      Record<"ios" | "android", { url: string; artworkSrc: string }>
-    >;
-    /**
-     * The Fe3dr vendor (home-cook) Android app is a second audience beyond
-     * the customer app in `listings`. Only Fe3dr has one today, so it's kept
-     * as a separate optional field rather than widening the platform union.
-     */
-    vendorListing?: { url: string; artworkSrc: string };
-    /**
-     * Real product imagery for the detail page. Only populated for products
-     * that have actually shipped (`status: "available"`) — a mockup for
-     * unreleased software erodes trust on a due-diligence read, so
-     * coming-soon products must leave this undefined rather than get a
-     * placeholder.
-     */
-    media?: {
-      /** A capture of the live marketing site or storefront, landscape. */
-      site?: ProductMediaImage;
-      /** Portrait phone screenshots, shown as a row of two or three. */
-      screenshots?: ProductMediaImage[];
-    };
-  }
-> = {
+export const fallbackProducts: Record<string, Product> = {
   mark8ly: {
+    slug: "mark8ly",
+    pricingUrl: "https://mark8ly.com/#pricing",
     title: "Mark8ly",
     tagline: "Quiet commerce for people who make things",
     description:
@@ -147,7 +16,7 @@ export const products: Record<
     website: "https://mark8ly.com",
     longDescription:
       "Mark8ly is a quiet, considered commerce platform for people who actually make things. Set up your store in an afternoon, keep every sale, and sell on a storefront that doesn't look like everyone else's. Real merchants worked on the design. Real engineers built the infrastructure. The result is a tool that does fewer things, but does them properly.",
-    icon: ShoppingBag,
+    icon: "ShoppingBag",
     status: "available",
     industry: "commerce",
     ctaLabel: "Start free trial",
@@ -163,37 +32,37 @@ export const products: Record<
     ],
     features: [
       {
-        icon: Palette,
+        icon: "Palette",
         title: "A storefront worth opening",
         description:
           "A theme that feels considered, out of the box. Quiet typography, generous whitespace, real attention to product detail pages.",
       },
       {
-        icon: CreditCard,
+        icon: "CreditCard",
         title: "Checkout that works everywhere",
         description:
           "Cards, UPI, wallets, and local methods, all behind a single checkout. No upcharges from us — standard processor fees only.",
       },
       {
-        icon: Package,
+        icon: "Package",
         title: "Unlimited products and orders",
         description:
           "Every plan includes unlimited products and orders. Plans differ by number of stores and images per product, not a product cap.",
       },
       {
-        icon: BarChart,
+        icon: "BarChart",
         title: "Admin you don't have to learn",
         description:
           "Products, orders, customers, inventory. Each screen does one thing, clearly. No dashboards full of metrics that don't matter.",
       },
       {
-        icon: Shield,
+        icon: "Shield",
         title: "Yours, fully",
         description:
           "Use your own domain, export your data anytime, leave whenever you want. The store is yours — we just keep it running.",
       },
       {
-        icon: Users,
+        icon: "Users",
         title: "Real humans answer",
         description:
           "If you get stuck, real humans answer real messages. No chatbots, no first-tier triage queue.",
@@ -225,6 +94,7 @@ export const products: Record<
     },
   },
   fe3dr: {
+    slug: "fe3dr",
     title: "Fe3dr",
     tagline: "Ghar ka khana, delivered.",
     description:
@@ -232,7 +102,7 @@ export const products: Record<
     website: "https://fe3dr.com",
     longDescription:
       "Fe3dr connects verified home cooks with people who want a real home-cooked meal. Every meal is cooked to order — nothing sits pre-made or reheated — and you choose to collect it yourself or have it delivered. Fe3dr is currently live in Pune.",
-    icon: ChefHat,
+    icon: "ChefHat",
     status: "available",
     industry: "food",
     operatingSystem: "iOS, Android",
@@ -248,25 +118,25 @@ export const products: Record<
     ],
     features: [
       {
-        icon: UserCheck,
+        icon: "UserCheck",
         title: "Verified home cooks",
         description:
           "Every cook is verified before their menu goes live, so an order comes from a real home kitchen you can trust.",
       },
       {
-        icon: Utensils,
+        icon: "Utensils",
         title: "Cooked to order",
         description:
           "Meals are cooked fresh once you order — not held in inventory or reheated ahead of time.",
       },
       {
-        icon: Truck,
+        icon: "Truck",
         title: "Collection or delivery",
         description:
           "Pick up your order yourself or have it delivered — whichever suits you on the day.",
       },
       {
-        icon: ChefHat,
+        icon: "ChefHat",
         title: "Home kitchens, not restaurants",
         description:
           "Every meal comes from a real home kitchen, cooked the way home food actually tastes.",
@@ -323,6 +193,7 @@ export const products: Record<
     },
   },
   helivanta: {
+    slug: "helivanta",
     title: "Helivanta",
     tagline: "One connected hospital, from boardroom to bedside",
     description:
@@ -331,7 +202,7 @@ export const products: Record<
     // Copy tracks helivanta.app's own availability labels; nothing marked "Planned" there is claimed as shipped here.
     longDescription:
       "Helivanta is a hospital management system where departments, administration and management work from the same records. Reception, doctors, the laboratory and the pharmacy each add to one patient record, and every batch of stock lands on a trail that only grows — a correction is added, never overwritten. Patient registration, outpatient visits, lab orders, pharmacy dispensing and hospital setup are available today; billing, inpatient care, procurement and the rest of the hospital follow on a published roadmap.",
-    icon: Hospital,
+    icon: "Hospital",
     status: "available",
     industry: "healthcare",
     ctaLabel: "Explore Helivanta",
@@ -346,37 +217,37 @@ export const products: Record<
     ],
     features: [
       {
-        icon: FileText,
+        icon: "FileText",
         title: "One patient, one record",
         description:
           "Registration, outpatient visits, lab orders and dispensing all write to the same record, so a returning patient is found, not registered again.",
       },
       {
-        icon: Pill,
+        icon: "Pill",
         title: "Pharmacy with batch and expiry",
         description:
           "A stock register with batch and expiry control, quarantine, dispensing, and supplier payables and settlements — each batch traceable to the patient it went to.",
       },
       {
-        icon: FlaskConical,
+        icon: "FlaskConical",
         title: "Laboratory orders and worklists",
         description:
           "Doctors order tests against the visit and they land on the laboratory's worklist. Specimen tracking and validated result release are on the roadmap.",
       },
       {
-        icon: Building2,
+        icon: "Building2",
         title: "Hospitals, teams and permissions",
         description:
           "Run several hospitals under one organisation, with hospital-scoped staff directories and access that follows each person's role.",
       },
       {
-        icon: History,
+        icon: "History",
         title: "A trail that only grows",
         description:
           "Stock and money land on one trail. A correction adds an entry instead of overwriting one, so an auditor sees what changed, who changed it and why.",
       },
       {
-        icon: Palette,
+        icon: "Palette",
         title: "Your organisation's workspace",
         description:
           "Your own logo and login theme across every hospital, pharmacy and laboratory in your organisation.",
@@ -401,6 +272,7 @@ export const products: Record<
     },
   },
   roamie: {
+    slug: "roamie",
     title: "Roamie",
     tagline: "Feel more at home wherever you travel",
     description:
@@ -408,7 +280,7 @@ export const products: Record<
     // No `website`: Roamie has no marketing site; its store listings are the front door.
     longDescription:
       "Roamie brings conversation translation, trip planning and everyday travel tools together in one app. Talk across languages hands-free, or show the translation to the person you're speaking with. Plan a day-by-day itinerary around your dates, interests and budget, find nearby places, translate signs and menus from a photo, and keep track of what the trip is costing.",
-    icon: Plane,
+    icon: "Plane",
     status: "available",
     industry: "travel",
     operatingSystem: "iOS, Android",
@@ -423,37 +295,37 @@ export const products: Record<
     ],
     features: [
       {
-        icon: Languages,
+        icon: "Languages",
         title: "Talk across languages",
         description:
           "Translate spoken conversations and written text. Listen to the translation, or use Show them to display it clearly to the person you're talking to.",
       },
       {
-        icon: Mic,
+        icon: "Mic",
         title: "Hands-free conversations",
         description:
           "Hands-free mode keeps a conversation moving without tapping between turns, and you can still choose languages yourself when you need to.",
       },
       {
-        icon: CalendarDays,
+        icon: "CalendarDays",
         title: "A plan that fits you",
         description:
           "Tell the trip advisor where you're going, your dates, interests and budget, then build a day-by-day itinerary from its suggestions.",
       },
       {
-        icon: Camera,
+        icon: "Camera",
         title: "Translate what you see",
         description:
           "Photograph a sign or a menu and read it in your own language.",
       },
       {
-        icon: MapPin,
+        icon: "MapPin",
         title: "Find your way around",
         description:
           "Look up nearby places and useful travel information, including the weather.",
       },
       {
-        icon: Wallet,
+        icon: "Wallet",
         title: "Keep track of spending",
         description:
           "Record trip expenses and review amounts read from receipt photos or statements before you save them.",
@@ -501,6 +373,7 @@ export const products: Record<
     },
   },
   dwellm8: {
+    slug: "dwellm8",
     title: "Dwellm8",
     tagline: "Rent, managed like a record",
     description:
@@ -511,7 +384,7 @@ export const products: Record<
     // the link here.
     longDescription:
       "Dwellm8 runs the whole tenancy on one record: listings and enquiries, agreements and rent, maintenance and the gate. Owners see what their property earns, managing firms run delegated portfolios against a ledger rather than a spreadsheet, and tenants get an app where the rent, the receipts and the repair requests are all on the record. Money is integer paise on an append-only ledger — nothing is a stored balance, and nothing is quietly deleted.",
-    icon: Building2,
+    icon: "Building2",
     status: "coming-soon",
     industry: "rentals",
     eta: "2026",
@@ -525,37 +398,37 @@ export const products: Record<
     ],
     features: [
       {
-        icon: KeyRound,
+        icon: "KeyRound",
         title: "The tenancy on one record",
         description:
           "Agreements, rent schedules, deposits, notice and move-out — effective-dated history, never edited in place.",
       },
       {
-        icon: CreditCard,
+        icon: "CreditCard",
         title: "Rent by UPI, receipts instantly",
         description:
           "Collections land on an append-only ledger and the receipt issues the moment money confirms. No platform fee added to rent.",
       },
       {
-        icon: Wrench,
+        icon: "Wrench",
         title: "Maintenance with a liability answer",
         description:
           "Tenants raise a request in thirty seconds; the cost-sharing engine says who pays before any work is approved.",
       },
       {
-        icon: MessageSquare,
+        icon: "MessageSquare",
         title: "Everything on the record",
         description:
           "The tenancy conversation, gate passes and notices live in the apps — not in somebody's chat history.",
       },
       {
-        icon: Users,
+        icon: "Users",
         title: "Six apps, one platform",
         description:
           "Own, Ops, Live, Find, Pro and Admin — owners, managing firms, tenants and seekers each get their own surface.",
       },
       {
-        icon: Shield,
+        icon: "Shield",
         title: "Isolation the database enforces",
         description:
           "Row-level security scopes every query to one organisation, and a tenant to their own lease — not a WHERE clause somebody remembered.",
@@ -571,13 +444,14 @@ export const products: Record<
     ],
   },
   kora: {
+    slug: "kora",
     title: "Kora",
     tagline: "The easiest nutrition tracking experience, built with AI",
     description:
       "AI-powered nutrition tracking for iOS and Android — log meals by photo, chat, or voice instead of manual data entry.",
     longDescription:
       "Kora is an AI-powered nutrition tracking app for iOS and Android. It isn't meant to be another calorie counter — the goal is the easiest nutrition tracking experience ever built, one that feels conversational rather than like data entry. Log a meal with a food photo, a natural-language message, or your voice. Nutrition data is sourced from the USDA, OpenFoodFacts, and Australian food databases, and Kora is built to never hallucinate a nutrition value.",
-    icon: Salad,
+    icon: "Salad",
     status: "coming-soon",
     industry: "nutrition",
     operatingSystem: "iOS, Android",
@@ -591,37 +465,37 @@ export const products: Record<
     ],
     features: [
       {
-        icon: Camera,
+        icon: "Camera",
         title: "AI photo logging",
         description:
           "Photograph a meal and Kora identifies the foods, ingredients, and portion sizes.",
       },
       {
-        icon: MessageSquare,
+        icon: "MessageSquare",
         title: "Chat logging",
         description:
           "Describe what you ate in plain language and Kora understands and logs it.",
       },
       {
-        icon: Mic,
+        icon: "Mic",
         title: "Voice logging",
         description:
           "Speak a meal out loud and it converts straight to a food log.",
       },
       {
-        icon: ScanLine,
+        icon: "ScanLine",
         title: "Barcode scanning",
         description:
           "Scan a barcode for an instant nutrition lookup on packaged food.",
       },
       {
-        icon: Pencil,
+        icon: "Pencil",
         title: "Manual editing",
         description:
           "Adjust any logged meal by hand whenever you want to fine-tune the details yourself.",
       },
       {
-        icon: ShieldCheck,
+        icon: "ShieldCheck",
         title: "Verified nutrition data",
         description:
           "Nutrition figures are sourced from the USDA, OpenFoodFacts, and Australian food databases — built to never hallucinate a value.",
@@ -636,106 +510,3 @@ export const products: Record<
     ],
   },
 };
-
-/** Spells a count for marketing copy ("six products"); past ten it falls back to digits. */
-export function countWord(count: number): string {
-  const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-  return words[count] ?? String(count);
-}
-
-/**
- * Every product slug. Derived from `products` so the two can never drift —
- * the waitlist API validates signups against this, and the launch-announce job
- * walks it to find products that have gone live.
- */
-export const productSlugs: string[] = Object.keys(products);
-
-/**
- * Slugs whose status has flipped to "available", i.e. products that have
- * actually launched. Flipping a product's status here and deploying is what
- * triggers its waitlist announcement — there is no separate switch to remember.
- */
-export function launchedProductSlugs(): string[] {
-  return Object.entries(products)
-    .filter(([, p]) => p.status === "available")
-    .map(([slug]) => slug);
-}
-
-/** Display title for a slug, for email subject/body copy. */
-export function productTitle(slug: string): string {
-  return products[slug]?.title ?? slug;
-}
-
-/**
- * Whether a product is still unreleased.
- *
- * `status` above is the one place launch state is recorded. Every surface that
- * renders a product — the navbar dropdown, the homepage stack, /products, and
- * the detail page — reads it through here rather than repeating it inline.
- * They used to each hold their own copy and had drifted badly: a now-removed
- * product showed "Live" on some surfaces while Fe3dr showed "Coming soon" on
- * others despite being deployed.
- *
- * Unknown slugs read as coming-soon — never advertise something unconfirmed.
- */
-export function isComingSoon(slug: string): boolean {
-  return products[slug]?.status !== "available";
-}
-
-/**
- * The industries covered by the current lineup, in portfolio order
- * (commerce, food, healthcare, travel, rentals, nutrition). Derived from `products`
- * so the marketing copy that quotes this list can't drift from the actual
- * products again.
- */
-export const industryNames: Industry[] = Object.values(products).map(
-  (product) => product.industry,
-);
-
-/**
- * Full industry list as a sentence-start phrase, e.g.
- * "Commerce, food, rentals, healthcare, nutrition" — used where the original
- * copy read as a standalone list (hero, footer, /about metadata).
- */
-export function industryListPlain(): string {
-  return industryNames
-    .map((name, index) => (index === 0 ? `${name[0].toUpperCase()}${name.slice(1)}` : name))
-    .join(", ");
-}
-
-/**
- * Joins names with an Oxford "and" before the last item, e.g.
- * "food, rentals, healthcare, and nutrition". Shared by every industry-list
- * helper below so the join rules (1 -> "x", 2 -> "x and y", 3+ -> "x, y, and
- * z") exist in exactly one place.
- */
-function oxfordJoin(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-}
-
-/**
- * Industry list with one name excluded and an Oxford "and" before the last
- * item, e.g. industryListExcluding("commerce") => "food, healthcare, travel,
- * rentals, and nutrition" — used for mid-sentence copy that already names the
- * excluded industry's product separately (e.g. the about-teaser statement,
- * which names Mark8ly/commerce in the sentence before this list).
- */
-export function industryListExcluding(exclude: Industry): string {
-  return oxfordJoin(industryNames.filter((name) => name !== exclude));
-}
-
-/**
- * Industries of products that haven't launched yet, with an Oxford "and", e.g.
- * "rentals and nutrition". Copy that names the shipped products
- * individually and then points at what's still in build reads this, so the
- * sentence re-balances itself the moment a product's status flips.
- */
-export function upcomingIndustryList(): string {
-  return oxfordJoin(
-    Object.values(products)
-      .filter((product) => product.status !== "available")
-      .map((product) => product.industry),
-  );
-}

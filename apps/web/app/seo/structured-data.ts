@@ -1,4 +1,4 @@
-import type { TeamMember } from "@/app/(marketing)/about/team";
+import type { TeamMember } from "@/lib/cms/types";
 import { siteOrigin } from "@/lib/site-origin";
 
 /**
@@ -119,7 +119,7 @@ export interface ProductSchemaInput {
   title: string;
   description: string;
   status: "available" | "coming-soon";
-  /** Defaults to "Web" when omitted — see `operatingSystem` in products-data.ts. */
+  /** Defaults to "Web" when omitted — see `operatingSystem` in the product data (lib/cms/products.ts). */
   operatingSystem?: string;
 }
 
@@ -137,7 +137,7 @@ interface SoftwareApplicationSchema {
 
 /**
  * Builds the SoftwareApplication JSON-LD for a product detail page, sourced
- * entirely from `products-data.ts`. No price, no rating — see file header.
+ * entirely from `the product data (lib/cms/products.ts)`. No price, no rating — see file header.
  */
 export function buildProductSchema(
   slug: string,

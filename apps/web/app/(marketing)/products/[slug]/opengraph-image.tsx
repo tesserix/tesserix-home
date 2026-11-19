@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { products } from "./products-data";
+import { getProducts } from "@/lib/cms/products";
 
 /**
  * Per-product OG image — Next 16 file convention for a dynamic segment.
@@ -20,7 +20,7 @@ export const contentType = "image/png";
 const GRID_LINE = "rgba(11,14,20,0.03)";
 
 export async function generateStaticParams() {
-  return Object.keys(products).map((slug) => ({ slug }));
+  return Object.keys(await getProducts()).map((slug) => ({ slug }));
 }
 
 export default async function ProductOpenGraphImage({
@@ -29,7 +29,7 @@ export default async function ProductOpenGraphImage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const product = products[slug];
+  const product = (await getProducts())[slug];
   const eyebrow = product ? product.title : "Tesserix";
   const heading = product ? product.tagline : "Specialized SaaS, one industry at a time.";
   const sub = product

@@ -1,0 +1,4 @@
+{ "docs": [
+  { "id": 1, "order": 1, "title": "Small on purpose", "body": "We're a small team by choice." },
+  { "id": 2, "order": 2, "title": "Opinionated by default", "body": "Good tools make choices." }
+] }

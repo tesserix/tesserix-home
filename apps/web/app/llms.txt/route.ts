@@ -1,16 +1,21 @@
 import { NextResponse } from "next/server";
-import { products, productSlugs } from "@/app/(marketing)/products/[slug]/products-data";
+import { getProducts } from "@/lib/cms/products";
 import { COMPANY, SITE_URL } from "@/app/seo/structured-data";
 
 /**
  * /llms.txt — the llms.txt convention (https://llmstxt.org): a short H1, a
  * blockquote summary, then linked sections with one-line descriptions, aimed
  * at LLMs reading the site rather than rendering it. The product list is
- * generated from products-data.ts so it can't drift from the real lineup.
+ * generated from the product data (lib/cms/products.ts) so it can't drift from the real lineup.
  */
 
-function buildLlmsTxt(): string {
-  const productLines = productSlugs
+// Content comes from the CMS at request time; without this the pages prerendered at build
+// (where CMS_URL is unset and the fallback renders) would never refresh.
+export const revalidate = 60;
+
+async function buildLlmsTxt(): Promise<string> {
+  const products = await getProducts();
+  const productLines = Object.keys(products)
     .map((slug) => {
       const product = products[slug];
       const status = product.status === "available" ? "live" : "coming soon";
@@ -40,8 +45,8 @@ ${productLines}
 `;
 }
 
-export function GET() {
-  return new NextResponse(buildLlmsTxt(), {
+export async function GET() {
+  return new NextResponse(await buildLlmsTxt(), {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
     },
