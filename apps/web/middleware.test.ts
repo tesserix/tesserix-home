@@ -48,3 +48,23 @@ describe("isPublicPath — the legal pages", () => {
 describe('anonymous research forms',()=>{
  it.each(['/vending-customers','/vending-customers/','/vending-business','/vending-business/','/api/questionnaires/vending-customers','/api/questionnaires/vending-business','/api/questionnaires/location'])('does not redirect %s to login',async path=>{const {NextRequest}=await import('next/server');const {middleware}=await import('./middleware');const r=await middleware(new NextRequest(`https://questionnaire.tesserix.app${path}`));expect(r.headers.get('location')).toBeNull();expect(r.headers.get('x-middleware-next')).toBe('1')});
 });
+
+// The CMS publish webhook is server-to-server: no cookie, no Origin, a shared
+// secret the route itself verifies. The CSRF gate was answering 403 "Origin
+// header required" before the route ever saw it, so publishes never expired
+// the cache (found live on tesserix.app, 2026-11-19).
+describe("CMS revalidate webhook", () => {
+  it("POST /api/revalidate without Origin or cookie reaches the route", async () => {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("./middleware");
+    const r = await middleware(
+      new NextRequest("https://tesserix.app/api/revalidate", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-cms-secret": "x" },
+        body: JSON.stringify({ collection: "products" }),
+      }),
+    );
+    expect(r.status).toBe(200);
+    expect(r.headers.get("x-middleware-next")).toBe("1");
+  });
+});

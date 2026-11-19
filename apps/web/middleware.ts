@@ -125,6 +125,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   if (isPublicQuestionnairePath(pathname)) return NextResponse.next();
+  // CMS publish webhook: no cookie, no Origin; the route verifies x-cms-secret.
+  if (pathname === "/api/revalidate") return NextResponse.next();
 
   const csrf = evaluateCsrf(request);
   if (csrf.blocked) {
