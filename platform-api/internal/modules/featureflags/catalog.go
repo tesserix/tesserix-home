@@ -167,6 +167,7 @@ func presentation(d definition) (string, string, string) {
 		"onboarding":             {"Workspace onboarding", "Hospital and independent-pharmacy signup, verification and owner setup."},
 		"team_accounts":          {"Staff accounts and permissions", "Invite team members and manage their permission-assignment workflows. This flag grants no roles."},
 		"staff_core":             {"Staff records and reviews", "Staff directory, reviewed identity/employment links and core credentials."},
+		"staff_mfa_recovery":     {"Staff authenticator recovery", "Allow authorized administrators to reset an ordinary Staff authenticator through a reviewed account link, with a reason, audit evidence and mandatory replacement enrollment."},
 		"department_teams":       {"Department teams", "Department structure, team membership and posting preparation/review."},
 		"pharmacy_setup":         {"PharmaConnect setup", "Pharmacy organizations, branches and required setup/licensing evidence."},
 		"pharmacy_staff":         {"Pharmacy staff", "Hospital-employed and independent-pharmacy staff, account links and credential evidence."},

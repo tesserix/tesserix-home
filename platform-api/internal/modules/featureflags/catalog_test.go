@@ -1,8 +1,33 @@
 package featureflags
 
 import (
+	"slices"
+	"strings"
 	"testing"
 )
+
+func TestStaffRecoveryCatalogueExplainsTheControlWithoutEnablingIt(t *testing.T) {
+	c, err := parseCatalogue([]byte(`{"version":1,"policy_version":"2026-11-19-r1","capabilities":[{"key":"team_accounts","owner":"platform","eligible":true,"dependencies":[]},{"key":"staff_core","owner":"workforce","eligible":true,"dependencies":["team_accounts"]},{"key":"staff_mfa_recovery","owner":"workforce","eligible":true,"dependencies":["staff_core","team_accounts"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags, err := evaluate(c, map[string]bool{"team_accounts": true, "staff_core": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := flags[2]
+	if recovery.Key != "staff_mfa_recovery" || recovery.Title != "Staff authenticator recovery" || recovery.Group != "Staff" {
+		t.Fatalf("unclear recovery control: %+v", recovery)
+	}
+	for _, detail := range []string{"reviewed account link", "reason", "audit", "replacement enrollment"} {
+		if !strings.Contains(recovery.Description, detail) {
+			t.Fatalf("recovery description omits %q", detail)
+		}
+	}
+	if recovery.Provisioned || recovery.Enabled || recovery.Available || !recovery.Eligible || !slices.Equal(recovery.Dependencies, []string{"staff_core", "team_accounts"}) {
+		t.Fatalf("catalogue presentation changed recovery admission: %+v", recovery)
+	}
+}
 
 func TestCatalogueDependencyClosureAndReleaseCeiling(t *testing.T) {
 	catalogue, err := parseCatalogue([]byte(`{"version":1,"policy_version":"r1","capabilities":[{"key":"team_accounts","owner":"platform","eligible":true,"dependencies":[]},{"key":"staff_core","owner":"workforce","eligible":true,"dependencies":["team_accounts"]},{"key":"workforce_payroll","owner":"workforce","eligible":false,"dependencies":["staff_core"]}]}`))
