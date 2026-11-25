@@ -104,3 +104,24 @@ func TestPrerequisiteConfirmationUsesEffectiveImpact(t *testing.T) {
 		t.Fatalf("missing resume impact: %+v", flags[0])
 	}
 }
+
+func TestPilotEligibilityIsLabelledAndCannotBypassDependencies(t *testing.T) {
+	c, err := parseCatalogue([]byte(`{"version":1,"policy_version":"pilot","capabilities":[{"key":"pharmacy_stock","owner":"pharmacy","eligible":false,"pilot_eligible":true,"dependencies":[]},{"key":"pharmacy_counter","owner":"pharmacy","eligible":false,"pilot_eligible":true,"dependencies":["pharmacy_stock"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags, err := evaluate(c, map[string]bool{"pharmacy_stock": false, "pharmacy_counter": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flags[1].PilotOnly || !flags[1].Eligible || flags[1].Available {
+		t.Fatalf("unsafe pilot state: %+v", flags[1])
+	}
+	flags, err = evaluate(c, map[string]bool{"pharmacy_stock": true, "pharmacy_counter": true})
+	if err != nil || !flags[1].Available || !flags[1].PilotOnly {
+		t.Fatalf("pilot not reflected: %+v %v", flags, err)
+	}
+	if !strings.Contains(flags[1].Description, "approved pilot tenants") {
+		t.Fatal("scope missing from description")
+	}
+}
