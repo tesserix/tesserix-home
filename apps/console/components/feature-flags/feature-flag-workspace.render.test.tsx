@@ -154,3 +154,32 @@ it("creates a missing catalogue definition disabled with a reason", async () => 
     expected_revision: base.revision,
   });
 });
+
+it("labels scoped pilot controls without implying an all-tenant release", () => {
+  const pilot = structuredClone(base);
+  pilot.flags[0] = { ...pilot.flags[0]!, pilot_only: true };
+  render(
+    <FeatureFlagWorkspace
+      snapshot={pilot}
+      commands={[]}
+      canManage
+      operatorSubject="operator-one"
+      onChangeAction={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Pilot enabled")).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("switch", { name: `Disable ${pilot.flags[0]!.title}` }),
+  );
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Only configured pilot tenants",
+  );
+  expect(screen.getByRole("dialog")).not.toHaveTextContent(
+    "every Helivanta tenant",
+  );
+  expect(
+    screen.getByText(
+      /Restricted to configured tenants until the pilot policy expires/,
+    ),
+  ).toBeInTheDocument();
+});

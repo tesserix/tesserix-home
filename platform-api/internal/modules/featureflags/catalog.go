@@ -15,10 +15,11 @@ var flagKey = regexp.MustCompile(`^[a-z][a-z_]{0,63}$`)
 var errInvalidCatalogue = errors.New("release catalogue is unavailable or invalid")
 
 type definition struct {
-	Key          string   `json:"key"`
-	Owner        string   `json:"owner"`
-	Eligible     bool     `json:"eligible"`
-	Dependencies []string `json:"dependencies"`
+	Key           string   `json:"key"`
+	Owner         string   `json:"owner"`
+	Eligible      bool     `json:"eligible"`
+	PilotEligible bool     `json:"pilot_eligible"`
+	Dependencies  []string `json:"dependencies"`
 }
 type catalogue struct {
 	Version       int          `json:"version"`
@@ -33,6 +34,7 @@ type flag struct {
 	Group              string   `json:"group"`
 	Enabled            bool     `json:"enabled"`
 	Eligible           bool     `json:"eligible"`
+	PilotOnly          bool     `json:"pilot_only"`
 	Available          bool     `json:"available"`
 	Dependencies       []string `json:"dependencies"`
 	BlockedBy          []string `json:"blocked_by"`
@@ -76,7 +78,7 @@ func parseCatalogue(data []byte) (catalogue, error) {
 		seen := map[string]bool{}
 		for _, dep := range d.Dependencies {
 			target, ok := known[dep]
-			if !ok || seen[dep] || (d.Eligible && !target.Eligible) {
+			if !ok || seen[dep] || (d.Eligible && !target.Eligible) || (d.PilotEligible && !target.Eligible && !target.PilotEligible) {
 				return errInvalidCatalogue
 			}
 			seen[dep] = true
@@ -107,7 +109,7 @@ func availability(c catalogue, enabled map[string]bool) map[string]bool {
 			return value
 		}
 		d := definitions[key]
-		value := enabled[key] && d.Eligible
+		value := enabled[key] && (d.Eligible || d.PilotEligible)
 		for _, dep := range d.Dependencies {
 			value = resolve(dep) && value
 		}
@@ -149,6 +151,9 @@ func evaluate(c catalogue, enabled map[string]bool) ([]flag, error) {
 	out := make([]flag, 0, len(c.Capabilities))
 	for _, d := range c.Capabilities {
 		title, description, group := presentation(d)
+		if d.PilotEligible && !d.Eligible {
+			description += " Available only to approved pilot tenants under an unexpired operator policy; this switch does not release the feature to other tenants."
+		}
 		dependencies := append([]string{}, d.Dependencies...)
 		blocked := []string{}
 		for _, dep := range d.Dependencies {
@@ -157,7 +162,7 @@ func evaluate(c catalogue, enabled map[string]bool) ([]flag, error) {
 			}
 		}
 		_, provisioned := enabled[d.Key]
-		out = append(out, flag{Provisioned: provisioned, Key: d.Key, Title: title, Description: description, Group: group, Enabled: enabled[d.Key], Eligible: d.Eligible, Available: current[d.Key], Dependencies: dependencies, BlockedBy: blocked, ImpactWhenEnabled: impact(d.Key, true), ImpactWhenDisabled: impact(d.Key, false)})
+		out = append(out, flag{Provisioned: provisioned, Key: d.Key, Title: title, Description: description, Group: group, Enabled: enabled[d.Key], Eligible: d.Eligible || d.PilotEligible, PilotOnly: !d.Eligible && d.PilotEligible, Available: current[d.Key], Dependencies: dependencies, BlockedBy: blocked, ImpactWhenEnabled: impact(d.Key, true), ImpactWhenDisabled: impact(d.Key, false)})
 	}
 	return out, nil
 }

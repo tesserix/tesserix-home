@@ -98,7 +98,7 @@ export function FeatureFlagWorkspace({
           <div>
             <p className="font-semibold">Helivanta release controls</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Production · all Helivanta tenants
+              Production · product and scoped pilot controls
             </p>
           </div>
         </div>
@@ -154,9 +154,9 @@ export function FeatureFlagWorkspace({
         <>
           <div className="grid gap-3 sm:grid-cols-3">
             <Metric
-              title="Available in Helivanta"
+              title="Release prerequisites ready"
               value={flags.filter((flag) => flag.available).length}
-              detail="Released, enabled and prerequisites available"
+              detail="Pilot availability also requires an active tenant policy"
             />
             <Metric
               title="Provider enabled"
@@ -220,7 +220,9 @@ export function FeatureFlagWorkspace({
                 (!flag.enabled &&
                   (!flag.eligible || flag.blocked_by.length > 0));
               const status = flag.available
-                ? "Available"
+                ? flag.pilot_only
+                  ? "Pilot enabled"
+                  : "Available"
                 : !flag.eligible
                   ? "Release locked"
                   : flag.enabled
@@ -250,6 +252,12 @@ export function FeatureFlagWorkspace({
                     <p className="mt-2 text-sm text-muted-foreground">
                       {flag.description}
                     </p>
+                    {flag.pilot_only && (
+                      <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">
+                        Pilot only. Restricted to configured tenants until the
+                        pilot policy expires.
+                      </p>
+                    )}
                     <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
                       helivanta.release.{flag.key}
                     </p>
@@ -518,7 +526,9 @@ function ChangeDialog({
           <DialogDescription>
             {!selection.flag.provisioned
               ? "Creates the reviewed definition disabled. Enabling requires a separate release decision."
-              : "This changes release availability for every Helivanta tenant in production. Existing permissions remain required."}
+              : selection.flag.pilot_only
+                ? "Only configured pilot tenants can use this feature before their policy expires. This does not release it to other tenants. Existing permissions remain required."
+                : "This changes release availability for every Helivanta tenant in production. Existing permissions remain required."}
           </DialogDescription>
         </DialogHeader>
         <form action={action} className="space-y-5">

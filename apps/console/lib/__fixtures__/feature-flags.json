@@ -12,6 +12,7 @@
       "group": "Staff",
       "enabled": true,
       "eligible": true,
+      "pilot_only": false,
       "available": true,
       "dependencies": [],
       "blocked_by": [],
@@ -28,6 +29,7 @@
       "group": "Staff",
       "enabled": true,
       "eligible": true,
+      "pilot_only": false,
       "available": true,
       "dependencies": [
         "team_accounts"

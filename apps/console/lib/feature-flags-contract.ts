@@ -25,6 +25,7 @@ const flagSchema = z.object({
   group: z.string().min(1).max(100),
   enabled: z.boolean(),
   eligible: z.boolean(),
+  pilot_only: z.boolean().default(false),
   available: z.boolean(),
   dependencies: z.array(key).max(100),
   blocked_by: z.array(key).max(100),
@@ -45,6 +46,11 @@ const snapshotSchema = z
     if (flags.size !== snapshot.flags.length)
       ctx.addIssue({ code: "custom", message: "Duplicate feature flags" });
     for (const flag of snapshot.flags) {
+      if (flag.pilot_only && !flag.eligible)
+        ctx.addIssue({
+          code: "custom",
+          message: "An editable pilot must be policy-eligible.",
+        });
       if (!flag.provisioned && (flag.enabled || flag.available)) {
         ctx.addIssue({
           code: "custom",
